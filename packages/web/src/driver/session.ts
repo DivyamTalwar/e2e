@@ -25,9 +25,10 @@ import { AttemptTabs, type AttemptTab } from './tabs.ts';
 import { viewportSize } from '../in-page/document.ts';
 import { HIT_INTERCEPTOR_INIT_SCRIPT } from '../in-page/hit-interceptor.ts';
 import { BUILTINS_INIT_SCRIPT, readerCall, readerInstallCall, READERS_INIT_SCRIPT, READERS_MISSING, type ReaderArgs, type ReaderName, type ReaderResult } from '../in-page/readers.ts';
-import type { BidiVideo } from './video.ts';
-import type { ProviderVideo } from './provider-video.ts';
-import type { LeaseDownloads } from '../provider.ts';
+import { BidiVideo } from './video.ts';
+import { ProviderVideo } from './provider-video.ts';
+import { DriverVideo, type AttemptVideo } from './attempt-video.ts';
+import type { LeaseDownloads, LeaseRecording } from '../provider.ts';
 import type { BidiConnection } from './connection.ts';
 import { callFunction, type CallOptions, type ElementRef, type PageArgument, type PageValue, type TypedPageFunction, type Wire } from './script.ts';
 
@@ -64,7 +65,6 @@ export interface SessionSettings {
 
 /** What one attempt starts with. */
 export interface AttemptSettings {
-  readonly attemptId: string;
   readonly artifactsDir: string;
   readonly appLog: (entry: AppLogEntry) => void;
   /** Tells the trace where the app went on its own. */
@@ -77,6 +77,8 @@ export interface AttemptSettings {
   readonly remoteDownloads?: LeaseDownloads | undefined;
   /** Why no download can be read back, when the browser's source serves none (`BrowserSource.downloadLimit`). */
   readonly downloadLimit?: string | undefined;
+  /** How the browser's provider records the attempt, in place of the driver's own recording (`BrowserSource.recorder`); undefined when it records none. */
+  readonly recorder: ((signal: AbortSignal) => Promise<LeaseRecording>) | undefined;
 }
 
 /**
@@ -194,9 +196,8 @@ export class BidiSession {
   readonly downloads: AttemptDownloads;
   /** The media features in effect: the configured ones, updated by `emulateMedia`. */
   private media: WebMedia;
-  video: BidiVideo | undefined;
-  /** The browser provider's own recording, which takes the place of `video` when the provider records. */
-  providerVideo: ProviderVideo | undefined;
+  /** The attempt's recording: the provider's when it records the browser, else the driver's own. */
+  readonly video: AttemptVideo;
   /** The navigations the driver itself has in flight in the tab. */
   readonly navigations = new OwnNavigations();
   /** The viewport `browser.setViewport` set for the rest of the attempt; the configured one until then. */
@@ -246,6 +247,12 @@ export class BidiSession {
       lifetime: this.lifetime,
     });
     this.downloads = new AttemptDownloads(browser.connection, attempt.remoteDownloads, attempt.downloadLimit);
+    this.video = attempt.recorder === undefined
+      ? new DriverVideo(
+          () => new BidiVideo(browser.connection, browser.traits, attempt.artifactsDir, settings.screencast, settings.env),
+          { shown: () => this.context, viewport: () => this.viewportSize() },
+        )
+      : new ProviderVideo(attempt.recorder, attempt.artifactsDir, this.lifetime);
     this.tabs = new AttemptTabs({
       shown: () => this.context,
       prepare: async (context) => {
@@ -257,8 +264,8 @@ export class BidiSession {
         this.context = context;
       },
       record: async (context, closed) => {
-        if (closed) await this.video?.contextClosed();
-        if (context !== undefined) await this.video?.contextOpened(context, await this.viewportSize());
+        if (closed) await this.video.contextClosed();
+        if (context !== undefined) await this.video.contextOpened(context);
       },
       close: async (context) => {
         await this.connection.send('browsingContext.close', { context });
@@ -309,7 +316,7 @@ export class BidiSession {
     const previous = await this.installUserContext(signal);
     this.tabs.clear();
     this.retireContext();
-    await this.video?.contextClosing();
+    await this.video.contextClosing();
     await this.network.bind(this.userContext);
     await this.dropUserContext(previous);
   }
@@ -371,7 +378,7 @@ export class BidiSession {
 
   /** Ends the recording of the attempt's tab, forgets its user context, and removes it with its preload scripts. */
   private async closeUserContext(): Promise<void> {
-    await this.video?.contextClosing();
+    await this.video.contextClosing();
     const current = { userContext: this.userContext, preloads: this.preloads, context: this.context };
     this.userContext = '';
     this.preloads = [];
@@ -492,7 +499,7 @@ export class BidiSession {
     this.context = context;
     this.tabs.own(context, true);
     this.input.reset();
-    await this.video?.contextOpened(context, await this.viewportSize());
+    await this.video.contextOpened(context);
     return context;
   }
 
@@ -583,7 +590,7 @@ export class BidiSession {
    */
   async closeContext(signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
-    await this.video?.contextClosing();
+    await this.video.contextClosing();
     this.tabs.clear();
     this.retireContext();
     const { contexts } = await this.connection.send('browsingContext.getTree', { maxDepth: 0 });
@@ -752,8 +759,7 @@ export class BidiSession {
     const step = (label: string, work: () => unknown): (() => Promise<unknown>) => () =>
       withTimeout(Promise.resolve().then(work), CLOSE_STEP_MS, () => new EngineError('OPERATION_TIMEOUT', `${label} did not finish within ${CLOSE_STEP_MS}ms`, { retryable: false }));
     const results = await settleEach([
-      step('video stop', () => this.video?.stop()),
-      step('provider video', () => this.providerVideo?.abandon(AbortSignal.timeout(CLOSE_STEP_MS))),
+      step(this.video.closeStep, () => this.video.close(CLOSE_STEP_MS)),
       step('user context removal', () => (gone ? undefined : this.closeUserContext())),
       step('earlier user contexts', () => (gone ? undefined : this.removeUserContexts())),
       step('network release', () => this.network.dispose()),

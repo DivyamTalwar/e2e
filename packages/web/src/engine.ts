@@ -20,7 +20,7 @@ import { createRequire } from 'node:module';
 import { LeasedBrowsers } from './provider.ts';
 import { DEFAULT_VIEWPORT, type WebOptions } from './options.ts';
 import { perform, performAt, typeText } from './driver/actions.ts';
-import { screenshot, startVideo, stopVideo } from './driver/artifacts.ts';
+import { screenshot } from './driver/artifacts.ts';
 import { locate, observe, readStyle } from './driver/observe.ts';
 import { captureState, restoreState } from './driver/state.ts';
 import { goto, reset, restart, traverse } from './driver/steering.ts';
@@ -125,8 +125,8 @@ export function createWeb(options: WebOptions, attachTo?: BrowserSource): Engine
     artifacts: {
       screenshot: (label, operation) => surface.guard(operation, 'screenshot', (session, { signal }) => screenshot(session, label, signal)),
       // The provider's recording when it records, else the driver's own.
-      startVideo: (operation) => surface.guard(operation, 'video', (session, { signal }) => startVideo(session, source.recorder(session.attempt.attemptId), signal)),
-      stopVideo: (operation) => surface.guard(operation, 'video', (session, { signal }) => stopVideo(session, signal)),
+      startVideo: (operation) => surface.guard(operation, 'video', (session, { signal }) => session.video.start(signal)),
+      stopVideo: (operation) => surface.guard(operation, 'video', (session, { signal }) => session.video.stop(signal)),
     },
     ...(contextLimit === undefined
       ? {

@@ -211,7 +211,6 @@ export class BidiSurface {
       handle.browser,
       settings,
       {
-        attemptId: context.attemptId,
         artifactsDir: context.artifactsDir,
         appLog: context.appLog,
         navigation: context.navigation,
@@ -219,6 +218,7 @@ export class BidiSurface {
         protectedApp: new ProtectedApp(this.origins, this.options.headers, credentials),
         remoteDownloads: source.downloads(),
         downloadLimit: source.downloadLimit(),
+        recorder: source.recorder(context.attemptId),
       },
       handle.contexts,
     );
