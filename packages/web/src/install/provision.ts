@@ -13,10 +13,10 @@ import { mirrorOrigin } from './download.ts';
 import { cancelledCheck, withCacheLock, type LockContext, type LockOwner } from './lock.ts';
 import { installSystemDeps } from './system-deps.ts';
 
-/** The build `name` runs in this mode. */
-function buildOf(name: BrowserName, headed: boolean): { readonly browser: BuildName; readonly buildId: string } {
+/** The build `name` runs in this mode, and the `e2e-web install` arguments that install it. */
+function buildOf(name: BrowserName, headed: boolean): { readonly browser: BuildName; readonly buildId: string; readonly installArgs: string } {
   const browser = name === 'firefox' ? 'firefox' : headed ? 'chrome' : 'chrome-headless-shell';
-  return { browser, buildId: PINS[browser].buildId };
+  return { browser, buildId: PINS[browser].buildId, installArgs: browser === 'chrome' ? `${name} --headed` : name };
 }
 
 /**
@@ -65,7 +65,7 @@ export async function browserCheck(name: BrowserName, env: NodeJS.ProcessEnv, he
     {
       id: 'browser',
       status: 'warn',
-      message: `${name} is not installed; the first run downloads it, or run "npx @e2e-dev/web install ${name}" now`,
+      message: `${name} is not installed; the first run downloads it, or run "npx @e2e-dev/web install ${buildOf(name, headed).installArgs}" now`,
     },
   ];
 }
@@ -142,12 +142,12 @@ export async function installBrowsers(names: readonly BrowserName[], context: In
   const platform = requirePlatform();
   const host = mirrorOrigin(context.env);
   const builds = [...new Set(names)].map((name): PinnedBuild => {
-    const { browser, buildId } = buildOf(name, context.headed);
+    const { browser, buildId, installArgs } = buildOf(name, context.headed);
     const sha256 = PINS[browser].sha256[platform.node];
     return {
       label: `${browser} ${buildId}`,
       announcement: `Downloading ${browser} ${buildId} into ${cacheDir}`,
-      recovery: `run "npx @e2e-dev/web install ${name}" (pnpm: "pnpm exec e2e-web install ${name}") manually`,
+      recovery: `run "npx @e2e-dev/web install ${installArgs}" (pnpm: "pnpm exec e2e-web install ${installArgs}") manually`,
       executable: executablePath(cacheDir, browser, buildId, platform),
       install: (owner) => installBuild({ build: browser, buildId, platform, cacheDir, sha256, host, owner, env: context.env, signal: context.signal }),
     };

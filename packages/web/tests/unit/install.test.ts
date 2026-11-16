@@ -45,6 +45,14 @@ describe.skipIf(platform === undefined)('browserCheck', () => {
       { id: 'browser', status: 'warn', message: 'firefox is not installed; the first run downloads it, or run "npx @e2e-dev/web install firefox" now' },
     ]);
   });
+
+  it('names the install of the full build a headed chromium run launches', async () => {
+    await lay('shell');
+    expect(await browserCheck('chromium', env, true)).toEqual([
+      { id: 'browser', status: 'warn', message: 'chromium is not installed; the first run downloads it, or run "npx @e2e-dev/web install chromium --headed" now' },
+    ]);
+    expect(await browserCheck('firefox', env, true)).toMatchObject([{ message: expect.stringContaining('install firefox" now') }]);
+  });
 });
 
 describe.skipIf(platform === undefined)('ensureBrowsersInstalled', () => {
@@ -66,7 +74,10 @@ describe.skipIf(platform === undefined)('ensureBrowsersInstalled', () => {
 
   it('reads the build the run mode launches: a headed run needs full Chrome', async () => {
     await lay('shell');
-    await expect(ensureBrowsersInstalled(['chromium'], { env, headed: true, log: () => {} })).rejects.toMatchObject({ code: 'BROWSER_INSTALL_FAILED' });
+    await expect(ensureBrowsersInstalled(['chromium'], { env, headed: true, log: () => {} })).rejects.toMatchObject({
+      code: 'BROWSER_INSTALL_FAILED',
+      message: expect.stringContaining('run "npx @e2e-dev/web install chromium --headed"'),
+    });
     expect(server.requests).toEqual([served('chrome')]);
   });
 
