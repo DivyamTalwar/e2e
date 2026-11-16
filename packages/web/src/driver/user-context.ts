@@ -113,13 +113,20 @@ export class AttemptUserContext {
    * carried over. The new one is set up in full before it takes the old
    * one's place in one step; `moved` then runs, for what the attempt keeps
    * per user context (its tabs, recording, and network), and only then is
-   * the old one removed, so no step ever runs between the two. One whose
-   * `signal` aborted, or that a later replacement or `overtake` overtook,
-   * removes itself and leaves the user context in use as it was.
+   * the old one removed, so no step ever runs between the two. A `moved`
+   * that fails still has the old one removed, and its own failure is the
+   * one thrown. One whose `signal` aborted, or that a later replacement or
+   * `overtake` overtook, removes itself and leaves the user context in use
+   * as it was.
    */
   async replace(signal: AbortSignal, moved: () => Promise<void>): Promise<void> {
     const previous = await this.install(signal);
-    await moved();
+    try {
+      await moved();
+    } catch (cause) {
+      await releaseQuietly(this.drop(previous));
+      throw cause;
+    }
     await this.drop(previous);
   }
 

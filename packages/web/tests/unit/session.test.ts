@@ -249,4 +249,17 @@ describe('BidiSession.close', () => {
     await closing.close();
     expect(fake.commands('browser.removeUserContext').map((command) => command.params['userContext'])).toEqual(['first', 'first', 'second']);
   });
+
+  it('removes the user context a reset replaced when the network cannot bind to the new one', async () => {
+    const names = ['first', 'second'];
+    const fake = new FakeBidi().on('browser.createUserContext', async () => ({ result: { userContext: names.shift() } })).on('network.addDataCollector', { result: { collector: 'c' } });
+    const closing = unopened(fake);
+    await closing.openUserContext(new AbortController().signal);
+    fake.on('network.addDataCollector', { error: 'unknown error', message: 'no collector' });
+    await expect(closing.replaceUserContext(new AbortController().signal)).rejects.toThrow('no collector');
+    expect(closing.userContext.id).toBe('second');
+    expect(fake.commands('browser.removeUserContext').map((command) => command.params['userContext'])).toEqual(['first']);
+    await closing.close();
+    expect(fake.commands('browser.removeUserContext').map((command) => command.params['userContext'])).toEqual(['first', 'second']);
+  });
 });
