@@ -1,7 +1,8 @@
 /**
- * One attempt: its user context, its tabs and the one it shows, the
- * refs it minted, and the network, downloads, dialogs, and video scoped to
- * it, with the primitives every other module drives the page through.
+ * One attempt: the tabs it opens and the one it shows, and what is scoped
+ * to it, each in a module of its own (its user context, page calls, refs,
+ * frames, input, network, downloads, dialogs, video, artifact paths), with
+ * how the attempt opens, replaces, and closes them together.
  */
 
 import { EngineError, withTimeout, type AppLogEntry, type EngineSnapshot, type ViewportSize } from '@e2e-dev/core/engine';
@@ -64,9 +65,9 @@ export interface AttemptSettings {
 }
 
 /**
- * One attempt on a BiDi browser: its user context, its tabs and the one it
- * shows, and the refs, frames, network, downloads, dialogs, and video
- * scoped to it.
+ * One attempt on a BiDi browser: its tabs and the one it shows, and the user
+ * context, page calls, refs, frames, network, downloads, dialogs, video, and
+ * artifact paths scoped to it.
  */
 export class BidiSession {
   /** The user context the attempt runs in, with what is scoped to it. */
@@ -88,6 +89,8 @@ export class BidiSession {
   readonly video: AttemptVideo;
   /** The navigations the driver itself has in flight in the tab. */
   readonly navigations = new OwnNavigations();
+  /** Where the attempt's screenshots and downloads are written. */
+  readonly artifacts: ArtifactPaths;
   /** The viewport `browser.setViewport` set for the rest of the attempt; the configured one until then. */
   private viewport: ViewportSize | null;
   /** The tab the attempt shows: the one its tabs publish (`TabHost.publish`), or its own once that opened. */
@@ -96,8 +99,6 @@ export class BidiSession {
   /** The tab the attempt found open and adopted (`existingTab`), which it never closes. */
   private adopted: string | undefined;
   private readonly ended = new AbortController();
-  /** Where the attempt's screenshots and downloads are written. */
-  readonly artifacts: ArtifactPaths;
 
   constructor(
     readonly browser: BidiBrowser,
