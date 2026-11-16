@@ -460,7 +460,13 @@ export const createAccessibleNames = (
     return labels === undefined || labels === null ? [] : Array.from(labels);
   };
 
-  /** The label sources an exact label query may match; see `RawNodeData.labels`. */
+  /**
+   * Every label a person or a tool may call this control by: its `aria-label`,
+   * each `aria-labelledby` target, and each associated `<label>`, read as an
+   * accessible name (aria-hidden dropped). Null for an element with none. A
+   * label query matches any one of them, as Playwright's `getByLabel` does,
+   * rather than the combined or overridden name.
+   */
   const labelsOf = (el: Element): string[] | null => {
     const labels: string[] = [];
     const ariaLabel = el.getAttribute('aria-label');

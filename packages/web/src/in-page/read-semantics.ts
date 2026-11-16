@@ -1061,8 +1061,6 @@ export const createSemanticReader = (
 
     let name = projection.name(el);
     if (projection.nameLimit !== null && name !== null) name = name.slice(0, projection.nameLimit);
-    // A secure field withholds its value, never its labels: a password field is still found by its label.
-    const labels = names.labelsOf(el);
     const isDocumentRoot = projection.documentRoot && tag === 'html';
     if (isDocumentRoot) name = el.ownerDocument.title;
 
@@ -1085,7 +1083,6 @@ export const createSemanticReader = (
     return {
       role,
       name,
-      labels,
       text,
       value: secure ? null : value,
       selection,
@@ -1334,7 +1331,7 @@ export const createSemanticReader = (
     },
     /** The name a role query compares. */
     name: locatorName,
-    /** The label sources a label query compares; see `RawNodeData.labels`. */
+    /** The labels a label query compares (`labelsOf`); a secure field withholds its value, never its labels. */
     labels: names.labelsOf,
     /** The element as a node read, in a locate's projection. */
     describe: (el: Element): RawNodeData => describe(el, LOCATOR),

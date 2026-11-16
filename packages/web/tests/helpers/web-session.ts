@@ -102,6 +102,8 @@ export interface WebSession {
   act(expression: LocatorExpression, action: LocatorAction): Promise<void>;
   /** The in-page reader's node read of the first element `selector` matches, as a locate reports a match. */
   readNode(selector: string): Promise<RawNodeData>;
+  /** The labels the in-page reader gives the first element `selector` matches, which a label query compares. */
+  readLabels(selector: string): Promise<string[] | null>;
   /** Resolves once every iframe of the top document finished loading. */
   waitForFrames(): Promise<void>;
   /** Starts a new attempt, ending the current one first if it is open. */
@@ -284,6 +286,12 @@ export async function startWebSession(options: WebSessionOptions = {}): Promise<
     origin: 'test',
   });
 
+  /** What the in-page reader's `read` answers for the first element `selector` matches, on a reader built for this one call. */
+  const readElement = (read: 'describe' | 'labels', selector: string) => session.browser.evaluate(
+    `({ selector, options }) => (${createSemanticReader.toString()})(options, (${createAccessibleNames.toString()})).${read}(document.querySelector(selector))`,
+    { selector, options: { testIdAttribute: 'data-testid', secureFieldSelector: SECURE_FIELD_SELECTOR } },
+  );
+
   const session: WebSession = {
     engine,
     get browser() { return live().fixtures.browser; },
@@ -307,10 +315,8 @@ export async function startWebSession(options: WebSessionOptions = {}): Promise<
       if (located.length !== 1) throw new Error(`expected one node for ${JSON.stringify(expression)}, located ${String(located.length)}`);
       await engine.perform!(located[0]!.ref, action, op());
     },
-    readNode: (selector) => session.browser.evaluate(
-      `({ selector, options }) => (${createSemanticReader.toString()})(options, (${createAccessibleNames.toString()})).describe(document.querySelector(selector))`,
-      { selector, options: { testIdAttribute: 'data-testid', secureFieldSelector: SECURE_FIELD_SELECTOR } },
-    ) as unknown as Promise<RawNodeData>,
+    readNode: (selector) => readElement('describe', selector) as unknown as Promise<RawNodeData>,
+    readLabels: (selector) => readElement('labels', selector) as unknown as Promise<string[] | null>,
     waitForFrames: () => session.browser.evaluate(async () => {
       const loaded = (frame: HTMLIFrameElement) => frame.contentDocument === null || frame.contentDocument.readyState === 'complete';
       while (![...document.querySelectorAll('iframe')].every(loaded)) await new Promise((resolve) => setTimeout(resolve, 20));

@@ -241,7 +241,7 @@ describe('names from content and precedence', () => {
     const reads = await Promise.all(['label-for', 'secure', 'secure-label'].map((id) => page.readNode(`[data-testid="${id}"]`)));
     const byTestId = new Map(reads.map((raw) => [raw.testId, raw] as const));
     // Label text is what a label query matches, which reads no control value.
-    expect(byTestId.get('label-for')?.labels).toEqual(['Qty items']);
+    expect(await page.readLabels('[data-testid="label-for"]')).toEqual(['Qty items']);
     const labelled = await page.locate({ kind: 'query', query: { kind: 'label', value: { kind: 'string', value: 'Qty items', exact: true } } });
     expect(labelled.map((node) => node.testId)).toEqual(['label-for']);
     expect(byTestId.get('secure')?.name).toBe('Unlock now');

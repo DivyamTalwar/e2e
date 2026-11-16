@@ -18,14 +18,6 @@ export const SECURE_FIELD_SELECTOR = 'input[type="password" i]';
 export interface RawNodeData {
   role: string | null;
   name: string | null;
-  /**
-   * Every label a person or a tool may call this control by: its `aria-label`,
-   * each `aria-labelledby` target, and each associated `<label>`, read as an
-   * accessible name (aria-hidden dropped). Null for a node with none. An exact
-   * label query matches any one of them, as Playwright's `getByLabel` does,
-   * rather than the combined or overridden `name`.
-   */
-  labels: string[] | null;
   text: string | null;
   value: string | null;
   /** Text selected inside the focused field or editing host; null when unfocused, collapsed, or secure. */
