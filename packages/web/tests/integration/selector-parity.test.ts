@@ -7,9 +7,13 @@
  * were recorded from `page.locator(selector).count()` on Playwright 1.64.1.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { FrameRegistry, resolveFrames, selectElements } from '../../src/driver/frames.ts';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { LocatorExpression } from '@e2e-dev/core/engine';
+import { BidiConnection } from '../../src/driver/connection.ts';
+import { readerCall } from '../../src/in-page/readers.ts';
 import { openBidiPage, type BidiPage } from '../helpers/bidi-page.ts';
+import { selectElements } from '../helpers/select-chain.ts';
+import { bySelector, startWebSession } from '../helpers/web-session.ts';
 
 const SHADOW = `<p class="x"><div id="host"></div></p><script>document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = '<section class="in"><span class="inner">S</span><button>Shadow</button></section>';</script>`;
 
@@ -89,7 +93,7 @@ describe('selectors as Playwright reads them', () => {
   });
 
   /** How many elements `selector` matches on the driver. */
-  const count = async (selector: string): Promise<number> => (await selectElements(page.connection, page.context, selector)).length;
+  const count = async (selector: string): Promise<number> => (await selectElements(page, selector)).length;
 
   it.each(CASES.map(([html, expected], index) => [index, html, expected] as const))('matches page %i as Playwright does', async (_index, html, expected) => {
     await page.setContent(html);
@@ -114,10 +118,21 @@ describe('selectors as Playwright reads them', () => {
 
   it('resolves a frame chain with one call per document', async () => {
     const inner = '<section><iframe srcdoc="<button>Deep</button>"></iframe></section>';
-    await page.setContent(`<iframe id="outer" srcdoc="${inner.replaceAll('"', '&quot;')}"></iframe>`);
-    const frames = new FrameRegistry();
-    const context = await resolveFrames(page.connection, page.context, ['#outer', 'section >> xpath=//iframe'], frames);
-    expect(frames.chain(context)).toHaveLength(2);
-    expect((await selectElements(page.connection, context, 'button')).map((each) => each.localName)).toEqual(['button']);
+    const frames = ['#outer', 'section >> xpath=//iframe'];
+    const session = await startWebSession();
+    try {
+      await session.setContent(`<iframe id="outer" srcdoc="${inner.replaceAll('"', '&quot;')}"></iframe>`);
+      await session.waitForFrames();
+      const calls = vi.spyOn(BidiConnection.prototype, 'send');
+      const found = await session.locate(frames.reduceRight<LocatorExpression>((source, selector) => ({ kind: 'frame', selector, source }), bySelector('button')));
+      expect(found.map((node) => ({ name: node.name, framePath: node.framePath }))).toEqual([{ name: 'Deep', framePath: frames }]);
+      const declarations = calls.mock.calls.filter(([method]) => method === 'script.callFunction').map(([, params]) => (params as { functionDeclaration: string }).functionDeclaration);
+      expect(declarations.filter((declaration) => declaration === readerCall('selectFrame'))).toHaveLength(2);
+      expect(declarations.filter((declaration) => declaration === readerCall('locate'))).toHaveLength(1);
+      expect(declarations).toHaveLength(5);
+    } finally {
+      vi.restoreAllMocks();
+      await session.close();
+    }
   });
 });

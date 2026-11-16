@@ -27,7 +27,7 @@ export type Outcome<T extends object = object> =
  * read when a helper runs, so roots recorded after the helpers were built
  * count too. Self-contained: its source is what `withDom` splices in.
  */
-function createDom(key: string) {
+export function createDom(key: string) {
   const recorded = (): WeakMap<Element, ShadowRoot> | undefined => Reflect.get(globalThis, Symbol.for(key));
 
   /** The element's open or recorded closed shadow root. */

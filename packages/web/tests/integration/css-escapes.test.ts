@@ -5,8 +5,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { selectElements } from '../../src/driver/frames.ts';
 import { openBidiPage, type BidiPage } from '../helpers/bidi-page.ts';
+import { selectElements } from '../helpers/select-chain.ts';
 
 const IDS = ['a>b', 'a+b', 'a~b', 'a b', 'a,b', 'a:b', 'a[b]', 'a(b)', 'a"b', "a'b", 'a\\b', 'a>>b', 'a\tb', '123', '1 2', '-1x'];
 
@@ -42,8 +42,7 @@ async function escaped(id: string): Promise<string> {
 
 /** The light-DOM path of each element `selector` matches on the driver. */
 async function driverMatches(selector: string): Promise<string[]> {
-  const found = await selectElements(page.connection, page.context, selector);
-  const refs = found.map((each) => each.element);
+  const refs = await selectElements(page, selector);
   return (await page.evaluate((...elements: Element[]) => elements.map((element) => `${element.localName}#${element.id || element.parentElement?.id || (element.getRootNode() as ShadowRoot).host?.id}`), ...refs)) as string[];
 }
 

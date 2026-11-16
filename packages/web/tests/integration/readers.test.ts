@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readerCall, readerInstallCall, READERS_INIT_SCRIPT } from '../../src/in-page/readers.ts';
-import { byTestId, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { bySelector, byTestId, startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
 
 /** Records every page function the driver calls; with `dropReaders`, the readers' preload installs nothing. */
@@ -40,6 +40,16 @@ describe('document readers', () => {
     await page.setContent('<button data-testid="go">Go</button>');
     declarations.length = 0;
     expect(await page.locate(byTestId('go'))).toHaveLength(1);
+    expect(declarations).toEqual([readerCall('locate')]);
+  });
+
+  it('answers a selector in the locate read itself', async () => {
+    const declarations = recordCalls(false);
+    const page = await startWebSession();
+    sessions.push(page);
+    await page.setContent('<main><button><span>Go</span></button></main><button>Stop</button>');
+    declarations.length = 0;
+    expect(await page.locate({ kind: 'filter', source: bySelector('main >> button'), has: bySelector('xpath=//span') })).toHaveLength(1);
     expect(declarations).toEqual([readerCall('locate')]);
   });
 

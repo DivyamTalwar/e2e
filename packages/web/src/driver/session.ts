@@ -187,7 +187,7 @@ export class BidiSession {
   /** The tab's keyboard and mouse, the only sender of input. */
   readonly input: BidiInput;
   readonly refs = new BidiRefs(() => this.input.dispatches);
-  readonly frames = new FrameRegistry();
+  readonly frames = new FrameRegistry((frame) => this.reader('frameBox', [frame.element], frame.context));
   readonly latch = new ErrorLatch();
   readonly dialogs = new DialogRouter(this.latch);
   readonly network: AttemptNetwork;
@@ -617,9 +617,9 @@ export class BidiSession {
     return value as Wire<Awaited<ReturnType<F>>>;
   }
 
-  /** Calls the document's reader `name` in `context` (the tab by default). */
+  /** Calls the document's reader `name` in `context` (the tab by default) and reads its answer whole. */
   async reader<K extends ReaderName>(name: K, args: ReaderArgs<K>, context?: string): Promise<ReaderResult<K>> {
-    return (await this.callReader(name, args, undefined, context)) as ReaderResult<K>;
+    return (await this.callReader(name, args, { maxObjectDepth: null }, context)) as ReaderResult<K>;
   }
 
   /**

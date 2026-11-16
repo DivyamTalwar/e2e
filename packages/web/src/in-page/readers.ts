@@ -1,17 +1,21 @@
 /**
  * The readers a document keeps: typed page functions over one shared
- * semantic reader, the contract's locator rules, and the builtins the
- * document had before its own scripts ran. `createReaders` builds them in
- * the page; a preload installs them per document, and a read sends only a
- * small call by name.
+ * semantic reader, the contract's locator rules, the selector chain, and the
+ * builtins the document had before its own scripts ran. `createReaders`
+ * builds them in the page; a preload installs them per document, and a read
+ * sends only a small call by name.
  */
 
 import { createHash } from 'node:crypto';
 import { createResolver, createTextMatching, type LocatorExpression, type SemanticQuery, type TextMatching } from '@e2e-dev/core/engine';
 import { createAccessibleNames } from './accessible-name.ts';
+import { CLOSED_SHADOW_ROOTS_KEY } from './closed-shadow.ts';
+import { frameContentInset } from './document.ts';
+import { createDom } from './dom.ts';
 import { createLocatorReads } from './locator-match.ts';
 import { createSemanticReader } from './read-semantics.ts';
 import type { RawNodeData, RawObservedNode, TreeLimits } from './read-node.ts';
+import { selectChain, type PagePart } from './select-chain.ts';
 import type { PageArgument, Wire } from '../driver/script.ts';
 
 /** Where `BUILTINS_INIT_SCRIPT` keeps the builtins a page had before its own scripts ran. */
@@ -28,7 +32,7 @@ export const BUILTINS_INIT_SCRIPT = `(() => {
 })();`;
 
 /** What every reader builds the semantic reader with. */
-type ReadOptions = { readonly testIdAttribute: string; readonly secureFieldSelector: string };
+export type ReadOptions = { readonly testIdAttribute: string; readonly secureFieldSelector: string };
 
 /** What the `tree` reader walks the document with. */
 type TreeOptions = ReadOptions & { readonly mode: TreeLimits & { readonly kind: 'tree' } };
@@ -47,15 +51,64 @@ interface TreeMetadata {
   readonly truncated: boolean;
 }
 
+/** A `selector` of a located expression that the page could not parse, with the page's reason. */
+interface UnparsedSelector {
+  readonly selector: string;
+  readonly reason: string;
+}
+
+type Point = { readonly x: number; readonly y: number };
+
+type Rect = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+
+/** One frame element as its document lays it out: its content box in that document's viewport, and the scale from the document inside it to that box. */
+interface FrameStep {
+  readonly content: Rect;
+  readonly scale: Point;
+}
+
+/**
+ * A frame element a rotation, skew, reflection, or 3D transform turns, whose
+ * points no scale maps: its border box size, where its content box sits
+ * inside that box, and, where the page has `getBoxQuads` (Firefox), the quad
+ * the border box lays out on in its document's viewport.
+ */
+export interface TurnedFrame {
+  readonly width: number;
+  readonly height: number;
+  readonly inset: Rect;
+  readonly quad: Point[] | null;
+}
+
+/** How a document lays out one of its frame elements; null for one that lays out no box. */
+export type FrameBox = FrameStep | { readonly turned: TurnedFrame } | null;
+
+/** How many frame elements a selector matches in a document and, for exactly one, the element, whether it reads as hidden, and its box. */
+interface SelectedFrames {
+  readonly count: number;
+  readonly only?: { readonly element: Element; readonly hidden: boolean; readonly box: FrameBox };
+}
+
 /**
  * Builds the readers in the page over the reader `semantics` builds for each
  * read from its name computation `names`, a locate's reads `locatorReads`,
- * the contract's locator rules `resolver`, and its text rule `matchesText`.
- * Serialized with `toString()`, so it closes over nothing of this module;
- * the builtins it names are the ones `READERS` binds around it, which the
- * document had before its own scripts ran.
+ * the contract's locator rules `resolver`, its text rule `matchesText`, the
+ * selector chain `select`, the DOM helpers `dom` over the recorded closed
+ * shadow roots, and `contentInset` (`frameContentInset`). Serialized with
+ * `toString()`, so it closes over nothing of this module; the builtins it
+ * names are the ones `READERS` binds around it, which the document had
+ * before its own scripts ran.
  */
-function createReaders(semantics: typeof createSemanticReader, names: typeof createAccessibleNames, locatorReads: typeof createLocatorReads, resolver: typeof createResolver, { matchesText }: TextMatching) {
+function createReaders(
+  semantics: typeof createSemanticReader,
+  names: typeof createAccessibleNames,
+  locatorReads: typeof createLocatorReads,
+  resolver: typeof createResolver,
+  { matchesText }: TextMatching,
+  select: typeof selectChain,
+  dom: ReturnType<typeof createDom>,
+  contentInset: typeof frameContentInset,
+) {
   /** Whether `fn` reads as the native `JSON.stringify`; false when the page broke `Function.prototype.toString`, so it cannot tell. */
   const nativeStringify = (fn: unknown): boolean => {
     if (typeof fn !== 'function') return false;
@@ -91,15 +144,21 @@ function createReaders(semantics: typeof createSemanticReader, names: typeof cre
    * queries skipping what is hidden from the accessibility tree. Every
    * element through open and recorded closed shadow roots is a candidate, in
    * Playwright's match order: a root's light DOM before the content of its
-   * shadow roots, each root in turn. `selected` holds the elements each
-   * `selector` of the expression matches, read beforehand. In a hidden frame
-   * every element is hidden. Answers the node read of each match, and the
-   * matches; iframe documents are not entered.
+   * shadow roots, each root in turn. `selectors` holds each `selector` of
+   * the expression with its chain parts, matched here by `select`; one the
+   * page cannot parse answers alone, as an `UnparsedSelector`. In a hidden
+   * frame every element is hidden. Answers the node read of each match, and
+   * the matches; iframe documents are not entered.
    */
-  const locate = (options: ReadOptions, expression: string, selected: [string, Element[]][], frameHidden: boolean, key: string): Encoded<RawNodeData[]> => {
+  const locate = (options: ReadOptions, expression: string, selectors: [string, PagePart[]][], frameHidden: boolean): Encoded<RawNodeData[] | UnparsedSelector> => {
+    const selections = new Map<string, Set<Element>>();
+    for (const [selector, parts] of selectors) {
+      const found = select(parts);
+      if (typeof found === 'string') return [encode({ selector, reason: found }), []];
+      selections.set(selector, new Set(found));
+    }
     // A document a navigation just opened has no root yet: nothing in it can match.
     if (document.documentElement === null) return [encode([]), []];
-    const recorded = Reflect.get(globalThis, Symbol.for(key)) as WeakMap<Element, ShadowRoot> | undefined;
     const nodes: Element[] = [];
     const parents = new Map<Element, Element>();
     const walkRoot = (children: Iterable<Element>, host: Element | undefined): void => {
@@ -107,8 +166,8 @@ function createReaders(semantics: typeof createSemanticReader, names: typeof cre
       const walk = (element: Element, parent: Element | undefined): void => {
         nodes.push(element);
         if (parent !== undefined) parents.set(element, parent);
-        const shadow = element.shadowRoot ?? recorded?.get(element);
-        if (shadow) shadows.push([element, shadow]);
+        const shadow = dom.shadowOf(element);
+        if (shadow !== null) shadows.push([element, shadow]);
         for (let child = element.firstElementChild; child !== null; child = child.nextElementSibling) walk(child, element);
       };
       for (const child of children) walk(child, host);
@@ -116,7 +175,6 @@ function createReaders(semantics: typeof createSemanticReader, names: typeof cre
     };
     walkRoot([document.documentElement], undefined);
     const reads = locatorReads(semantics(options, names), options.secureFieldSelector);
-    const selections = new Map(selected.map(([selector, elements]) => [selector, new Set(elements)]));
     const matches = (element: Element, query: SemanticQuery): boolean => {
       if (query.visible === true && (frameHidden || reads.hidden(element))) return false;
       switch (query.kind) {
@@ -197,7 +255,35 @@ function createReaders(semantics: typeof createSemanticReader, names: typeof cre
     return semantics(options, names).disabled(element);
   };
 
-  return Object.freeze({ hidden, tree, locate, disabled });
+  /** How this document lays out its frame element `element` (`FrameBox`). */
+  const frameBox = (element: HTMLElement): FrameBox => {
+    if (element.getClientRects().length === 0) return null;
+    const inset = contentInset(element);
+    if (dom.turned(element)) {
+      const [quad]: (DOMQuad | undefined)[] = 'getBoxQuads' in element && typeof element.getBoxQuads === 'function' ? element.getBoxQuads({ box: 'border', relativeTo: element.ownerDocument }) : [];
+      const corners = quad === undefined ? null : [quad.p1, quad.p2, quad.p3, quad.p4].map(({ x, y }) => ({ x, y }));
+      return { turned: { width: element.offsetWidth, height: element.offsetHeight, inset, quad: corners } };
+    }
+    const rect = element.getBoundingClientRect();
+    const scale = { x: element.offsetWidth > 0 ? rect.width / element.offsetWidth : 1, y: element.offsetHeight > 0 ? rect.height / element.offsetHeight : 1 };
+    return { content: { x: rect.x + inset.x * scale.x, y: rect.y + inset.y * scale.y, width: inset.width * scale.x, height: inset.height * scale.y }, scale };
+  };
+
+  /**
+   * The iframe and frame elements the chain `parts` matches in this document
+   * (`SelectedFrames`): what a locate asks the document about a frame on its
+   * way, in one call. A selector the page cannot parse is its error message.
+   * The frame's window is not read here: see `FRAME_SANDBOX` (`frames.ts`).
+   */
+  const selectFrame = (parts: PagePart[], options: ReadOptions): SelectedFrames | string => {
+    const found = select(parts);
+    if (typeof found === 'string') return found;
+    const frames = found.filter((element): element is HTMLElement => element.localName === 'iframe' || element.localName === 'frame');
+    const [only] = frames;
+    return only === undefined || frames.length > 1 ? { count: frames.length } : { count: 1, only: { element: only, hidden: hidden(only, options), box: frameBox(only) } };
+  };
+
+  return Object.freeze({ tree, locate, disabled, frameBox, selectFrame });
 }
 
 /** The readers a document keeps, by name. */
@@ -214,12 +300,16 @@ export type ReaderResult<K extends ReaderName> = Wire<ReturnType<Readers[K]>>;
 
 /**
  * The readers over the semantic reader, its name computation, a locate's
- * reads, and the contract's locator and text rules, all compiled where the
- * builtins the document had before its own scripts ran shadow the page's.
+ * reads, the contract's locator and text rules, the selector chain, and the
+ * DOM helpers, all compiled where the builtins the document had before its
+ * own scripts ran shadow the page's.
  */
 const READERS = `(() => {
   const { ${BUILTIN_NAMES.join(', ')} } = globalThis[globalThis.Symbol.for(${JSON.stringify(BUILTINS_KEY)})] ?? globalThis;
-  return (${createReaders.toString()})((${createSemanticReader.toString()}), (${createAccessibleNames.toString()}), (${createLocatorReads.toString()}), (${createResolver.toString()}), (${createTextMatching.toString()})());
+  return (${createReaders.toString()})(
+    (${createSemanticReader.toString()}), (${createAccessibleNames.toString()}), (${createLocatorReads.toString()}), (${createResolver.toString()}), (${createTextMatching.toString()})(),
+    (${selectChain.toString()}), (${createDom.toString()})(${JSON.stringify(CLOSED_SHADOW_ROOTS_KEY)}), (${frameContentInset.toString()}),
+  );
 })()`;
 
 /** Where a document keeps its readers: named by their source, so another driver version attached to the same browser keeps its own. */

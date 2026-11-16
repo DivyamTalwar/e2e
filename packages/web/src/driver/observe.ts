@@ -26,11 +26,12 @@ import {
 import { CLOSED_SHADOW_ROOTS_KEY } from '../in-page/closed-shadow.ts';
 import { SECURE_FIELD_SELECTOR, type RawNodeData, type RawObservedNode } from '../in-page/read-node.ts';
 import { cancelled, isStale, releaseQuietly, unlessStale } from '../errors.ts';
-import { contentContext, inViewport, resolveFrames, selectElements, splitFrames, type NodeTarget } from './frames.ts';
+import { contentContext, frameView, inViewport, pageParts, resolveFrames, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
 import { computedStyle, domReady, frameContentInset } from '../in-page/document.ts';
 import { maskSecureFields, unmaskSecureFields } from '../in-page/mask.ts';
+import type { PagePart } from '../in-page/select-chain.ts';
 import type { BidiSession } from './session.ts';
-import { ElementRef } from './script.ts';
+import type { ElementRef } from './script.ts';
 
 /** Shared node budget of one observation. */
 const MAX_OBSERVED_NODES = 3_000;
@@ -143,12 +144,6 @@ export async function traceScreen(session: BidiSession, signal: AbortSignal): Pr
   }
 }
 
-/**
- * Resolves one expression in the document its frame chain names, by the
- * contract's locator rules run in the page (the `locate` reader), which
- * match each element as Playwright's engines do; a `selector` is answered
- * by `browsingContext.locateNodes` first.
- */
 /** Reads `properties` of the computed style of the element an observation's `ref` names, without input or actionability waits. */
 export async function readStyle(session: BidiSession, ref: NodeRef, properties: readonly ComputedStyleProperty[]): Promise<ComputedStyleValues> {
   const target = session.refs.lookupObserved(ref);
@@ -157,15 +152,22 @@ export async function readStyle(session: BidiSession, ref: NodeRef, properties: 
   return style;
 }
 
+/**
+ * Resolves one expression in the document its frame chain names, by the
+ * contract's locator rules run in the page (the `locate` reader), which
+ * match each element as Playwright's engines do and answer every `selector`
+ * in the same call. A node inside a frame is placed in the top-level
+ * viewport.
+ */
 export async function locate(session: BidiSession, expression: LocatorExpression): Promise<SemanticNode[]> {
-  const { chain, context, matches } = await resolveLocator(session, expression);
-  const frameBox = chain.length === 0 ? undefined : await session.frames.viewportBox(session.connection, context);
+  const { chain, frame, matches } = await resolveLocator(session, expression);
+  const view = frameView(frame.boxes);
   // A sole match keeps its expression, so a ref that turns ambiguous before an action is stale instead of acting on one of them.
   const locator = matches.length === 1 ? { locator: expression } : {};
   return matches.map(({ node, element }) => {
-    session.refs.storeLocated(node.ref.id, { element, context, ...locator });
+    session.refs.storeLocated(node.ref.id, { element, context: frame.context, ...locator });
     const { children: _children, ...rest } = node;
-    return inViewport(rest, frameBox, chain);
+    return inViewport(rest, view, chain);
   });
 }
 
@@ -184,50 +186,26 @@ export async function stillLocated(session: BidiSession, target: NodeTarget): Pr
 }
 
 /** The nodes `expression` matches now, each with its element, and the document its frame chain leads to. */
-async function resolveLocator(session: BidiSession, expression: LocatorExpression): Promise<{ chain: string[]; context: string; matches: { node: SemanticNode; element: ElementRef }[] }> {
+async function resolveLocator(session: BidiSession, expression: LocatorExpression): Promise<{ chain: string[]; frame: FramedDocument; matches: { node: SemanticNode; element: ElementRef }[] }> {
   const { chain, inner } = splitFrames(expression);
-  const context = await resolveFrames(session.connection, session.requireContext(), chain, session.frames);
-  const selected = await locateSelectors(session, inner, context);
   const options = { testIdAttribute: session.settings.testIdAttribute, secureFieldSelector: SECURE_FIELD_SELECTOR };
-  const frameHidden = await insideHiddenFrame(session, context, options);
-  const { metadata: nodes, elements } = await session.readEncoded('locate', [options, JSON.stringify(inner), selected, frameHidden, CLOSED_SHADOW_ROOTS_KEY], context);
-  if (!Array.isArray(nodes) || nodes.length !== elements.length) {
+  const frame = await resolveFrames(session, chain, options);
+  const { metadata: nodes, elements } = await session.readEncoded('locate', [options, JSON.stringify(inner), selectorParts(inner), frame.hidden], frame.context);
+  if (!Array.isArray(nodes)) throw unparsedSelector(nodes.selector, nodes.reason);
+  if (nodes.length !== elements.length) {
     throw new EngineError('ENGINE_FAILURE', 'located reads do not align with their elements', { retryable: false });
   }
   const first = session.refs.reserveIds(nodes.length);
-  return { chain, context, matches: nodes.map((raw, index) => ({ node: toSemanticNode({ id: `n${first + index}`, revision: '' }, raw), element: elements[index]! })) };
+  return { chain, frame, matches: nodes.map((raw, index) => ({ node: toSemanticNode({ id: `n${first + index}`, revision: '' }, raw), element: elements[index]! })) };
 }
 
-/**
- * Whether a frame along the chain to `context` is hidden: each frame element's
- * own `hidden` state, read in the document around it, so a cross-origin
- * frame reads too. Everything inside a hidden frame is hidden, and so are the
- * frames under it.
- */
-async function insideHiddenFrame(session: BidiSession, context: string, options: { readonly testIdAttribute: string; readonly secureFieldSelector: string }): Promise<boolean> {
-  for (const frame of session.frames.chain(context)) {
-    if (await session.reader('hidden', [frame.element, options], frame.context)) return true;
-  }
-  return false;
-}
-
-/** The elements every `selector` in the expression matches in `context`, read before the locate that answers the rest. */
-async function locateSelectors(session: BidiSession, expression: LocatorExpression, context: string): Promise<[string, ElementRef[]][]> {
-  const out: [string, ElementRef[]][] = [];
-  for (const selector of selectorsOf(expression)) {
-    const found = await selectElements(session.connection, context, selector);
-    out.push([selector, found.map(({ element }) => element)]);
-  }
-  return out;
-}
-
-/** Every `selector` the expression names. */
-function selectorsOf(expression: LocatorExpression): Set<string> {
-  const selectors = new Set<string>();
+/** Every `selector` the expression names, with the chain parts the page reads it as (`pageParts`). */
+function selectorParts(expression: LocatorExpression): [string, PagePart[]][] {
+  const selectors = new Map<string, PagePart[]>();
   const walk = (node: LocatorExpression): void => {
     switch (node.kind) {
       case 'selector':
-        selectors.add(node.selector);
+        selectors.set(node.selector, pageParts(node.selector));
         return;
       case 'query':
         if (node.scope !== undefined) walk(node.scope);
@@ -247,7 +225,7 @@ function selectorsOf(expression: LocatorExpression): Set<string> {
     }
   };
   walk(expression);
-  return selectors;
+  return [...selectors];
 }
 
 /**

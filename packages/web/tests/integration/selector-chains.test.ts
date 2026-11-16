@@ -4,8 +4,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { selectElements } from '../../src/driver/frames.ts';
 import { openBidiPage, type BidiPage } from '../helpers/bidi-page.ts';
+import { localNames, selectElements } from '../helpers/select-chain.ts';
 
 let page: BidiPage;
 
@@ -20,7 +20,7 @@ afterAll(async () => {
 
 /** The tag names of the elements `selector` matches on the driver. */
 async function names(selector: string): Promise<string[]> {
-  return (await selectElements(page.connection, page.context, selector)).map((each) => each.localName);
+  return localNames(page, await selectElements(page, selector));
 }
 
 /** The tag names `querySelectorAll` matches for `selector`. */

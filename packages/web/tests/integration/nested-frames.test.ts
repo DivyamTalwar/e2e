@@ -151,3 +151,40 @@ describe('a cross-site frame', () => {
     expect(await page.locate(withinFrames(['#site'], buttonNamed('Clicked')))).toHaveLength(1);
   });
 });
+
+describe('a frame located through before its document loaded', () => {
+  let page: WebSession;
+
+  beforeAll(async () => {
+    page = await startWebSession();
+  });
+
+  afterAll(async () => {
+    await page.close();
+  });
+
+  it('still takes a tap the engine sees land', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const late = page.serve('/late-frame', (_request, response) => {
+      void held.then(() => {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end('<button onclick="this.textContent = \'Clicked\'">Press</button>');
+      });
+    });
+    await page.setContent('<p>host</p>');
+    await page.browser.evaluate((src: string) => {
+      const frame = document.createElement('iframe');
+      frame.id = 'late';
+      frame.src = src;
+      document.body.append(frame);
+      return null;
+    }, late);
+    // The frame shows its first, empty document. Whatever this locate answers, it leaves that document's own world alone.
+    await page.engine.locate!(withinFrames(['#late'], buttonNamed('Press')), page.op(500)).catch(() => undefined);
+    release();
+    await expect.poll(async () => (await page.locate(withinFrames(['#late'], buttonNamed('Press')))).length).toBe(1);
+    await page.act(withinFrames(['#late'], buttonNamed('Press')), { kind: 'tap' });
+    expect(await page.locate(withinFrames(['#late'], buttonNamed('Clicked')))).toHaveLength(1);
+  });
+});

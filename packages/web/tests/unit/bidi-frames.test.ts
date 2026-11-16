@@ -6,9 +6,12 @@
 
 import { describe, expect, it } from 'vitest';
 import type { LocatorExpression, SemanticNode } from '@e2e-dev/core/engine';
-import { FrameRegistry, inViewport, pageParts, resolveFrames, splitFrames } from '../../src/driver/frames.ts';
+import { ContextTree } from '../../src/driver/context-tree.ts';
+import { FrameRegistry, frameView, inViewport, pageParts, resolveFrames, splitFrames } from '../../src/driver/frames.ts';
 import { project, type Projection } from '../../src/driver/projection.ts';
+import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
+import type { FrameBox } from '../../src/in-page/readers.ts';
 import { FakeBidi } from '../helpers/bidi-fake.ts';
 import { ElementRef } from '../../src/driver/script.ts';
 
@@ -16,74 +19,105 @@ import { ElementRef } from '../../src/driver/script.ts';
 const text = (value: string) => ({ kind: 'string' as const, value, exact: true });
 const note: LocatorExpression = { kind: 'query', query: { kind: 'label', value: text('Note') } };
 
-/** Scripts the one frame lookup per context: the iframes it matches and, for exactly one, its `contentWindow`. */
-function frames(iframes: Record<string, string[]>, windows: Record<string, string>): FakeBidi {
-  return new FakeBidi().on('script.callFunction', (params) => {
-    const found = iframes[String((params['target'] as { context: string }).context)] ?? [];
-    const only = found.length === 1 ? found[0]! : undefined;
-    const value = [
-      ['count', { type: 'number', value: found.length }],
-      ['element', only === undefined ? { type: 'null' } : { type: 'node', sharedId: only }],
-      ['window', only === undefined || windows[only] === undefined ? { type: 'null' } : { type: 'window', value: { context: windows[only] } }],
-    ];
+const OPTIONS = { testIdAttribute: 'data-testid', secureFieldSelector: 'input' };
+
+/** A number as BiDi serializes it. */
+const number = (value: number) => ({ type: 'number', value });
+
+/** A box of numbers as BiDi serializes it. */
+const numbers = (values: Record<string, number>) => ({ type: 'object', value: Object.entries(values).map(([key, value]) => [key, number(value)]) });
+
+/** One iframe a document holds: its element, its window when it has a document, and whether it is hidden. */
+interface ScriptedFrame {
+  readonly element: string;
+  readonly window?: string;
+  readonly hidden?: boolean;
+}
+
+/**
+ * A session whose tab is `top`, on a peer that scripts the frame lookup per
+ * context (the iframes it matches and, for exactly one, the element, whether
+ * it is hidden, and a 100 by 100 content box at (10, 20)) and each iframe's
+ * `contentWindow`, which it answers in a sandbox realm alone.
+ */
+function frames(iframes: Record<string, ScriptedFrame[]>): { fake: FakeBidi; session: BidiSession } {
+  const fake = new FakeBidi().on('script.callFunction', (params) => {
+    const target = params['target'] as { context: string; sandbox?: string };
+    const found = iframes[target.context] ?? [];
+    const [element] = params['arguments'] as { sharedId?: string }[];
+    if (element?.sharedId !== undefined) {
+      const window = target.sandbox === undefined ? undefined : found.find((frame) => frame.element === element.sharedId)?.window;
+      return { result: { type: 'success', realm: 'r', result: window === undefined ? { type: 'null' } : { type: 'window', value: { context: window } } } };
+    }
+    const [only] = found;
+    const value: unknown[] = [['count', number(found.length)]];
+    if (only !== undefined && found.length === 1) {
+      value.push(['only', { type: 'object', value: [
+        ['element', { type: 'node', sharedId: only.element }],
+        ['hidden', { type: 'boolean', value: only.hidden === true }],
+        ['box', { type: 'object', value: [['content', numbers({ x: 10, y: 20, width: 100, height: 100 })], ['scale', numbers({ x: 1, y: 1 })]] }],
+      ] }]);
+    }
     return { result: { type: 'success', realm: 'r', result: { type: 'object', value } } };
   });
+  const session = new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS.chromium } as never, { configuredHeaders: () => undefined, holdRequests: false, media: {}, viewport: null } as never, { credentials: undefined } as never, new ContextTree());
+  session.context = 'top';
+  return { fake, session };
 }
 
 describe('resolveFrames', () => {
   it('walks each selector into the document of the frame before it and records the chain', async () => {
-    const fake = frames({ top: ['outer'], 'outer-doc': ['inner'] }, { outer: 'outer-doc', inner: 'inner-doc' });
-    const registry = new FrameRegistry();
-    await expect(resolveFrames(fake.connection, 'top', ['#outer', '#inner'], registry)).resolves.toBe('inner-doc');
-    expect(registry.chain('inner-doc')).toEqual([
+    const { fake, session } = frames({ top: [{ element: 'outer', window: 'outer-doc' }], 'outer-doc': [{ element: 'inner', window: 'inner-doc' }] });
+    const step = { content: { x: 10, y: 20, width: 100, height: 100 }, scale: { x: 1, y: 1 } };
+    await expect(resolveFrames(session, ['#outer', '#inner'], OPTIONS)).resolves.toEqual({ context: 'inner-doc', hidden: false, boxes: [step, step] });
+    expect(session.frames.chain('inner-doc')).toEqual([
       { element: new ElementRef('outer'), context: 'top' },
       { element: new ElementRef('inner'), context: 'outer-doc' },
     ]);
-    expect(registry.chain('top')).toEqual([]);
-    expect(fake.commands('script.callFunction')).toHaveLength(2);
+    expect(session.frames.chain('top')).toEqual([]);
+    expect(fake.commands('script.callFunction')).toHaveLength(4);
+  });
+
+  it('reads a document as hidden when a frame on the way is', async () => {
+    const { session } = frames({ top: [{ element: 'outer', window: 'outer-doc', hidden: true }], 'outer-doc': [{ element: 'inner', window: 'inner-doc' }] });
+    await expect(resolveFrames(session, ['#outer', '#inner'], OPTIONS)).resolves.toMatchObject({ context: 'inner-doc', hidden: true });
+    await expect(resolveFrames(session, [], OPTIONS)).resolves.toEqual({ context: 'top', hidden: false, boxes: [] });
   });
 
   it('is retryable FRAME_NOT_FOUND for no match or no document and FRAME_AMBIGUOUS for two', async () => {
-    await expect(resolveFrames(frames({}, {}).connection, 'top', ['#editor'], new FrameRegistry())).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', retryable: true });
-    await expect(resolveFrames(frames({ top: ['a'] }, {}).connection, 'top', ['#editor'], new FrameRegistry())).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', retryable: true });
-    await expect(resolveFrames(frames({ top: ['a', 'b'] }, {}).connection, 'top', ['iframe'], new FrameRegistry())).rejects.toMatchObject({ code: 'FRAME_AMBIGUOUS' });
+    await expect(resolveFrames(frames({}).session, ['#editor'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', retryable: true });
+    await expect(resolveFrames(frames({ top: [{ element: 'a' }] }).session, ['#editor'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', retryable: true });
+    await expect(resolveFrames(frames({ top: [{ element: 'a' }, { element: 'b' }] }).session, ['iframe'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_AMBIGUOUS' });
   });
 });
 
-/** A peer whose `FRAME_BOX` reads answer each iframe's content box and scale by its shared id. */
-function measured(steps: Record<string, { content: Record<string, number>; scale?: Record<string, number> }>): FakeBidi {
-  const object = (values: Record<string, number>) => ({ type: 'object', value: Object.entries(values).map(([key, value]) => [key, { type: 'number', value }]) });
-  return new FakeBidi().on('script.callFunction', (params) => {
-    const element = (params['arguments'] as { sharedId: string }[])[0]!;
-    const step = steps[element.sharedId]!;
-    return { result: { type: 'success', realm: 'r', result: { type: 'object', value: [['content', object(step.content)], ['scale', object(step.scale ?? { x: 1, y: 1 })]] } } };
-  });
-}
-
-/** A registry holding `inner-doc` in `inner`, held by `outer` in the top document. */
-function nested(): FrameRegistry {
-  const registry = new FrameRegistry();
-  registry.enter('outer-doc', { element: new ElementRef('outer'), context: 'top' });
-  registry.enter('inner-doc', { element: new ElementRef('inner'), context: 'outer-doc' });
+/** A registry holding `inner-doc` in `inner`, held by `outer` in the top document, whose documents read each frame's box as `boxes` has it by shared id. */
+function nested(boxes: Record<string, FrameBox>, ids: { outer: string; inner: string } = { outer: 'outer', inner: 'inner' }): FrameRegistry {
+  const registry = new FrameRegistry((frame) => Promise.resolve(boxes[frame.element.sharedId]!));
+  registry.enter('outer-doc', { element: new ElementRef(ids.outer), context: 'top' });
+  registry.enter('inner-doc', { element: new ElementRef(ids.inner), context: 'outer-doc' });
   return registry;
 }
 
-describe('FrameRegistry.viewportBox', () => {
-  it('nests each holding frame’s content box into the top-level viewport', async () => {
-    const fake = measured({ outer: { content: { x: 102, y: 52, width: 396, height: 296 } }, inner: { content: { x: 10, y: 20, width: 100, height: 100 } } });
-    const registry = nested();
-    await expect(registry.viewportBox(fake.connection, 'inner-doc')).resolves.toEqual({ origin: { x: 112, y: 72 }, scale: { x: 1, y: 1 }, clip: { x: 112, y: 72, width: 100, height: 100 } });
-    await expect(registry.viewportBox(fake.connection, 'top')).resolves.toBeUndefined();
+describe('frameView', () => {
+  const box = (x: number, y: number, width: number, height: number, scale = 1): FrameBox => ({ content: { x, y, width, height }, scale: { x: scale, y: scale } });
+
+  it('nests each holding frame’s content box into the top-level viewport', () => {
+    expect(frameView([box(102, 52, 396, 296), box(10, 20, 100, 100)])).toEqual({ origin: { x: 112, y: 72 }, scale: { x: 1, y: 1 }, clip: { x: 112, y: 72, width: 100, height: 100 } });
+    expect(frameView([])).toBeUndefined();
   });
 
-  it('keeps an inner frame’s origin where it lies when its parent clips it', async () => {
-    const fake = measured({ outer: { content: { x: 100, y: 0, width: 400, height: 300 } }, inner: { content: { x: -50, y: 10, width: 200, height: 100 } } });
-    await expect(nested().viewportBox(fake.connection, 'inner-doc')).resolves.toEqual({ origin: { x: 50, y: 10 }, scale: { x: 1, y: 1 }, clip: { x: 100, y: 10, width: 150, height: 100 } });
+  it('keeps an inner frame’s origin where it lies when its parent clips it', () => {
+    expect(frameView([box(100, 0, 400, 300), box(-50, 10, 200, 100)])).toEqual({ origin: { x: 50, y: 10 }, scale: { x: 1, y: 1 }, clip: { x: 100, y: 10, width: 150, height: 100 } });
   });
 
-  it('scales an inner frame’s coordinates by the outer frame’s transform', async () => {
-    const fake = measured({ outer: { content: { x: 0, y: 0, width: 200, height: 200 }, scale: { x: 0.5, y: 0.5 } }, inner: { content: { x: 100, y: 40, width: 100, height: 100 } } });
-    await expect(nested().viewportBox(fake.connection, 'inner-doc')).resolves.toEqual({ origin: { x: 50, y: 20 }, scale: { x: 0.5, y: 0.5 }, clip: { x: 50, y: 20, width: 50, height: 50 } });
+  it('scales an inner frame’s coordinates by the outer frame’s transform', () => {
+    expect(frameView([box(0, 0, 200, 200, 0.5), box(100, 40, 100, 100)])).toEqual({ origin: { x: 50, y: 20 }, scale: { x: 0.5, y: 0.5 }, clip: { x: 50, y: 20, width: 50, height: 50 } });
+  });
+
+  it('is null through a frame that lays out no box or is turned', () => {
+    expect(frameView([box(0, 0, 200, 200), null])).toBeNull();
+    expect(frameView([{ turned: { width: 100, height: 100, inset: { x: 0, y: 0, width: 100, height: 100 }, quad: null } }])).toBeNull();
   });
 });
 
@@ -92,19 +126,12 @@ function flatQuad(x: number, y: number, width: number, height: number): number[]
   return [x, y, x + width, y, x + width, y + height, x, y + height];
 }
 
-/**
- * A Chromium peer where both frames are turned: each reports its 100 by 100
- * border box and no inset, CDP places `outer` at (100, 50) and `inner` at
- * `innerQuad`, and `sessions` names each document's CDP session.
- */
+/** A frame turned in a 100 by 100 border box with no inset, whose quad only CDP reports. */
+const TURNED: FrameBox = { turned: { width: 100, height: 100, inset: { x: 0, y: 0, width: 100, height: 100 }, quad: null } };
+
+/** A Chromium peer where CDP places `outer` at (100, 50) and `inner` at `innerQuad`, and `sessions` names each document's CDP session. */
 function turnedChromium(innerQuad: number[], sessions: Record<string, string>): FakeBidi {
-  const number = (value: number) => ({ type: 'number', value });
-  const box = { type: 'object', value: [['width', number(100)], ['height', number(100)], ['inset', { type: 'object', value: [['x', number(0)], ['y', number(0)], ['width', number(100)], ['height', number(100)]] }], ['quad', { type: 'null' }]] };
   return new FakeBidi()
-    .on('script.callFunction', (params) => {
-      const measuresBorder = String(params['functionDeclaration']).includes('getBoxQuads');
-      return { result: { type: 'success', realm: 'r', result: measuresBorder ? box : { type: 'string', value: 'turned' } } };
-    })
     .on('goog:cdp.getSession', (params) => ({ result: { session: sessions[String(params['context'])] } }))
     .on('goog:cdp.sendCommand', (params) => {
       const { backendNodeId } = params['params'] as { backendNodeId: number };
@@ -112,12 +139,9 @@ function turnedChromium(innerQuad: number[], sessions: Record<string, string>): 
     });
 }
 
-/** `nested()` with element ids that carry CDP backend node ids, as chromium-bidi mints them. */
+/** `nested()` with both frames turned, and element ids that carry CDP backend node ids, as chromium-bidi mints them. */
 function nestedChromium(): FrameRegistry {
-  const registry = new FrameRegistry();
-  registry.enter('outer-doc', { element: new ElementRef('f.A.d.B.e.11'), context: 'top' });
-  registry.enter('inner-doc', { element: new ElementRef('f.C.d.D.e.22'), context: 'outer-doc' });
-  return registry;
+  return nested({ 'f.A.d.B.e.11': TURNED, 'f.C.d.D.e.22': TURNED }, { outer: 'f.A.d.B.e.11', inner: 'f.C.d.D.e.22' });
 }
 
 /** Where `maps`, innermost last, take `point` in the top-level viewport. */
@@ -139,10 +163,16 @@ describe('FrameRegistry.frameMaps', () => {
   });
 
   it('maps an unturned chain by each frame’s content box and scale, without CDP', async () => {
-    const fake = measured({ outer: { content: { x: 100, y: 50, width: 200, height: 200 }, scale: { x: 0.5, y: 0.5 } }, inner: { content: { x: 10, y: 20, width: 100, height: 100 } } });
-    const maps = await nested().frameMaps(fake.connection, 'inner-doc', BROWSER_TRAITS.chromium);
+    const fake = new FakeBidi();
+    const registry = nested({ outer: { content: { x: 100, y: 50, width: 200, height: 200 }, scale: { x: 0.5, y: 0.5 } }, inner: { content: { x: 10, y: 20, width: 100, height: 100 }, scale: { x: 1, y: 1 } } });
+    const maps = await registry.frameMaps(fake.connection, 'inner-doc', BROWSER_TRAITS.chromium);
     expect(toTop(maps!, { x: 4, y: 4 })).toEqual({ x: 107, y: 62 });
-    expect(fake.commands('goog:cdp.getSession')).toEqual([]);
+    expect(fake.sent).toEqual([]);
+  });
+
+  it('maps nothing through a frame that lays out no box', async () => {
+    const registry = nested({ outer: null, inner: { content: { x: 10, y: 20, width: 100, height: 100 }, scale: { x: 1, y: 1 } } });
+    await expect(registry.frameMaps(new FakeBidi().connection, 'inner-doc', BROWSER_TRAITS.chromium)).resolves.toBeNull();
   });
 });
 
