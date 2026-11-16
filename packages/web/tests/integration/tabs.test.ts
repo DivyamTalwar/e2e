@@ -11,7 +11,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { EngineCleanupContext, EngineFixtureContext, EngineHandle, EngineSnapshot, OperationContext, SemanticNode } from '@e2e-dev/core/engine';
+import { TestError, type EngineCleanupContext, type EngineFixtureContext, type EngineHandle, type EngineSnapshot, type OperationContext, type SemanticNode } from '@e2e-dev/core/engine';
 import type { Browser } from '../../src/index.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
 import { onFirefox, testWeb } from '../helpers/web-session.ts';
@@ -314,6 +314,15 @@ describe('tabs', () => {
         code: 'ACTION_FAILED',
         message: expect.stringMatching(/^no tab opened within 500ms/),
       });
+      expect(browser.tabs()).toHaveLength(1);
+    });
+  });
+
+  it('waitForPopup keeps a trigger error as the trigger threw it, classified or not', async () => {
+    await withAttempt(async (_engine, browser) => {
+      for (const failure of [new TestError('ASSERTION_FAILED', 'trigger assertion'), new Error('trigger broke')]) {
+        await expect(browser.waitForPopup(async () => { throw failure; })).rejects.toBe(failure);
+      }
       expect(browser.tabs()).toHaveLength(1);
     });
   });

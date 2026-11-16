@@ -280,9 +280,10 @@ describe('browser.route decisions', () => {
     }
   });
 
-  it('keeps a trigger error', async () => {
-    const failure = new TestError('ASSERTION_FAILED', 'trigger assertion');
-    await expect(browser.waitForDownloads(async () => { throw failure; }, { count: 2, timeout: 30 })).rejects.toBe(failure);
+  it('keeps a trigger error as the trigger threw it, classified or not', async () => {
+    for (const failure of [new TestError('ASSERTION_FAILED', 'trigger assertion'), new Error('trigger broke')]) {
+      await expect(browser.waitForDownloads(async () => { throw failure; }, { count: 2, timeout: 30 })).rejects.toBe(failure);
+    }
   });
 
   it('clears every test route, keeps configured headers, and can register again', async () => {

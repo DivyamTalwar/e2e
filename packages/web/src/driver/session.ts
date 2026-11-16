@@ -78,6 +78,8 @@ export interface AttemptSettings {
   readonly credentials: { readonly username: string; readonly password: string } | undefined;
   /** The provider that serves downloads off a remote browser's disk; undefined for a local browser. */
   readonly remoteDownloads?: LeaseDownloads | undefined;
+  /** Why no download can be read back, when the browser's source serves none (`BrowserSource.downloadLimit`). */
+  readonly downloadLimit?: string | undefined;
 }
 
 /**
@@ -193,8 +195,8 @@ export class BidiSession {
   readonly dialogs = new DialogRouter(this.latch);
   readonly network: AttemptNetwork;
   readonly downloads: AttemptDownloads;
-  /** The media features in effect: the configured ones, updated by `browser.emulateMedia`. */
-  media: WebMedia;
+  /** The media features in effect: the configured ones, updated by `emulateMedia`. */
+  private media: WebMedia;
   video: BidiVideo | undefined;
   /** The browser provider's own recording, which takes the place of `video` when the provider records. */
   providerVideo: ProviderVideo | undefined;
@@ -249,7 +251,7 @@ export class BidiSession {
       },
       holdAll: settings.holdRequests,
     });
-    this.downloads = new AttemptDownloads(browser.connection, attempt.remoteDownloads);
+    this.downloads = new AttemptDownloads(browser.connection, attempt.remoteDownloads, attempt.downloadLimit);
     this.tabs = new AttemptTabs({
       shown: () => this.context,
       prepare: async (context) => {
@@ -417,11 +419,25 @@ export class BidiSession {
   }
 
   /**
+   * Changes the attempt's media features from the next paint on
+   * (`browser.emulateMedia`). A browser that does not emulate reduced motion
+   * (Firefox overrides only `prefers-color-scheme` over BiDi) refuses a
+   * reduced-motion change; `web({ reducedMotion })` still applies at launch.
+   */
+  async emulateMedia(media: WebMedia): Promise<void> {
+    if (!this.browser.traits.emulatesReducedMotion && media.reducedMotion !== undefined) {
+      throw new EngineError('UNSUPPORTED_CAPABILITY', 'browser.emulateMedia({ reducedMotion }) is not supported on Firefox, which overrides only prefers-color-scheme over WebDriver BiDi; set web({ reducedMotion }) instead', { retryable: false });
+    }
+    this.media = { ...this.media, ...media };
+    await this.applyMedia();
+  }
+
+  /**
    * Applies the media features (`emulation.setMediaFeaturesOverride`); a
    * browser that does not emulate reduced motion takes it as a launch
    * preference.
    */
-  async applyMedia(userContext = this.userContext): Promise<void> {
+  private async applyMedia(userContext = this.userContext): Promise<void> {
     if (this.media.colorScheme === undefined && this.media.reducedMotion === undefined) return;
     const features: Emulation.MediaFeatures = obj({
       'prefers-color-scheme': this.media.colorScheme === 'no-preference' ? null : this.media.colorScheme,
@@ -588,6 +604,12 @@ export class BidiSession {
   /** Calls a page function in `context` (the tab by default). */
   call(declaration: string, args: readonly PageArgument[] = [], options?: CallOptions, context?: string): Promise<PageValue> {
     return callFunction(this.connection, context ?? this.requireContext(), declaration, args, options);
+  }
+
+  /** Calls a page function the test compiled (`compileEvaluation`) with `arg` and returns its whole result; the test's code may change the page, as input would. */
+  evaluate(declaration: string, arg: PageArgument | undefined): Promise<PageValue> {
+    this.mutated();
+    return this.call(declaration, arg === undefined ? [] : [arg], { awaitPromise: true, maxObjectDepth: null });
   }
 
   /**

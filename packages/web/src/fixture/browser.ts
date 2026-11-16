@@ -6,11 +6,15 @@
  * `expect(browser)` reaches the matchers attached through
  * `context.expectable`.
  *
- * Layering rule: validation (`resolveUrl`, JSON checks, cookie URLs, the
- * download trigger) runs outside the surface's guard, so a runner error
- * keeps its classification and only driver faults are translated. The URL
- * rule is never re-implemented here: `context.app.resolveUrl` is the one
- * place that says which URLs a test may open.
+ * Each method binds one driver call through the surface's `guard`, as
+ * `engine.ts` binds the contract hooks: the label, the call, and how the
+ * guard treats it.
+ *
+ * Layering rule: validation (`resolveUrl`, JSON checks, cookie URLs) runs
+ * outside the guard, so a runner error keeps its classification and only
+ * driver faults are translated. The URL rule is never re-implemented here:
+ * `context.app.resolveUrl` is the one place that says which URLs a test may
+ * open.
  */
 
 import type { Network, Storage } from 'webdriver-bidi-protocol';
@@ -25,28 +29,39 @@ import {
   type FixtureOperation,
   type FixtureOperations,
   type LocatorExpression,
-  type OperationContext,
 } from '@e2e-dev/core/engine';
 import { createBrowserExpectation } from './expectation.ts';
-import type { Browser, BrowserExpectation, BrowserTab, Cookie, FrameScreen, WebResponse } from './types.ts';
+import type { Browser, BrowserExpectation, BrowserTab, FrameScreen, WebResponse } from './types.ts';
 import { initScriptLabel, testInitScriptSource } from '../init-scripts.ts';
 import { mediaLabel } from '../options.ts';
 import { evaluateInPage } from '../in-page/evaluation.ts';
+import { documentTitle } from '../in-page/page.ts';
 import { routePatternMatches, routePatternsEqual } from '../driver/route-pattern.ts';
 import { cookieTargets, requireCookieFilter, requireDownloadCount, requireMedia } from './arguments.ts';
+import { typeInto } from '../driver/actions.ts';
+import type { OperationBudget } from '../driver/budget.ts';
+import { deleteCookies, readCookies, writeCookies } from '../driver/cookies.ts';
+import { saveDownloads, type SavedDownload } from '../driver/downloads.ts';
 import { moveSources, pressDownSources, releaseSources, wheelSources } from '../driver/input-sources.ts';
+import { fixtureKeyStroke } from '../driver/keyboard.ts';
 import type { InterceptedRequest } from '../driver/network.ts';
 import { readResponseBody, runRouteHandler, waitedResponse, webResponse } from './routes.ts';
-import type { AttemptScope, BidiSurface } from '../driver/surface.ts';
+import type { BidiSession } from '../driver/session.ts';
+import { goto, reload, traverse } from '../driver/steering.ts';
+import type { AttemptScope, BidiSurface, GuardKind } from '../driver/surface.ts';
 import type { PageArgument } from '../driver/script.ts';
 import type { AttemptTab } from '../driver/tabs.ts';
 
 /** Builds the attempt's `browser` fixture over the driver's surface. */
 export function createBrowserFixture(surface: BidiSurface, context: EngineFixtureContext): Browser {
-  const navigation = (api: string, options: { timeout?: number } | undefined): OperationContext =>
-    context.operation(stepTimeout(options?.timeout, api) ?? context.timeouts.test);
-  const currentUrl = (deadline?: Deadline): Promise<string> => surface.url(context.operation(deadline?.remaining()));
-  const currentTitle = (deadline?: Deadline): Promise<string> => surface.title(context.operation(deadline?.remaining()));
+  /** Runs one driver call under the surface's guard, within the action timeout. */
+  const run = <T>(label: string, work: (session: BidiSession, budget: OperationBudget) => Promise<T>, kind?: GuardKind): Promise<T> =>
+    surface.guard(context.operation(), label, work, kind);
+  /** Runs one navigation within the call's own timeout, else the test's, and shows the trace the screen it left. */
+  const navigate = (api: string, options: { timeout?: number } | undefined, work: (session: BidiSession, budget: OperationBudget) => Promise<void>): Promise<void> =>
+    surface.guard(context.operation(stepTimeout(options?.timeout, api) ?? context.timeouts.test), 'navigation', work, { traced: true });
+  const currentUrl = (deadline?: Deadline): Promise<string> => surface.guard(context.operation(deadline?.remaining()), 'url', (session) => session.currentUrl());
+  const currentTitle = (deadline?: Deadline): Promise<string> => surface.guard(context.operation(deadline?.remaining()), 'title', (session) => session.run(documentTitle, []));
   const expectation = createBrowserExpectation({
     currentUrl,
     currentTitle,
@@ -65,22 +80,25 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     const known = tabHandles.get(tab);
     if (known !== undefined) return known;
     const handle = context.fixture<BrowserTab>('tab', {
-      url: () => surface.tabUrl(tab, context.operation()),
-      title: () => surface.tabTitle(tab, context.operation()),
+      url: () => run('url', (session) => session.currentUrl(tab.context)),
+      title: () => run('title', (session) => session.run(documentTitle, [], tab.context)),
       isActive: () => surface.activeTab() === tab,
       isClosed: () => tab.closed,
-      activate: () => surface.showTab(tab, context.operation()),
-      close: () => surface.closeTab(tab, context.operation()),
+      activate: () => run('tab', (session) => session.tabs.show(tab)),
+      close: () => run('tab', (session) => session.tabs.close(tab)),
     }, { url: tabAction, title: tabAction, activate: tabAction, close: tabAction });
     tabHandles.set(tab, handle);
     return handle;
   };
 
   const browser: Omit<Browser, keyof Expectable<BrowserExpectation>> = {
-    goto: (url, options) => surface.goto(context.app.resolveUrl(url), options?.waitUntil ?? 'load', navigation('browser.goto', options)),
-    reload: (options) => surface.reload(navigation('browser.reload', options)),
-    back: (options) => surface.back(navigation('browser.back', options)),
-    forward: (options) => surface.forward(navigation('browser.forward', options)),
+    goto(url, options) {
+      const resolved = context.app.resolveUrl(url);
+      return navigate('browser.goto', options, (session, { signal }) => goto(session, resolved, options?.waitUntil ?? 'load', signal));
+    },
+    reload: (options) => navigate('browser.reload', options, (session, { signal }) => reload(session, signal)),
+    back: (options) => navigate('browser.back', options, (session, { timeoutMs, signal }) => traverse(session, -1, timeoutMs, signal)),
+    forward: (options) => navigate('browser.forward', options, (session, { timeoutMs, signal }) => traverse(session, 1, timeoutMs, signal)),
     url: () => currentUrl(),
     title: () => currentTitle(),
     waitForURL: (url, options) => {
@@ -90,15 +108,16 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     locator: (selector) => context.locator({ kind: 'selector', selector: requireSelector('browser.locator', selector) }),
     frameLocator: (selector) => frameScreen(context, [requireSelector('browser.frameLocator', selector)]),
     evaluate<T extends JsonValue>(fn: string | ((arg?: never) => T | Promise<T>), arg?: JsonValue): Promise<T> {
-      return evaluateInPage(fn, arg, (evaluate, input) => surface.evaluate(evaluate.toString(), input as PageArgument | undefined, context.operation()));
+      return evaluateInPage(fn, arg, (evaluate, input) => run('evaluate', (session) => session.evaluate(evaluate.toString(), input as PageArgument | undefined), { testCode: true }));
     },
     async addInitScript(script: unknown, ...rest: unknown[]) {
       const source = await testInitScriptSource(script, rest.length === 0 ? undefined : { arg: rest[0] }, (file) => surface.projectPath(file));
-      await surface.addInitScript(source, context.operation());
+      await run('addInitScript', (session) => session.addInitScript(source));
     },
     route(pattern, handler) {
-      return surface.route({
-        pattern: toTextPattern(pattern),
+      const wirePattern = toTextPattern(pattern);
+      return run('route', (session) => session.network.addRoute({
+        pattern: wirePattern,
         handle: (request, decisions) => {
           const work = runRouteHandler(
             handler,
@@ -111,58 +130,39 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
           latch.track('route', work);
           return work;
         },
-      }, context.operation());
+      }));
     },
     unroute(pattern) {
       const wirePattern = toTextPattern(pattern);
-      return surface.unroute((route) => routePatternsEqual(route.pattern, wirePattern), context.operation());
+      return run('unroute', async (session) => session.network.removeRoutes((route) => routePatternsEqual(route.pattern, wirePattern)));
     },
-    unrouteAll: () => surface.unroute(() => true, context.operation()),
+    unrouteAll: () => run('unroute', async (session) => session.network.removeRoutes(() => true)),
     async waitForResponse(pattern, options) {
       const wirePattern = toTextPattern(pattern);
-      const response = await surface.waitForResponse((url) => routePatternMatches(wirePattern, url), context.operation(stepTimeout(options?.timeout, 'browser.waitForResponse')));
+      const response = await surface.guard(
+        context.operation(stepTimeout(options?.timeout, 'browser.waitForResponse')),
+        'waitForResponse',
+        (session, { signal }) => session.network.waitForResponse((url) => routePatternMatches(wirePattern, url), signal),
+      );
       return waitedResponse(context, response, readResponseBody('waitForResponse', () => response.body()));
     },
-    cookies: async () => (await surface.cookies(context.operation())).map(toCookie),
+    cookies: () => run('cookies', readCookies),
     setCookies(cookies) {
       const targets = cookieTargets(cookies, context);
-      const partial = cookies.map((cookie, index): Storage.PartialCookie => {
-        const target = targets[index]!;
-        const url = 'url' in target ? new URL(target.url) : undefined;
-        return {
-          name: cookie.name,
-          value: { type: 'string', value: cookie.value },
-          domain: url?.hostname ?? ('domain' in target ? target.domain : ''),
-          path: url === undefined ? ('path' in target ? target.path : '/') : url.pathname.slice(0, url.pathname.lastIndexOf('/') + 1),
-          ...(cookie.expires !== undefined && cookie.expires >= 0 ? { expiry: Math.floor(cookie.expires) } : {}),
-          ...(cookie.httpOnly !== undefined ? { httpOnly: cookie.httpOnly } : {}),
-          secure: cookie.secure ?? url?.protocol === 'https:',
-          ...(cookie.sameSite !== undefined ? { sameSite: cookie.sameSite.toLowerCase() as Network.SameSite } : {}),
-        };
-      });
-      return surface.setCookies(partial, context.operation());
+      return run('setCookies', (session) => writeCookies(session, cookies, targets));
     },
     async clearCookies(options) {
       requireCookieFilter(options);
-      const fields = ['name', 'domain', 'path'] as const;
-      const operation = context.operation();
-      if (fields.every((field) => typeof options?.[field] !== 'object')) {
-        const filter = Object.fromEntries(fields.flatMap((field) => (options?.[field] === undefined ? [] : [[field, options[field]]])));
-        return surface.deleteCookies([filter], operation);
-      }
-      const matches = (await surface.cookies(operation)).filter((cookie) =>
-        fields.every((field) => {
-          const wanted = options?.[field];
-          return wanted === undefined || (typeof wanted === 'string' ? cookie[field] === wanted : new RegExp(wanted.source, wanted.flags).test(cookie[field]));
-        }),
-      );
-      return surface.deleteCookies(matches.map(({ name, domain, path }) => ({ name, domain, path })), operation);
+      return run('clearCookies', (session) => deleteCookies(session, options));
     },
     setViewport: async (size) => {
-      await surface.setViewport(size, context.operation());
+      await run('setViewport', (session) => session.setViewport(size));
       context.attachViewport({ width: size.width, height: size.height, scale: 1 });
     },
-    emulateMedia: (media) => surface.emulateMedia(requireMedia(media), context.operation()),
+    emulateMedia(media) {
+      const requested = requireMedia(media);
+      return run('emulateMedia', (session) => session.emulateMedia(requested));
+    },
     // Async so the harness records the registration as a `browser.onDialog` step.
     async onDialog(handler) {
       const unsubscribe = surface.onDialog(handler);
@@ -171,31 +171,26 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     tabs: () => surface.tabs().map(tabHandle),
     async waitForPopup(trigger, options) {
       rejectUnknownOptions('browser.waitForPopup', options, ['timeout']);
-      return tabHandle(await surface.waitForPopup(trigger, context.operation(stepTimeout(options?.timeout, 'browser.waitForPopup'))));
+      const operation = context.operation(stepTimeout(options?.timeout, 'browser.waitForPopup'));
+      return tabHandle(await surface.guard(operation, 'browser.waitForPopup', (session, budget) => session.tabs.waitForPopup(trigger, budget), { trigger: true }));
     },
-    newTab: async () => tabHandle(await surface.newTab(context.operation())),
+    newTab: async () => tabHandle(await run('tab', (session) => session.newTab())),
     async waitForDownload(trigger, options) {
       const [file] = await downloads(surface, context, trigger, 1, options?.timeout, 'browser.waitForDownload');
       return file!;
     },
     waitForDownloads: (trigger, options) => downloads(surface, context, trigger, requireDownloadCount(options), options.timeout, 'browser.waitForDownloads'),
     keyboard: {
-      down: (key) => surface.keyboard('keyboard.down', key, 'keyDown', context.operation()),
-      up: (key) => surface.keyboard('keyboard.up', key, 'keyUp', context.operation()),
-      press: (key) => surface.keyboard('keyboard.press', key, 'press', context.operation()),
-      type: (text) => surface.typeKeys(text, context.operation()),
+      down: (key) => run('keyboard.down', (session, { signal }) => session.input.key(fixtureKeyStroke(key, 'keyDown'), signal), { input: true }),
+      up: (key) => run('keyboard.up', (session, { signal }) => session.input.key(fixtureKeyStroke(key, 'keyUp'), signal), { input: true }),
+      press: (key) => run('keyboard.press', (session, { signal }) => session.input.key(fixtureKeyStroke(key, 'press'), signal), { input: true }),
+      type: (text) => run('keyboard.type', (session, { signal }) => typeInto(session, text, signal), { input: true }),
     },
     mouse: {
-      move: (x, y) => surface.input('mouse.move', moveSources(Math.round(x), Math.round(y)), context.operation()),
-      wheel: (deltaX, deltaY) => {
-        const at = surface.pointerPosition();
-        return surface.input('mouse.wheel', wheelSources(at.x, at.y, deltaX, deltaY), context.operation());
-      },
-      down: () => {
-        const at = surface.pointerPosition();
-        return surface.input('mouse.down', pressDownSources(at.x, at.y), context.operation());
-      },
-      up: () => surface.input('mouse.up', releaseSources(), context.operation()),
+      move: (x, y) => run('mouse.move', (session, { signal }) => session.input.send(moveSources(Math.round(x), Math.round(y)), signal), { input: true }),
+      wheel: (deltaX, deltaY) => run('mouse.wheel', (session, { signal }) => session.input.send(wheelSources(session.pointer.x, session.pointer.y, deltaX, deltaY), signal), { input: true }),
+      down: () => run('mouse.down', (session, { signal }) => session.input.send(pressDownSources(session.pointer.x, session.pointer.y), signal), { input: true }),
+      up: () => run('mouse.up', (session, { signal }) => session.input.send(releaseSources(), signal), { input: true }),
     },
   };
   return declareFixture(context, browser, expectation);
@@ -333,25 +328,10 @@ async function downloads(
   count: number,
   timeout: number | undefined,
   api: string,
-): Promise<{ path: string; absolutePath: string; suggestedFilename: string }[]> {
-  const { signal, timeoutMs } = context.operation(stepTimeout(timeout, api));
-  const files = await surface.collectDownloads(count, trigger, signal, timeoutMs);
+): Promise<SavedDownload[]> {
+  const files = await surface.guard(context.operation(stepTimeout(timeout, api)), 'download', (session, budget) => saveDownloads(session, count, trigger, budget), { trigger: true });
   for (const file of files) context.attachArtifact('download', file.path);
   return files;
-}
-
-/** A BiDi cookie as the fixture reports it. */
-function toCookie(cookie: Network.Cookie): Cookie {
-  return {
-    name: cookie.name,
-    value: cookie.value.type === 'string' ? cookie.value.value : Buffer.from(cookie.value.value, 'base64').toString(),
-    domain: cookie.domain,
-    path: cookie.path,
-    ...(cookie.expiry === undefined ? {} : { expires: cookie.expiry }),
-    httpOnly: cookie.httpOnly,
-    secure: cookie.secure,
-    ...(cookie.sameSite === 'default' ? {} : { sameSite: (cookie.sameSite[0]!.toUpperCase() + cookie.sameSite.slice(1)) as NonNullable<Cookie['sameSite']> }),
-  };
 }
 
 /** The selector a locator method was given, refused unless it is a nonempty string. */

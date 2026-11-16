@@ -5,10 +5,8 @@
 
 import { ConfigurationError, obj, rejectUnknownOptions, TestError, type EngineFixtureContext } from '@e2e-dev/core/engine';
 import type { Browser, CookieFilter } from './types.ts';
+import type { CookieTarget } from '../driver/cookies.ts';
 import { MEDIA_KEYS, mediaProblem, type WebMedia } from '../options.ts';
-
-/** Where one cookie is set: on the URL it names, or on its domain and path. */
-export type CookieTarget = { readonly url: string } | { readonly domain: string; readonly path: string };
 
 /**
  * Where each cookie of `browser.setCookies` lands. The harness's URL rule

@@ -2,17 +2,16 @@
  * The driver's surface: one browser per worker (or per attempt) and one
  * `BidiSession` per attempt, with the engine's lifecycle hooks and `guard`,
  * which bounds and classifies every operation. `engine.ts` binds each
- * contract hook to the driver module that implements it through `guard`;
- * the `browser` fixture calls the methods here, which keep it apart from
- * the session.
+ * contract hook, and the `browser` fixture each of its methods, to the
+ * driver call that implements it through `guard`: the binder names the
+ * label, the driver call, and how the guard treats it.
  */
 
 import path from 'node:path';
-import type { Input, Network, Storage } from 'webdriver-bidi-protocol';
+import type { Storage } from 'webdriver-bidi-protocol';
 import {
   EngineError,
   raceAbort,
-  TestError,
   withTimeout,
   withinCleanupBudget,
   type EngineAttemptContext,
@@ -24,26 +23,19 @@ import {
   type EnginePrepareInfo,
   type EnginePrepareResult,
   type OperationContext,
-  type ViewportPoint,
   type ViewportSize,
 } from '@e2e-dev/core/engine';
 import type { DialogHandler } from './dialogs.ts';
 import type { ConfiguredInitScripts } from '../init-scripts.ts';
 import { credentialed, credentialOrigins, httpCredentials, lowercaseNames, configuredHeadersFor } from '../protected-app.ts';
 import type { WebBasicAuth, WebMedia, WebScreencastOptions } from '../options.ts';
-import { typeInto } from './actions.ts';
 import { DispatchScope } from './input.ts';
-import { abortError, afterDispatch, cancelled, classify, type ErrorLatch, invalidState, releaseQuietly } from '../errors.ts';
+import { afterDispatch, cancelled, classify, type ErrorLatch, invalidState, releaseQuietly } from '../errors.ts';
 import { BROWSER_OPEN_TIMEOUT_MS, BrowserHandle, type BrowserSource } from './browser-source.ts';
-import { fixtureKeyStroke, type KeyPhase } from './keyboard.ts';
-import type { NetworkRoute } from './network.ts';
-import type { ObservedResponse } from './network-binding.ts';
+import { TriggerFailure, withDeadline, type OperationBudget } from './budget.ts';
 import { traceScreen } from './observe.ts';
-import { documentTitle } from '../in-page/page.ts';
 import { BidiSession, type SessionSettings } from './session.ts';
 import type { AttemptTab } from './tabs.ts';
-import { goto, reload, traverse, type WaitUntil } from './steering.ts';
-import type { PageArgument, PageValue } from './script.ts';
 
 /** What a BiDi surface is configured with, from `web()`. */
 export interface BidiSurfaceOptions {
@@ -150,7 +142,7 @@ export class BidiSurface {
    */
   private async browserFor(signal: AbortSignal, attempt?: EngineAttemptContext): Promise<BrowserHandle> {
     if (attempt === undefined && this.handle?.alive === true) return this.handle;
-    const verb = this.options.source.kind === 'launch' ? 'launch' : 'connect';
+    const verb = this.options.source.opening;
     if (signal.aborted) throw cancelled(`browser ${verb} cancelled`);
     const acquiring = attempt === undefined ? (this.acquiring ?? this.acquire(undefined)) : this.acquire(attempt);
     try {
@@ -229,6 +221,7 @@ export class BidiSurface {
         screen: context.screen,
         credentials,
         remoteDownloads: source.downloads(),
+        downloadLimit: source.downloadLimit(),
       },
       handle.contexts,
     );
@@ -320,7 +313,10 @@ export class BidiSurface {
    * once its input went out may have reached the app
    * (`ACTION_MAY_HAVE_COMMITTED`), so the harness never repeats it blindly;
    * a sensitive value never leaves in a message or a cause. A step that
-   * changed the page hands the trace the screen it left.
+   * changed the page hands the trace the screen it left. A wait on the
+   * test's own trigger (`afterTrigger`) keeps the whole budget and its own
+   * deadline, so only cancellation ends it here, and what the trigger threw
+   * leaves as it was thrown.
    */
   async guard<T>(
     operation: OperationContext,
@@ -331,100 +327,29 @@ export class BidiSurface {
     this.session?.latch.throwPending();
     const session = this.session;
     const dispatches = new DispatchScope();
+    const run = (budget: OperationBudget): Promise<T> => dispatches.run(async () => {
+      const current = this.requireSession();
+      // A tab change already queued (a tab that closed, one a test showed) lands before the operation reads or acts on one.
+      await current.tabs.settled();
+      return work(current, budget);
+    });
     let result: T;
     try {
-      result = await withDeadline(operation, label, (budget) => dispatches.run(async () => {
-        const current = this.requireSession();
-        // A tab change already queued (a tab that closed, one a test showed) lands before the operation reads or acts on one.
-        await current.tabs.settled();
-        return work(current, budget);
-      }));
+      result = await (kind.trigger === true ? raceAbort(() => run(operation), operation.signal, label) : withDeadline(operation, label, run));
     } catch (cause) {
       // A handler error latched while the operation ran is its cause: a route that refused its own arguments aborts the request the step waited on.
       session?.latch.throwPending();
+      if (cause instanceof TriggerFailure) throw cause.thrown;
       const dispatched = kind.input === true && dispatches.dispatched;
-      throw afterDispatch(classify(cause, label, kind.testCode), label, dispatched, kind.sensitive);
+      throw afterDispatch(classify(cause, label, kind.testCode === true || kind.trigger === true), label, dispatched, kind.sensitive);
     }
     if (kind.traced === true && session !== undefined) await traceScreen(session, operation.signal);
     return result;
   }
 
-  /** Goes back one history entry. */
-  back(operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'navigation', (session, budget) => traverse(session, -1, budget.timeoutMs, budget.signal), { traced: true });
-  }
-
-  /** Goes forward one history entry. */
-  forward(operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'navigation', (session, budget) => traverse(session, 1, budget.timeoutMs, budget.signal), { traced: true });
-  }
-
-  /** `browser.goto`: navigates and waits as `waitUntil` says. */
-  goto(url: string, waitUntil: WaitUntil, operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'navigation', (session, budget) => goto(session, url, waitUntil, budget.signal), { traced: true });
-  }
-
-  /** Reloads the tab. */
-  reload(operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'navigation', (session, budget) => reload(session, budget.signal), { traced: true });
-  }
-
-  /** One `browser.keyboard` call (`fixtureKeyStroke`); a key it holds stays held until its `keyboard.up`. */
-  keyboard(label: string, key: string, phase: KeyPhase, operation: OperationContext): Promise<void> {
-    return this.guard(operation, label, (session, budget) => session.input.key(fixtureKeyStroke(key, phase), budget.signal), { input: true });
-  }
-
-  /** Runs raw input sources from the `browser` fixture; a key or button they press without releasing stays held. */
-  input(label: string, actions: Input.SourceActions[], operation: OperationContext): Promise<void> {
-    return this.guard(operation, label, (session, budget) => session.input.send(actions, budget.signal), { input: true });
-  }
-
-  /** Types `text` into whatever holds focus, inserting what no key types (`typeInto`). */
-  typeKeys(text: string, operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'keyboard.type', (session, budget) => typeInto(session, text, budget.signal), { input: true });
-  }
-
-  /** Where the mouse last moved in the attempt's tab. */
-  pointerPosition(): ViewportPoint {
-    return this.requireSession().pointer;
-  }
-
-  /** The tab's URL. */
-  url(operation: OperationContext): Promise<string> {
-    return this.guard(operation, 'url', (session) => session.currentUrl());
-  }
-
-  /** The tab's document title. */
-  title(operation: OperationContext): Promise<string> {
-    return this.guard(operation, 'title', (session) => session.run(documentTitle, []));
-  }
-
-  /** Calls a compiled page function (`compileEvaluation`) with `arg` and returns its whole result; the test's code may change the page, as input would. */
-  evaluate(declaration: string, arg: PageArgument | undefined, operation: OperationContext): Promise<PageValue> {
-    return this.guard(operation, 'evaluate', (session) => {
-      session.mutated();
-      return session.call(declaration, arg === undefined ? [] : [arg], { awaitPromise: true, maxObjectDepth: null });
-    }, { testCode: true });
-  }
-
-  /** Runs `source` in every document the attempt opens from now on. */
-  addInitScript(source: string, operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'addInitScript', (session) => session.addInitScript(source));
-  }
-
   /** The absolute path of a file a test names relative to the project root. */
   projectPath(file: string): string {
     return path.resolve(this.settings?.projectRoot ?? '', file);
-  }
-
-  /** Registers a test route. */
-  route(route: NetworkRoute, operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'route', (session) => session.network.addRoute(route));
-  }
-
-  /** Removes the test routes `match` selects. */
-  unroute(match: (route: NetworkRoute) => boolean, operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'unroute', async (session) => session.network.removeRoutes(match));
   }
 
   /** The headers a request that starts at `url` carries, which a route's own `fetch` sends too. */
@@ -454,78 +379,9 @@ export class BidiSurface {
     };
   }
 
-
-  /** The next response of the tab whose URL `matches`. */
-  waitForResponse(matches: (url: string) => boolean, operation: OperationContext): Promise<ObservedResponse> {
-    return this.guard(operation, 'waitForResponse', (session, budget) => session.network.waitForResponse(matches, budget.signal));
-  }
-
   /** Registers a dialog handler; returns its unsubscribe. */
   onDialog(handler: DialogHandler): () => void {
     return this.requireSession().dialogs.add(handler);
-  }
-
-  /**
-   * Runs `trigger` and saves the first `count` downloads it starts into the
-   * attempt's `downloads` folder, in start order. The trigger is test code,
-   * so only cancellation bounds the wait around it.
-   */
-  async collectDownloads(count: number, trigger: () => Promise<void>, signal: AbortSignal, timeoutMs: number): Promise<{ path: string; absolutePath: string; suggestedFilename: string }[]> {
-    const session = this.requireSession();
-    const { source } = this.options;
-    if (source.kind === 'lease' && session.attempt.remoteDownloads === undefined) {
-      throw new EngineError('UNSUPPORTED_CAPABILITY', `browser provider "${source.leases.name}" serves no downloads, so a file its remote browser saves cannot be read back`, { retryable: false });
-    }
-    const endsAt = Date.now() + timeoutMs;
-    const finished = await session.downloads.collect(count, trigger, signal, timeoutMs, (context) => session.onPage(context));
-    const reading = AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, endsAt - Date.now()))]);
-    const saved: { path: string; absolutePath: string; suggestedFilename: string }[] = [];
-    for (const download of finished) {
-      const { relative, absolute } = session.artifactPath('downloads', download.suggestedFilename, '');
-      await session.downloads.save(download, absolute, reading);
-      saved.push({ path: relative, absolutePath: absolute, suggestedFilename: download.suggestedFilename });
-    }
-    return saved;
-  }
-
-  /**
-   * Changes the attempt's media features from the next paint on. A browser
-   * that does not emulate reduced motion (Firefox overrides only
-   * `prefers-color-scheme` over BiDi) refuses a reduced-motion change;
-   * `web({ reducedMotion })` still applies at launch.
-   */
-  emulateMedia(media: WebMedia, operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'emulateMedia', async (session) => {
-      if (!session.browser.traits.emulatesReducedMotion && media.reducedMotion !== undefined) {
-        throw new EngineError('UNSUPPORTED_CAPABILITY', 'browser.emulateMedia({ reducedMotion }) is not supported on Firefox, which overrides only prefers-color-scheme over WebDriver BiDi; set web({ reducedMotion }) instead', { retryable: false });
-      }
-      session.media = { ...session.media, ...media };
-      await session.applyMedia();
-    });
-  }
-
-  /** The attempt's cookies. */
-  cookies(operation: OperationContext): Promise<Network.Cookie[]> {
-    return this.guard(operation, 'cookies', async (session) => (await session.connection.send('storage.getCookies', { partition: session.partition() })).cookies);
-  }
-
-  /** Stores cookies in the attempt's user context. */
-  setCookies(cookies: readonly Storage.PartialCookie[], operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'setCookies', async (session) => {
-      for (const cookie of cookies) await session.connection.send('storage.setCookie', { cookie, partition: session.partition() });
-    });
-  }
-
-  /** Deletes the cookies each filter selects; an empty filter selects every one. */
-  deleteCookies(filters: readonly Storage.CookieFilter[], operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'clearCookies', async (session) => {
-      for (const filter of filters) await session.connection.send('storage.deleteCookies', { filter, partition: session.partition() });
-    });
-  }
-
-  /** Resizes the shown tab, and every tab shown after. */
-  setViewport(size: ViewportSize, operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'setViewport', (session) => session.setViewport(size));
   }
 
   /** The attempt's open tabs, in the order they opened. */
@@ -539,74 +395,20 @@ export class BidiSurface {
   activeTab(): AttemptTab | undefined {
     return this.session?.tabs.active();
   }
-
-  /** The URL of one of the attempt's tabs. */
-  tabUrl(tab: AttemptTab, operation: OperationContext): Promise<string> {
-    return this.guard(operation, 'url', (session) => session.currentUrl(tab.context));
-  }
-
-  /** The document title of one of the attempt's tabs. */
-  tabTitle(tab: AttemptTab, operation: OperationContext): Promise<string> {
-    return this.guard(operation, 'title', (session) => session.run(documentTitle, [], tab.context));
-  }
-
-  /** Shows one of the attempt's tabs (`BrowserTab.activate`). */
-  showTab(tab: AttemptTab, operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'tab', (session) => session.tabs.show(tab));
-  }
-
-  /** Closes one of the attempt's tabs (`BrowserTab.close`); the tab shown next is shown before it resolves. */
-  closeTab(tab: AttemptTab, operation: OperationContext): Promise<void> {
-    return this.guard(operation, 'tab', (session) => session.tabs.close(tab));
-  }
-
-  /** Opens a blank tab in the attempt's user context and shows it (`browser.newTab`). */
-  newTab(operation: OperationContext): Promise<AttemptTab> {
-    return this.guard(operation, 'tab', (session) => session.newTab());
-  }
-
-  /**
-   * Runs `trigger` and waits for the next tab the app opens, resolving once
-   * it is shown (`browser.waitForPopup`). The trigger is test code, so its
-   * errors keep their classification; the trigger and the wait share the
-   * operation's budget, and a wait that runs out names the page a tab was
-   * still loading.
-   */
-  async waitForPopup(trigger: () => Promise<void>, operation: OperationContext): Promise<AttemptTab> {
-    const api = 'browser.waitForPopup';
-    const session = this.requireSession();
-    session.latch.throwPending();
-    const waitMs = operation.timeoutMs;
-    const popup = session.tabs.nextPopup();
-    const started = Date.now();
-    let triggerMs: number | undefined;
-    const timedOut = (): TestError => {
-      const url = popup.loading();
-      if (url !== undefined) return new TestError('ACTION_FAILED', `the tab the app opened did not load ${url} within ${waitMs}ms`);
-      return new TestError(
-        'ACTION_FAILED',
-        triggerMs === undefined ? `${api} exceeded its timeout of ${waitMs}ms` : `no tab opened within ${waitMs}ms; the trigger resolved after ${triggerMs}ms`,
-      );
-    };
-    try {
-      return await withTimeout(raceAbort(async () => {
-        await trigger();
-        triggerMs = Date.now() - started;
-        return popup.opened;
-      }, operation.signal, api), waitMs, timedOut);
-    } finally {
-      popup.cancel();
-    }
-  }
-
 }
 
-/** How `guard` treats an operation: whether it sends input, fills a sensitive value, shows the trace the screen it left, or runs the test's own code. */
+/**
+ * How `guard` treats an operation: whether it sends input, fills a sensitive
+ * value, shows the trace the screen it left, runs the test's own code, or
+ * waits on the test's own trigger (`afterTrigger`), which is test code that
+ * owns the operation's deadline.
+ */
 export interface GuardKind {
   readonly input?: boolean;
   readonly sensitive?: string;
   readonly traced?: boolean;
   readonly testCode?: boolean;
+  readonly trigger?: boolean;
 }
 
 /** What `attemptScope` binds: the attempt's own latch, credentials, lifetime, and cookie jar. */
@@ -632,45 +434,4 @@ function boundedCleanup(work: Promise<unknown>, budget: EngineCleanupContext, la
     budget.timeoutMs,
     () => new EngineError('OPERATION_TIMEOUT', `${label} did not finish within ${budget.timeoutMs}ms`, { retryable: false }),
   );
-}
-
-/** What an operation may spend: its signal and the milliseconds left. */
-export interface OperationBudget {
-  readonly timeoutMs: number;
-  readonly signal: AbortSignal;
-}
-
-/**
- * How much sooner than an operation's deadline the driver's own timeout
- * fires: its error names what blocked an action, or that the input was
- * already dispatched, and this lead lets that answer arrive before the
- * deadline does. The deadline is for the calls the browser never answers: an
- * evaluate, which takes no timeout, and a point tap on a page whose renderer
- * is stuck in a script. A budget shorter than twice the lead splits in half.
- */
-const DRIVER_TIMEOUT_LEAD_MS = 250;
-
-/**
- * Bounds one operation by its budget: work still pending at the deadline is
- * aborted and abandoned as `OPERATION_TIMEOUT` instead of holding the test
- * until its own timeout. `work` gets a signal that aborts at the deadline or
- * on cancellation, and the time to pass the driver's own timeouts, which
- * fire `DRIVER_TIMEOUT_LEAD_MS` sooner.
- */
-async function withDeadline<T>(operation: OperationBudget, label: string, work: (budget: OperationBudget) => Promise<T>): Promise<T> {
-  const controller = new AbortController();
-  const signal = AbortSignal.any([operation.signal, controller.signal]);
-  const expire = (): void => controller.abort(new EngineError('OPERATION_TIMEOUT', `${label} timed out`, { retryable: false }));
-  if (operation.timeoutMs <= 0) expire();
-  const timer = setTimeout(expire, Math.max(0, operation.timeoutMs));
-  try {
-    if (signal.aborted) throw abortError(signal, label);
-    const lead = Math.min(DRIVER_TIMEOUT_LEAD_MS, operation.timeoutMs / 2);
-    return await raceAbort(() => work({ signal, timeoutMs: Math.ceil(operation.timeoutMs - lead) }), signal, label);
-  } catch (cause) {
-    if (signal.aborted) throw abortError(operation.signal.aborted ? operation.signal : signal, label);
-    throw cause;
-  } finally {
-    clearTimeout(timer);
-  }
 }

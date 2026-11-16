@@ -13,6 +13,7 @@
  */
 
 import { TestError, type EngineTabs } from '@e2e-dev/core/engine';
+import { afterTrigger, type OperationBudget } from './budget.ts';
 
 /** One tab of the attempt. The same tab is the same object for the whole attempt. */
 export interface AttemptTab {
@@ -245,6 +246,29 @@ export class AttemptTabs {
         this.waiters.delete(waiter);
       },
     };
+  }
+
+  /**
+   * Runs `trigger` and waits for the next tab the app opens, resolving once
+   * it is shown (`browser.waitForPopup`, over `afterTrigger`). A wait that
+   * runs out names the page a tab was still loading, else whether the
+   * trigger had resolved.
+   */
+  async waitForPopup(trigger: () => Promise<void>, budget: OperationBudget): Promise<AttemptTab> {
+    const waitMs = budget.timeoutMs;
+    const popup = this.nextPopup();
+    try {
+      return await afterTrigger(trigger, popup.opened, budget, (triggerMs) => {
+        const url = popup.loading();
+        if (url !== undefined) return new TestError('ACTION_FAILED', `the tab the app opened did not load ${url} within ${waitMs}ms`);
+        return new TestError(
+          'ACTION_FAILED',
+          triggerMs === undefined ? `browser.waitForPopup exceeded its timeout of ${waitMs}ms` : `no tab opened within ${waitMs}ms; the trigger resolved after ${triggerMs}ms`,
+        );
+      });
+    } finally {
+      popup.cancel();
+    }
   }
 
   /** The open tab at `index` in opening order, or an `ACTION_FAILED` the model reads. */

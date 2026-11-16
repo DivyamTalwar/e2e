@@ -9,9 +9,11 @@
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { raceAbort, TestError } from '@e2e-dev/core/engine';
+import { EngineError, raceAbort, TestError } from '@e2e-dev/core/engine';
 import type { LeaseDownloads } from '../provider.ts';
+import { afterTrigger, type OperationBudget } from './budget.ts';
 import type { BidiConnection } from './connection.ts';
+import type { BidiSession } from './session.ts';
 
 /** One finished download: the name the server suggested and where the browser wrote it. */
 export interface FinishedDownload {
@@ -19,13 +21,22 @@ export interface FinishedDownload {
   readonly filepath: string;
 }
 
+/** A download saved into the attempt's `downloads` folder: its path under the attempt's artifacts, and on disk. */
+export interface SavedDownload {
+  readonly path: string;
+  readonly absolutePath: string;
+  readonly suggestedFilename: string;
+}
+
 /** One attempt's downloads: their directory, and waits for the downloads a trigger starts. */
 export class AttemptDownloads {
   readonly dir: string;
 
+  /** `unserved` says why no download can be read back, when the browser's source serves none (`BrowserSource.downloadLimit`). */
   constructor(
     private readonly connection: BidiConnection,
     private readonly remote: LeaseDownloads | undefined,
+    private readonly unserved: string | undefined,
   ) {
     this.dir = remote === undefined ? mkdtempSync(path.join(os.tmpdir(), 'e2e-bidi-downloads-')) : remote.dir;
   }
@@ -57,12 +68,15 @@ export class AttemptDownloads {
 
   /**
    * Runs `trigger` and resolves with the first `count` downloads it starts,
-   * in start order, once each has finished and the trigger returned. A
-   * canceled one fails the wait. The wait owns its deadline: past
-   * `timeoutMs`, or once `signal` aborts, it stops listening and fails,
-   * whatever the trigger is still doing, and nothing it saw is kept.
+   * in start order, once each has finished and the trigger returned
+   * (`afterTrigger`). A canceled one fails the wait. Past the budget it stops
+   * listening and fails, whatever the trigger is still doing, and nothing it
+   * saw is kept. Refused before the trigger runs when no download can be
+   * read back.
    */
-  async collect(count: number, trigger: () => Promise<void>, signal: AbortSignal, timeoutMs: number, ours: (context: string) => boolean): Promise<FinishedDownload[]> {
+  async collect(count: number, trigger: () => Promise<void>, budget: OperationBudget, ours: (context: string) => boolean): Promise<FinishedDownload[]> {
+    if (this.unserved !== undefined) throw new EngineError('UNSUPPORTED_CAPABILITY', this.unserved, { retryable: false });
+    const { timeoutMs } = budget;
     const started: { readonly id: string; readonly suggestedFilename: string }[] = [];
     const ended = new Map<string, string | null>();
     let settled: () => void = () => undefined;
@@ -79,22 +93,13 @@ export class AttemptDownloads {
       ended.set(event.download, event.status === 'complete' ? event.filepath : null);
       check();
     });
-    const deadline = AbortSignal.timeout(timeoutMs);
-    const startedAt = Date.now();
-    let triggerMs: number | undefined;
-    const triggered = trigger().then(() => {
-      triggerMs = Date.now() - startedAt;
-    });
     try {
-      await raceAbort(Promise.all([triggered, done]), AbortSignal.any([signal, deadline]), 'download');
-    } catch (cause) {
-      if (deadline.aborted && !signal.aborted) {
-        if (triggerMs === undefined) throw new TestError('ACTION_FAILED', `the download trigger did not resolve within ${timeoutMs}ms`);
-        throw new TestError('ACTION_FAILED', started.length < count
+      await afterTrigger(trigger, done, budget, (triggerMs) => {
+        if (triggerMs === undefined) return new TestError('ACTION_FAILED', `the download trigger did not resolve within ${timeoutMs}ms`);
+        return new TestError('ACTION_FAILED', started.length < count
           ? `${count === 1 ? 'no download' : `${started.length} of ${count} downloads`} started within ${timeoutMs}ms; the trigger resolved after ${triggerMs}ms`
           : `${count === 1 ? 'the download' : `${count} downloads`} did not finish within ${timeoutMs}ms`);
-      }
-      throw cause;
+      });
     } finally {
       offBegin();
       offEnd();
@@ -110,4 +115,23 @@ export class AttemptDownloads {
   dispose(): void {
     if (this.remote === undefined) rmSync(this.dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Runs `trigger` and saves the first `count` downloads it starts in the
+ * attempt's tab into the attempt's `downloads` folder, in start order
+ * (`browser.waitForDownload`). One budget bounds the trigger, the downloads,
+ * and reading each back.
+ */
+export async function saveDownloads(session: BidiSession, count: number, trigger: () => Promise<void>, budget: OperationBudget): Promise<SavedDownload[]> {
+  const endsAt = Date.now() + budget.timeoutMs;
+  const finished = await session.downloads.collect(count, trigger, budget, (context) => session.onPage(context));
+  const reading = AbortSignal.any([budget.signal, AbortSignal.timeout(Math.max(1, endsAt - Date.now()))]);
+  const saved: SavedDownload[] = [];
+  for (const download of finished) {
+    const { relative, absolute } = session.artifactPath('downloads', download.suggestedFilename, '');
+    await session.downloads.save(download, absolute, reading);
+    saved.push({ path: relative, absolutePath: absolute, suggestedFilename: download.suggestedFilename });
+  }
+  return saved;
 }

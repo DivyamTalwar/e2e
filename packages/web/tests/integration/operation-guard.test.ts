@@ -39,6 +39,17 @@ describe('the operation guard', () => {
     await expect(session.observe()).resolves.toBeDefined();
   });
 
+  it.each(['waitForDownload', 'waitForPopup'] as const)('%s is guarded too: the latched error fails it before its trigger runs', async (wait) => {
+    await session.browser.route('**/api/undecided', async () => undefined);
+    await session.browser.evaluate(() => fetch('/api/undecided').then(() => 'answered', () => 'aborted'));
+    let triggered = false;
+    await expect(session.browser[wait](async () => { triggered = true; }, { timeout: 500 })).rejects.toMatchObject({
+      code: 'ACTION_FAILED',
+      message: expect.stringContaining('route handler returned without calling fulfill'),
+    });
+    expect(triggered).toBe(false);
+  });
+
   it('refuses an operation whose signal already aborted as CANCELLED', async () => {
     const controller = new AbortController();
     controller.abort();

@@ -23,7 +23,7 @@ import { perform, performAt, typeText } from './driver/actions.ts';
 import { screenshot, startVideo, stopVideo } from './driver/artifacts.ts';
 import { locate, observe, readStyle } from './driver/observe.ts';
 import { captureState, restoreState } from './driver/state.ts';
-import { reset, restart } from './driver/steering.ts';
+import { goto, reset, restart, traverse } from './driver/steering.ts';
 import { BidiSurface } from './driver/surface.ts';
 import { cdpSource, launchSource, leaseSource, type BrowserSource } from './driver/browser-source.ts';
 import type { WebFixtures } from './fixtures.ts';
@@ -46,8 +46,8 @@ export function createWeb(options: WebOptions, attachTo?: BrowserSource): Engine
   const media = obj({ colorScheme: options.colorScheme, reducedMotion: options.reducedMotion });
   const source = attachTo
     ?? (provider !== undefined ? leaseSource(new LeasedBrowsers(provider)) : options.connect !== undefined ? cdpSource('connect', options.connect.cdpEndpoint) : launchSource(browser, media));
-  // Clearing state and saved sessions replace the user context, which only an attempt in a fresh one may do.
-  const ownsContext = source.userContext === 'fresh';
+  // Clearing state and saved sessions replace the user context, which only an attempt in a fresh one may do; any other source says why not.
+  const { contextLimit } = source;
   const surface = new BidiSurface({
     viewport: options.viewport === undefined ? DEFAULT_VIEWPORT : options.viewport,
     testIdAttribute: options.testIdAttribute ?? 'data-testid',
@@ -108,8 +108,8 @@ export function createWeb(options: WebOptions, attachTo?: BrowserSource): Engine
     validateApp: (app, info) => validateApp(app, info, browser, source.userContext !== 'adopt-tab'),
     ...(isSecret(options.basicAuth?.password) ? { secrets: [options.basicAuth.password] } : {}),
     session: {
-      open: (url, operation) => surface.goto(url, 'load', operation),
-      back: (operation) => surface.back(operation),
+      open: (url, operation) => surface.guard(operation, 'navigation', (session, { signal }) => goto(session, url, 'load', signal), { traced: true }),
+      back: (operation) => surface.guard(operation, 'navigation', (session, { timeoutMs, signal }) => traverse(session, -1, timeoutMs, signal), { traced: true }),
       // The agent's `resize` verb sets the viewport as `browser.setViewport` does, and shows the screen after it.
       resize: (size, operation) => surface.guard(operation, 'resize', (session) => session.setViewport(size), { traced: true }),
       // The agent's `switch_tab` and `close_tab` verbs, by place in opening order, each showing the screen after it.
@@ -118,9 +118,9 @@ export function createWeb(options: WebOptions, attachTo?: BrowserSource): Engine
       // Replaces the tab with a blank one, keeping the attempt's storage.
       restart: (operation) => surface.guard(operation, 'restart', (session, { signal }) => restart(session, signal)),
       // Starts the attempt over in a clean user context.
-      reset: ownsContext
+      reset: contextLimit === undefined
         ? (operation) => surface.guard(operation, 'state reset', (session, { signal }) => reset(session, signal))
-        : () => Promise.reject(defaultContextLimit('app.clearState()', source)),
+        : () => Promise.reject(new ConfigurationError('UNSUPPORTED_CAPABILITY', contextLimit('app.clearState()'))),
     },
     artifacts: {
       screenshot: (label, operation) => surface.guard(operation, 'screenshot', (session, { signal }) => screenshot(session, label, signal)),
@@ -128,7 +128,7 @@ export function createWeb(options: WebOptions, attachTo?: BrowserSource): Engine
       startVideo: (operation) => surface.guard(operation, 'video', (session, { signal }) => startVideo(session, source.recorder(session.attempt.attemptId), signal)),
       stopVideo: (operation) => surface.guard(operation, 'video', (session, { signal }) => stopVideo(session, signal)),
     },
-    ...(ownsContext
+    ...(contextLimit === undefined
       ? {
           state: {
             capture: (operation) => surface.guard(operation, 'state capture', (session) => captureState(session)),
@@ -140,21 +140,6 @@ export function createWeb(options: WebOptions, attachTo?: BrowserSource): Engine
       browser: (context) => createBrowserFixture(surface, context),
     },
   });
-}
-
-/**
- * What riding the browser's own context rules out, named with its cause:
- * `what` replaces the browser context, which a per-attempt lease and
- * `attachBrowser` both ride.
- */
-function defaultContextLimit(what: string, source: BrowserSource): ConfigurationError {
-  if (source.kind !== 'lease') {
-    return new ConfigurationError('UNSUPPORTED_CAPABILITY', `${what} is unavailable on an attached browser: it replaces the browser context, and the attach drives the browser's own`);
-  }
-  return new ConfigurationError(
-    'UNSUPPORTED_CAPABILITY',
-    `${what} is unavailable with browser provider "${source.leases.name}" with scope "attempt": it replaces the browser context, and the attempt rides the leased browser's own; every attempt already starts on a fresh browser, and scope "worker" can clear one mid-test`,
-  );
 }
 
 /** This package's published version, read through require resolution. */
