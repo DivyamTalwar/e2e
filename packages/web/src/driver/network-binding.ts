@@ -329,18 +329,17 @@ export class NetworkBinding {
   }
 
   /**
-   * A request's hop finished. A redirect hop stops counting and its record
-   * stays for the next hop; a last hop's record goes, unless a response wait
-   * still reads its body. The collectors let go of the bodies no one reads:
-   * the request body routes read while it was held, and a response body no
-   * wait matched.
+   * A request's hop finished. A redirect hop (`mayRedirect`) stops counting
+   * and its record stays for the next hop; a last hop's record goes, unless
+   * a response wait still reads its body. The collectors let go of the
+   * bodies no one reads: the request body routes read while it was held, and
+   * a response body no wait matched.
    */
   private settle(event: { readonly context: string | null; readonly request: Network.RequestData; readonly response?: Network.ResponseData }): void {
     const id = event.request.request;
     const record = this.requests.get(id);
     if (record !== undefined) this.stopCounting(record);
-    const status = event.response?.status ?? 0;
-    if (status >= 300 && status < 400) return;
+    if (event.response !== undefined && mayRedirect(event.response)) return;
     const read = record !== undefined && record.waits > 0;
     if (record !== undefined) record.settled = true;
     if (!read) this.requests.delete(id);
@@ -541,7 +540,22 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 /** Whether the browser followed `response` as a redirect, so it keeps no body for it: a redirect status with a `Location` header, Chromium's own rule. */
 function isRedirect(response: Network.ResponseData): boolean {
-  return REDIRECT_STATUSES.has(response.status) && response.headers.some((header) => header.name.toLowerCase() === 'location');
+  return REDIRECT_STATUSES.has(response.status) && namesLocation(response);
+}
+
+/**
+ * Whether another hop of its request may follow `response`: a 3xx that names
+ * a `Location`, whatever its status, since browsers differ on which they
+ * follow. A 304 is always a request's last hop, and so is a 3xx with no
+ * `Location`.
+ */
+function mayRedirect(response: Network.ResponseData): boolean {
+  return response.status >= 300 && response.status < 400 && response.status !== 304 && namesLocation(response);
+}
+
+/** Whether `response` carries a `Location` header. */
+function namesLocation(response: Network.ResponseData): boolean {
+  return response.headers.some((header) => header.name.toLowerCase() === 'location');
 }
 
 /** A BiDi bytes value as text. */

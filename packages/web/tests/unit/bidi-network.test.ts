@@ -64,6 +64,9 @@ function request(id: string, url: string, intercepts: string[] = ['intercept-1']
   };
 }
 
+/** The header that makes a 3xx response a redirect hop. */
+const LOCATION = [{ name: 'Location', value: { type: 'string', value: '/next' } }];
+
 /** A route on the URL `pattern` for the tests. */
 function route(pattern: string, handle: NetworkRoute['handle']): NetworkRoute {
   return { pattern: { kind: 'string', value: pattern, exact: true }, handle };
@@ -596,7 +599,7 @@ describe('AttemptNetwork', () => {
       await open('tab');
       fake.emit('network.beforeRequestSent', request('r', `${SITE}/private`, []));
       fake.emit('network.authRequired', { ...request('r', `${SITE}/private`), response: { status: 401 } });
-      fake.emit('network.responseCompleted', { ...request('r', `${SITE}/private`, []), response: { url: `${SITE}/private`, status: 302, headers: [] } });
+      fake.emit('network.responseCompleted', { ...request('r', `${SITE}/private`, []), response: { url: `${SITE}/private`, status: 302, headers: LOCATION } });
       net.retire('tab');
       fake.emit('network.authRequired', { ...request('r', `${SITE}/private`), response: { status: 401 } });
       await settle();
@@ -614,11 +617,38 @@ describe('AttemptNetwork', () => {
       fake.emit('network.beforeRequestSent', request('r', 'https://external.test/start'));
       await settle();
       await settle();
-      fake.emit('network.responseCompleted', { ...request('r', 'https://external.test/start', []), response: { url: 'https://external.test/start', status: 302, headers: [] } });
+      fake.emit('network.responseCompleted', { ...request('r', 'https://external.test/start', []), response: { url: 'https://external.test/start', status: 302, headers: LOCATION } });
       net.retire('tab');
       fake.emit('network.beforeRequestSent', { ...request('r', 'https://external.test/again'), redirectCount: 1 });
       await settle();
       expect(fake.commands('network.continueRequest').at(-1)?.params).toEqual({ request: 'r' });
+    });
+
+    it.each([
+      ['a 304', 304, []],
+      ['a 304 that names a Location', 304, LOCATION],
+      ['a redirect status with no Location', 302, []],
+    ])('releases %s as a last hop, and keeps a redirect hop for its next one', async (_name, status, headers) => {
+      const fake = new FakeBidi();
+      const { net, open } = network(fake);
+      await net.bind('user-1');
+      await open('tab');
+      await net.addRoute(route('**', async (held, decisions) => {
+        await decisions.continue({ headers: { ...held.headers, 'x-route': 'routed' } });
+      }));
+      const start = 'https://external.test/start';
+      for (const id of ['last', 'hop']) fake.emit('network.beforeRequestSent', request(id, start));
+      await settle();
+      await settle();
+      fake.emit('network.responseCompleted', { ...request('last', start, []), response: { url: start, status, headers } });
+      fake.emit('network.responseCompleted', { ...request('hop', start, []), response: { url: start, status: 302, headers: LOCATION } });
+      await settle();
+      expect(fake.commands('network.disownData').map((command) => command.params)).toEqual([{ dataType: 'response', collector: 'collector-1', request: 'last' }]);
+      for (const id of ['last', 'hop']) fake.emit('network.beforeRequestSent', { ...request(id, 'https://external.test/next'), redirectCount: 1 });
+      await settle();
+      const [last, hop] = fake.commands('network.continueRequest').slice(-2).map((command) => command.params);
+      expect(last).toEqual({ request: 'last' });
+      expect(hop).toMatchObject({ request: 'hop', headers: expect.arrayContaining([{ name: 'x-route', value: { type: 'string', value: 'routed' } }]) });
     });
 
     it('keeps a fulfilled body only until its response completed', async () => {
@@ -743,7 +773,7 @@ describe('AttemptNetwork', () => {
       const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'read' } } });
       const { net } = network(fake);
       await net.bind('user-1');
-      const done = (id: string, status = 200) => ({ ...request(id, `${SITE}/${id}`, []), response: { url: `${SITE}/${id}`, status, headers: [] } });
+      const done = (id: string, status = 200) => ({ ...request(id, `${SITE}/${id}`, []), response: { url: `${SITE}/${id}`, status, headers: status === 302 ? LOCATION : [] } });
       fake.emit('network.responseCompleted', done('asset'));
       fake.emit('network.responseCompleted', done('hop', 302));
       const waiting = net.waitForResponse((url) => url.endsWith('/waited'), AbortSignal.timeout(5_000));
