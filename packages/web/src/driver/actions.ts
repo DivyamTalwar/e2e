@@ -20,7 +20,7 @@ import {
 import { actionPoint, boxSize, elementShown, hitBlocker, labelStandIn, scrollIntoViewIfNeeded, wheelAim } from '../in-page/actionability.ts';
 import { nextFrame } from '../in-page/document.ts';
 import type { Outcome } from '../in-page/dom.ts';
-import { checkState, directoryInput, fileInput, fill as fillElement, focus, focusTakesKeys, insertFocusedText, selectOption, setFileBytes, type FileBytes } from '../in-page/edits.ts';
+import { checkState, fileInput, fileInputTakes, fill as fillElement, focus, focusTakesKeys, insertFocusedText, selectOption, setFileBytes, type FileBytes } from '../in-page/edits.ts';
 import { armHitInterceptor, hitInterceptorResult } from '../in-page/hit-interceptor.ts';
 import { SECURE_FIELD_SELECTOR } from '../in-page/read-node.ts';
 import { chromiumDrag, firefoxDrag } from './drag.ts';
@@ -435,10 +435,13 @@ async function uploadKind(files: readonly string[]): Promise<boolean> {
  * other control is clicked with the file chooser awaited
  * (`input.fileDialogOpened`), and the input that chooser serves takes the
  * files. A control that opens no chooser by the deadline fails, as
- * Playwright's upload does. `input.setFiles` takes paths on the browser's
- * own filesystem, so a browser on another machine gets the files' bytes
- * instead (`remoteFiles`), up to `MAX_REMOTE_UPLOAD_BYTES` in all; a
- * directory, whose files' relative paths a page cannot set, is refused there.
+ * Playwright's upload does, and files the input does not take (a directory
+ * for one that takes files, or the reverse, two files for one that takes
+ * one) are refused before anything is set. `input.setFiles` takes paths on
+ * the browser's own filesystem, so a browser on another machine gets the
+ * files' bytes instead (`remoteFiles`), up to `MAX_REMOTE_UPLOAD_BYTES` in
+ * all; a directory, whose files' relative paths a page cannot set, is
+ * refused there.
  */
 async function setInputFiles(session: BidiSession, target: NodeTarget, paths: readonly string[], deadline: Deadline, signal: AbortSignal): Promise<void> {
   const connection = session.connection;
@@ -446,17 +449,14 @@ async function setInputFiles(session: BidiSession, target: NodeTarget, paths: re
   const directory = await uploadKind(files);
   const remote = session.settings.remoteFiles ? await remoteUpload(files, directory) : undefined;
   const send = async (context: string, element: ElementRef): Promise<void> => {
-    const takesDirectory = await session.page.run(directoryInput, [element], context);
-    if (directory && !takesDirectory) throw new TestError('INVALID_ARGUMENT', 'File input does not support directories, pass individual files instead');
-    if (!directory && takesDirectory) throw new TestError('INVALID_ARGUMENT', '[webkitdirectory] input requires passing a path to a directory');
+    const takes = await session.page.run(fileInputTakes, [element], context);
+    if (directory && !takes.directory) throw new TestError('INVALID_ARGUMENT', 'File input does not support directories, pass individual files instead');
+    if (!directory && takes.directory) throw new TestError('INVALID_ARGUMENT', '[webkitdirectory] input requires passing a path to a directory');
+    if (files.length > 1 && !takes.multiple) throw new TestError('INVALID_ARGUMENT', 'Non-multiple file input can only accept single file');
     signal.throwIfAborted();
     session.input.mutated();
-    if (remote === undefined) {
-      await connection.send('input.setFiles', { context, element: { sharedId: element.sharedId }, files });
-      return;
-    }
-    const refused = await session.page.run(setFileBytes, [element, remote], context);
-    if (refused !== null) throw new TestError('INVALID_ARGUMENT', refused);
+    if (remote === undefined) await connection.send('input.setFiles', { context, element: { sharedId: element.sharedId }, files });
+    else await session.page.run(setFileBytes, [element, remote], context);
   };
   const input = await session.page.run(fileInput, [target.element], target.context);
   if (input instanceof ElementRef) {

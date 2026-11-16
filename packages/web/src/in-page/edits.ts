@@ -111,11 +111,10 @@ export type FileBytes = {
  * Gives a file input files sent to it as bytes, as a person picking them
  * would: each a `File` with its name, type, and last-modified time, then
  * `input` and `change`. For a browser on another machine, whose filesystem
- * holds none of them. Returns why the input cannot take them, else null.
+ * holds none of them.
  */
-export const setFileBytes = withDom((dom, element: Element, files: readonly FileBytes[]): string | null => {
+export const setFileBytes = withDom((dom, element: Element, files: readonly FileBytes[]): void => {
   const input = element as HTMLInputElement;
-  if (files.length > 1 && !input.multiple) return 'Non-multiple file input can only accept single file';
   const transfer = new DataTransfer();
   for (const file of files) {
     const binary = atob(file.base64);
@@ -125,7 +124,6 @@ export const setFileBytes = withDom((dom, element: Element, files: readonly File
   }
   input.files = transfer.files;
   dom.fireEdit(input);
-  return null;
 });
 
 /** The file input an element is or labels; null for anything else. */
@@ -134,9 +132,10 @@ export function fileInput(element: Element): HTMLInputElement | null {
   return control instanceof HTMLInputElement && control.type === 'file' ? control : null;
 }
 
-/** Whether a file input takes a directory (`webkitdirectory`). */
-export function directoryInput(element: Element): boolean {
-  return (element as HTMLInputElement).webkitdirectory === true;
+/** What a file input takes: a directory (`webkitdirectory`), and more than one file (`multiple`). */
+export function fileInputTakes(element: Element): { directory: boolean; multiple: boolean } {
+  const input = element as HTMLInputElement;
+  return { directory: input.webkitdirectory === true, multiple: input.multiple };
 }
 
 /**

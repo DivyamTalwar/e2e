@@ -2,8 +2,9 @@
  * `setInputFiles` against a real page, for both callers the engine acts for,
  * a test's step and the agent: a file input and a label for one take the files without a
  * click, a button that opens a hidden input's chooser is clicked and the
- * chooser takes them, an empty list clears either, and a button that opens
- * nothing fails.
+ * chooser takes them, an empty list clears either, two files for an input
+ * that takes one are refused as never sent, and a button that opens nothing
+ * fails.
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -104,6 +105,13 @@ describe.each(KINDS)('for the %s', (kind) => {
     expect(await upload(await targetOf(kind, selector), [])).toBeUndefined();
     expect((await state()).files).toBe('');
     expect(await session.browser.evaluate(() => (window as unknown as { events: string[] }).events)).toEqual(['input', 'change']);
+  });
+
+  it('refuses two files for an input that takes one before anything is sent, and changes nothing', async () => {
+    await session.setContent(`<input id="avatar" type="file">${COUNT_CLICKS}`);
+    const error = await upload(await targetOf(kind, '#avatar'), [file, file]);
+    expect(error).toMatchObject({ code: 'INVALID_ARGUMENT', message: 'Non-multiple file input can only accept single file' });
+    expect((await state()).files).toBe('');
   });
 
   it('fails when the button opens no file chooser', async () => {
