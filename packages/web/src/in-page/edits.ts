@@ -1,0 +1,168 @@
+/**
+ * Page functions that change what a control holds, and the reads that
+ * decide them: focus, a field's value, a select's option, a file input's
+ * files, a checkable's state, and text typed where focus is.
+ */
+
+import { withDom, type Outcome } from './dom.ts';
+
+/**
+ * Focuses an element; returns whether focus landed on it, or on the editing
+ * host that holds it, followed through open and recorded closed shadow roots.
+ */
+export const focus = withDom((dom, element: Element): boolean => dom.focus(element));
+
+/** A checkable's state and kind, as Playwright reads it: a checkable role without `aria-checked` is unchecked; `checked` is null for an element with no checked state, and an element out of the document is `detached`. */
+export function checkState(element: Element): { checked: boolean | null; radio: 'native' | 'aria' | null } | 'detached' {
+  if (!element.isConnected) return 'detached';
+  const role = (element.getAttribute('role') ?? '').trim().split(/\s+/)[0] ?? '';
+  const input = element.nodeName === 'INPUT' ? (element as HTMLInputElement) : null;
+  const radio = input?.type === 'radio' ? 'native' : role === 'radio' || role === 'menuitemradio' ? 'aria' : null;
+  if (input !== null && (input.type === 'checkbox' || input.type === 'radio')) return { checked: input.checked, radio };
+  if (['checkbox', 'menuitemcheckbox', 'option', 'radio', 'switch', 'menuitemradio', 'treeitem'].includes(role)) return { checked: element.getAttribute('aria-checked') === 'true', radio };
+  return { checked: null, radio };
+}
+
+/**
+ * Fills an element as Playwright's `fill` does, with no key events: a text
+ * field or editing host is focused, its content selected, and the value
+ * inserted as one `insertText` edit (a delete for an empty value), so the app
+ * sees the trusted `beforeinput` and `input` an edit fires. A date, color,
+ * range, or similar input takes the value directly, with `input` and
+ * `change`. Nothing changes until the element proved editable and took
+ * focus. Not yet while the field is disabled or read-only; refused for what
+ * no fill can do.
+ */
+export const fill = withDom((dom, element: Element, value: string): Outcome => {
+  const typed = ['', 'text', 'password', 'search', 'email', 'tel', 'url', 'number'];
+  const unfocused: Outcome<never> = { kind: 'refused', reason: 'element could not be focused' };
+  const field = element.nodeName === 'INPUT' || element.nodeName === 'TEXTAREA' ? (element as HTMLInputElement | HTMLTextAreaElement) : null;
+  if (field !== null) {
+    const type = field.nodeName === 'INPUT' ? (field as HTMLInputElement).type.toLowerCase() : 'textarea';
+    if (['checkbox', 'radio', 'file', 'button', 'submit', 'reset', 'image'].includes(type)) return { kind: 'refused', reason: `Input of type "${type}" cannot be filled` };
+    if (field.disabled || field.readOnly) return { kind: 'not-yet', reason: 'element is not editable' };
+    if (type === 'number' && Number.isNaN(Number(value.trim()))) return { kind: 'refused', reason: 'Cannot type text into input[type=number]' };
+    if (!dom.focus(element)) return unfocused;
+    if (type !== 'textarea' && !typed.includes(type)) {
+      // As Playwright 1.65: the browser sanitizes what it does not take, as for a person's input.
+      field.value = value.trim();
+      dom.fireEdit(field);
+      return { kind: 'ok' };
+    }
+    field.select();
+  } else if ((element as HTMLElement).isContentEditable) {
+    if (!dom.focus(element)) return unfocused;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  } else {
+    return { kind: 'refused', reason: 'Element is not an <input>, <textarea> or [contenteditable] element' };
+  }
+  const edited = value === '' ? document.execCommand('delete') : document.execCommand('insertText', false, value);
+  const number = field !== null && field.nodeName === 'INPUT' && (field as HTMLInputElement).type === 'number';
+  if (field !== null && (!edited || (number && field.value !== value))) {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')?.set?.call(field, value);
+    dom.fireEdit(field);
+  }
+  if (number && field.value !== value) return { kind: 'refused', reason: 'Malformed value' };
+  return { kind: 'ok' };
+});
+
+/** Which option `selectOption` picks: by its label, value, or index. */
+export interface OptionChoice {
+  readonly label?: string;
+  readonly value?: string;
+  readonly index?: number;
+}
+
+/**
+ * Selects the option of a `<select>` matching `by` and fires `input` and
+ * `change`, as Playwright's `selectOption` does. Not yet while the select or
+ * the option is disabled, or no option matches; refused for an element that
+ * is no `<select>`.
+ */
+export const selectOption = withDom((dom, element: Element, by: OptionChoice): Outcome => {
+  if (element.nodeName !== 'SELECT') return { kind: 'refused', reason: 'Element is not a <select> element' };
+  const select = element as HTMLSelectElement;
+  if (select.disabled) return { kind: 'not-yet', reason: 'element is not enabled' };
+  const options = [...select.options];
+  const option = by.index !== undefined ? options[by.index]
+    : by.value !== undefined ? options.find((each) => each.value === by.value)
+    : options.find((each) => each.label === by.label || each.textContent?.trim() === by.label);
+  if (option === undefined) return { kind: 'not-yet', reason: 'no option matches' };
+  if (option.disabled || option.closest('optgroup')?.disabled === true) return { kind: 'not-yet', reason: 'option being selected is not enabled' };
+  select.focus();
+  for (const each of options) each.selected = each === option;
+  dom.fireEdit(select);
+  return { kind: 'ok' };
+});
+
+/** One file an upload sends a browser on another machine as bytes. */
+export type FileBytes = {
+  readonly name: string;
+  readonly type: string;
+  readonly lastModified: number;
+  readonly base64: string;
+};
+
+/**
+ * Gives a file input files sent to it as bytes, as a person picking them
+ * would: each a `File` with its name, type, and last-modified time, then
+ * `input` and `change`. For a browser on another machine, whose filesystem
+ * holds none of them. Returns why the input cannot take them, else null.
+ */
+export const setFileBytes = withDom((dom, element: Element, files: readonly FileBytes[]): string | null => {
+  const input = element as HTMLInputElement;
+  if (files.length > 1 && !input.multiple) return 'Non-multiple file input can only accept single file';
+  const transfer = new DataTransfer();
+  for (const file of files) {
+    const binary = atob(file.base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    transfer.items.add(new File([bytes], file.name, { type: file.type, lastModified: file.lastModified }));
+  }
+  input.files = transfer.files;
+  dom.fireEdit(input);
+  return null;
+});
+
+/** The file input an element is or labels; null for anything else. */
+export function fileInput(element: Element): HTMLInputElement | null {
+  const control = element instanceof HTMLInputElement ? element : element.closest('label')?.control;
+  return control instanceof HTMLInputElement && control.type === 'file' ? control : null;
+}
+
+/** Whether a file input takes a directory (`webkitdirectory`). */
+export function directoryInput(element: Element): boolean {
+  return (element as HTMLInputElement).webkitdirectory === true;
+}
+
+/**
+ * Inserts `text` where focus is in this document, as an IME would commit it
+ * (Playwright's `insertText`): for a character no key of the keyboard types.
+ * Returns false when this document does not hold focus, or its focus is an
+ * iframe whose own document does.
+ */
+export const insertFocusedText = withDom((dom, text: string): boolean => {
+  if (!document.hasFocus()) return false;
+  const active = dom.activeElement();
+  if (active === null || active.nodeName === 'IFRAME' || active.nodeName === 'FRAME') return false;
+  return document.execCommand('insertText', false, text);
+});
+
+/** Whether the focused element of this document takes keystrokes, following focus into open and recorded closed shadow roots. */
+export const focusTakesKeys = withDom((dom): boolean => {
+  const active = dom.activeElement();
+  if (active === null || active === document.body || active === document.documentElement) return false;
+  if (active instanceof HTMLInputElement) {
+    return !active.disabled && !active.readOnly && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color'].includes(active.type);
+  }
+  if (active instanceof HTMLTextAreaElement) return !active.disabled && !active.readOnly;
+  if (active instanceof HTMLSelectElement || active instanceof HTMLButtonElement || active instanceof HTMLAnchorElement ||
+      active instanceof HTMLIFrameElement || active instanceof HTMLFrameElement) {
+    return false;
+  }
+  return true;
+});

@@ -12,7 +12,7 @@ import { ChromiumCdp } from './cdp.ts';
 import type { BrowserTraits } from '../browsers.ts';
 import { compose, IDENTITY, invert, rectToQuad, scaleThenTranslate, type Projection } from './projection.ts';
 import { chainParts, cssChains, type CssStep } from './selector-tokens.ts';
-import { frameContentInset } from '../in-page/page.ts';
+import { frameContentInset } from '../in-page/document.ts';
 import type { BidiConnection } from './connection.ts';
 import { callFunction, ElementRef, WindowRef } from './script.ts';
 

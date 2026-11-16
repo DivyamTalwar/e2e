@@ -13,7 +13,7 @@ import { ChromiumCdp } from './cdp.ts';
 import { chromiumKeyCommands, holdsAfter, type CdpKeyCommand } from './chromium-keys.ts';
 import { codeOfValue, MODIFIER_CODES, pressStroke, strokeSource, type KeyStroke, type Modifier } from './keyboard.ts';
 import type { BrowserTraits } from '../browsers.ts';
-import { nextFrame, shownFrame } from '../in-page/page.ts';
+import { nextFrame } from '../in-page/document.ts';
 import type { BidiConnection } from './connection.ts';
 import { BidiError } from '../errors.ts';
 import { callFunction } from './script.ts';
@@ -269,7 +269,7 @@ export class BidiInput {
   private async framePresented(): Promise<void> {
     const { connection } = this.target;
     const context = this.target.context();
-    if (await callFunction(connection, context, shownFrame, [], { awaitPromise: true }) === true) return;
+    if (await callFunction(connection, context, nextFrame, [], { awaitPromise: true }) === true) return;
     await connection.send('browsingContext.activate', { context });
     await callFunction(connection, context, nextFrame, [], { awaitPromise: true });
   }

@@ -35,7 +35,7 @@ import type { Browser, BrowserExpectation, BrowserTab, FrameScreen, WebResponse 
 import { initScriptLabel, testInitScriptSource } from '../init-scripts.ts';
 import { mediaLabel } from '../options.ts';
 import { evaluateInPage } from '../in-page/evaluation.ts';
-import { documentTitle } from '../in-page/page.ts';
+import { documentTitle } from '../in-page/document.ts';
 import { routePatternMatches, routePatternsEqual } from '../driver/route-pattern.ts';
 import { cookieTargets, requireCookieFilter, requireDownloadCount, requireMedia } from './arguments.ts';
 import { typeInto } from '../driver/actions.ts';

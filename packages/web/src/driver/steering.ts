@@ -3,7 +3,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Deadline, EngineError, raceAbort, TestError } from '@e2e-dev/core/engine';
 import { isClassified, isStale, message } from '../errors.ts';
-import { historyEntry, readyState } from '../in-page/page.ts';
+import { historyEntry, readyState } from '../in-page/document.ts';
 import type { BidiSession } from './session.ts';
 
 /** How a navigation waits: the `waitUntil` the `browser` fixture takes. */

@@ -27,7 +27,8 @@ import { CLOSED_SHADOW_ROOTS_KEY } from '../in-page/closed-shadow.ts';
 import { SECURE_FIELD_SELECTOR, type RawNodeData, type RawObservedNode } from '../in-page/read-node.ts';
 import { cancelled, isStale, releaseQuietly, unlessStale } from '../errors.ts';
 import { contentContext, inViewport, resolveFrames, selectElements, splitFrames, type NodeTarget } from './frames.ts';
-import { computedStyle, domReady, frameContentInset, maskSecureFields, unmaskSecureFields } from '../in-page/page.ts';
+import { computedStyle, domReady, frameContentInset } from '../in-page/document.ts';
+import { maskSecureFields, unmaskSecureFields } from '../in-page/mask.ts';
 import type { BidiSession } from './session.ts';
 import { ElementRef } from './script.ts';
 
@@ -358,7 +359,7 @@ async function maskedCapture(session: BidiSession, viewport: ViewportSize): Prom
   try {
     let count = 0;
     for (const each of documents) {
-      count += await session.run(maskSecureFields, [SECURE_FIELD_SELECTOR, CLOSED_SHADOW_ROOTS_KEY, token], each);
+      count += await session.run(maskSecureFields, [SECURE_FIELD_SELECTOR, token], each);
       masked.push(each);
     }
     // Firefox fails a capture whose document a navigation already under way replaced mid-snapshot
@@ -492,7 +493,7 @@ interface FrameChild {
   readonly inset: Rect;
 }
 
-/** A frame element's content box, from its border box and `frameContentInset` (`in-page/page.ts`). */
+/** A frame element's content box, from its border box and `frameContentInset` (`in-page/document.ts`). */
 function contentBox(border: Rect, inset: Rect): Rect {
   return { x: border.x + inset.x, y: border.y + inset.y, width: inset.width, height: inset.height };
 }
