@@ -860,21 +860,17 @@ export const createSemanticReader = (
   };
 
   /**
-   * Path to one element in its own document, and whether anything along it names
-   * the element rather than counting positions to it.
-   *
-   * The walk stops at the first ancestor something names, so an anchored path is
-   * only positional *below* that ancestor. An unanchored path is positional all
-   * the way from `body`, which makes it fragile for a reason that has nothing to
-   * do with the element: a chat widget, a consent frame, or a portal appended
-   * anywhere above shifts every `nth-child` index beneath it.
-   *
-   * Each `namedSelectorOf` probe is a document-wide `querySelectorAll`, so this
-   * is deliberately not called for every node of a tree walk; see `Projection`.
+   * The selector used to re-enter one iframe: what names the element, else
+   * positions counted down from the nearest ancestor something names, else
+   * from `body`. A positional path is fine here: it is resolved against the
+   * document it was just read from, within this observation, and never
+   * stored. This is the one place a selector is derived: each
+   * `namedSelectorOf` probe is a document-wide query, and no runner consumes
+   * a per-node selector, so neither projection pays for one.
    */
-  const pathTo = (el: Element): { selector: string; anchored: boolean } => {
+  const frameSelectorOf = (el: Element): string => {
     const named = namedSelectorOf(el);
-    if (named !== null) return { selector: named, anchored: true };
+    if (named !== null) return named;
     const parts: string[] = [];
     let current: Element | null = el;
     while (current !== null && current.tagName.toLowerCase() !== 'html') {
@@ -883,20 +879,11 @@ export const createSemanticReader = (
       const index = Array.prototype.indexOf.call(parent.children, current) + 1;
       parts.unshift(`${current.tagName.toLowerCase()}:nth-child(${index})`);
       const anchor = namedSelectorOf(parent);
-      if (anchor !== null) return { selector: `${anchor} > ${parts.join(' > ')}`, anchored: true };
+      if (anchor !== null) return `${anchor} > ${parts.join(' > ')}`;
       current = parent;
     }
-    return { selector: parts.join(' > '), anchored: false };
+    return parts.join(' > ');
   };
-
-  /**
-   * The selector used to re-enter one iframe. Unanchored is fine here: it is
-   * resolved against the document it was just read from, within this
-   * observation, and never stored. This is the one place a selector is
-   * derived: each `namedSelectorOf` probe is a document-wide query, and no
-   * runner consumes a per-node selector, so neither projection pays for one.
-   */
-  const frameSelectorOf = (el: Element): string => pathTo(el).selector;
 
   /**
    * The role both projections report for one element. A tree walk and a

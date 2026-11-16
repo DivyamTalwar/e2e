@@ -163,8 +163,8 @@ interface TaggedRead {
  * element with its node id under `MARKER`, and reads where it sits. Runs in
  * the page.
  */
-const TAG_DOCUMENT = `(options, marker) => {
-  const [metadata, elements] = (${readerInstallCall('tree')})(options);
+const TAG_DOCUMENT = `(options, limits, marker) => {
+  const [metadata, elements] = (${readerInstallCall('tree')})(options, limits);
   const observation = typeof metadata === 'string' ? JSON.parse(metadata) : metadata;
   const facts = elements.map((element, index) => {
     element.setAttribute(marker, observation.ids[index]);
@@ -185,13 +185,10 @@ export async function captureTagged(page: BidiPage): Promise<{
   nodes: SemanticNode[];
   facts: Map<string, ElementFacts>;
 }> {
-  const options = {
-    testIdAttribute: 'data-testid',
-    secureFieldSelector: SECURE_FIELD_SELECTOR,
-    mode: { kind: 'tree', maxNodes: 5000, idSeed: 1, nameLimit: OBSERVED_NAME_LIMIT, textLimit: OBSERVED_TEXT_LIMIT },
-  };
+  const options = { testIdAttribute: 'data-testid', secureFieldSelector: SECURE_FIELD_SELECTOR };
+  const limits = { maxNodes: 5000, idSeed: 1, nameLimit: OBSERVED_NAME_LIMIT, textLimit: OBSERVED_TEXT_LIMIT };
   // oxlint-disable-next-line e2e/no-unchecked-json -- the reader's own output in a page the test wrote
-  const read = JSON.parse(String(await page.evaluate(TAG_DOCUMENT, options, MARKER))) as TaggedRead;
+  const read = JSON.parse(String(await page.evaluate(TAG_DOCUMENT, options, limits, MARKER))) as TaggedRead;
   const tree = assembleTree(read.nodes, read.ids, [], new Map());
   return { nodes: flatten(tree), facts: new Map(read.ids.map((id, index) => [id, read.facts[index]!])) };
 }

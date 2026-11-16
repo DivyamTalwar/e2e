@@ -1,24 +1,33 @@
 /**
- * The reads a locate matches elements by. Serialized into the page beside
- * the semantic reader they read through, so this is one self-contained
- * function under the rule `read-semantics.ts` states.
+ * How a locate matches elements. Serialized into the page beside the
+ * semantic reader it reads through, so this is one self-contained function
+ * under the rule `read-semantics.ts` states.
  */
 
+import type { SemanticQuery, TextMatching } from '@e2e-dev/core/engine';
 import type { createSemanticReader } from './read-semantics.ts';
 
 /**
- * What a locate matches an element by, under one reader: the reader's own
- * reads, and beside them the ones Playwright's engines read differently
- * from the tree: an element's text as the text engine joins it (shadow
- * roots included), whether the role engine counts it hidden
+ * Whether an element answers a query of a locate, under one reader, as
+ * Playwright's engines match: text queries on the element's joined text,
+ * label queries on any of its labels, role queries skipping what is hidden
+ * from the accessibility tree. It compares the reader's own reads, and
+ * beside them the ones Playwright's engines read differently from the
+ * tree: an element's text as the text engine joins it (shadow roots
+ * included), whether the role engine counts it hidden
  * (`isElementHiddenForAria`), its ARIA states with `mixed` and absent kept
  * apart from false (`getAriaChecked`, `getAriaPressed`, `getAriaExpanded`,
  * `getAriaSelected`), and its level (`getAriaLevel`: a heading tag's before
  * `aria-level`, none without either). Each read is computed when first
- * asked and kept for the rest of the read, so a query pays only for what it
- * compares.
+ * asked and kept for the rest of the locate, so a query pays only for what
+ * it compares. In a hidden frame (`frameHidden`) every element is hidden.
  */
-export const createLocatorReads = (reader: ReturnType<typeof createSemanticReader>, secureFieldSelector: string) => {
+export const createLocatorMatch = (
+  reader: ReturnType<typeof createSemanticReader>,
+  options: { readonly testIdAttribute: string; readonly secureFieldSelector: string },
+  matchesText: TextMatching['matchesText'],
+  frameHidden: boolean,
+) => {
   /** Per-node memo, as the semantic reader keeps its own. */
   const memoized = <N extends Node, T>(compute: (node: N) => T): ((node: N) => T) => {
     const cache = new Map<N, T>();
@@ -77,41 +86,74 @@ export const createLocatorReads = (reader: ReturnType<typeof createSemanticReade
     const value = el.getAttribute(attribute);
     return value === 'true' ? true : value === 'mixed' ? 'mixed' : false;
   };
-  return {
-    ...reader,
-    /** The element's text as Playwright's text engine joins it: its shadow roots included, whitespace collapsed. */
-    text: (el: Element): string => joinedTextOf(el).replace(/\u200b/g, '').trim().replace(/\s+/g, ' '),
-    /** Whether Playwright's role engine leaves the element out as hidden from the accessibility tree. */
-    hiddenForAria,
-    /** The element's ARIA states, read for `role`: `mixed` and absent kept apart from false. */
-    states: (el: Element, role: string) => {
-      const input = el instanceof HTMLInputElement ? el : null;
-      let checked: boolean | 'mixed' = false;
-      if (input !== null && input.indeterminate) checked = 'mixed';
-      else if (input !== null && (input.type === 'checkbox' || input.type === 'radio')) checked = input.checked;
-      else if (CHECKED_ROLES.indexOf(role) !== -1) checked = ariaState(el, 'aria-checked');
-      let expanded: boolean | null = null;
-      if (el instanceof HTMLDetailsElement) expanded = el.open;
-      else if (EXPANDED_ROLES.indexOf(role) !== -1 && el.hasAttribute('aria-expanded')) expanded = el.getAttribute('aria-expanded') === 'true';
-      return {
-        checked,
-        pressed: role === 'button' ? ariaState(el, 'aria-pressed') : false,
-        expanded,
-        selected: el instanceof HTMLOptionElement ? el.selected : SELECTED_ROLES.indexOf(role) !== -1 && (el.getAttribute('aria-selected') ?? '').toLowerCase() === 'true',
-      };
-    },
-    /** The level a role query compares, as Playwright reads it: a heading tag's, else a whole `aria-level` of at least 1, else none. */
-    level: (el: Element): number | null => {
-      const tag = el.tagName.toLowerCase();
-      if (/^h[1-6]$/.test(tag)) return Number(tag.slice(1));
-      const attribute = el.getAttribute('aria-level');
-      const level = attribute === null ? Number.NaN : Number(attribute);
-      return Number.isInteger(level) && level >= 1 ? level : null;
-    },
-    /** The value a display-value query compares: an input's (but a checkbox's or radio's), a textarea's, or a select's; null for a secure field and anything else. */
-    displayValue: (el: Element): string | null =>
-      el.matches('input:not([type="checkbox" i]):not([type="radio" i]), textarea, select') && !el.matches(secureFieldSelector)
-        ? (el as HTMLInputElement).value
-        : null,
+  /** The element's text as Playwright's text engine joins it: its shadow roots included, whitespace collapsed. */
+  const text = (el: Element): string => joinedTextOf(el).replace(/\u200b/g, '').trim().replace(/\s+/g, ' ');
+  /** The element's ARIA states, read for `role`: `mixed` and absent kept apart from false. */
+  const states = (el: Element, role: string) => {
+    const input = el instanceof HTMLInputElement ? el : null;
+    let checked: boolean | 'mixed' = false;
+    if (input !== null && input.indeterminate) checked = 'mixed';
+    else if (input !== null && (input.type === 'checkbox' || input.type === 'radio')) checked = input.checked;
+    else if (CHECKED_ROLES.indexOf(role) !== -1) checked = ariaState(el, 'aria-checked');
+    let expanded: boolean | null = null;
+    if (el instanceof HTMLDetailsElement) expanded = el.open;
+    else if (EXPANDED_ROLES.indexOf(role) !== -1 && el.hasAttribute('aria-expanded')) expanded = el.getAttribute('aria-expanded') === 'true';
+    return {
+      checked,
+      pressed: role === 'button' ? ariaState(el, 'aria-pressed') : false,
+      expanded,
+      selected: el instanceof HTMLOptionElement ? el.selected : SELECTED_ROLES.indexOf(role) !== -1 && (el.getAttribute('aria-selected') ?? '').toLowerCase() === 'true',
+    };
   };
+  /** The level a role query compares, as Playwright reads it: a heading tag's, else a whole `aria-level` of at least 1, else none. */
+  const level = (el: Element): number | null => {
+    const tag = el.tagName.toLowerCase();
+    if (/^h[1-6]$/.test(tag)) return Number(tag.slice(1));
+    const attribute = el.getAttribute('aria-level');
+    const value = attribute === null ? Number.NaN : Number(attribute);
+    return Number.isInteger(value) && value >= 1 ? value : null;
+  };
+  /** The value a display-value query compares: an input's (but a checkbox's or radio's), a textarea's, or a select's; null for a secure field and anything else. */
+  const displayValue = (el: Element): string | null =>
+    el.matches('input:not([type="checkbox" i]):not([type="radio" i]), textarea, select') && !el.matches(options.secureFieldSelector)
+      ? (el as HTMLInputElement).value
+      : null;
+  /** Whether `element` answers `query`. */
+  const matches = (element: Element, query: SemanticQuery): boolean => {
+    if (query.visible === true && (frameHidden || reader.hidden(element))) return false;
+    switch (query.kind) {
+      case 'role': {
+        if (query.value.kind !== 'string' || frameHidden || !reader.hasRole(element, query.value.value)) return false;
+        if (query.name !== undefined && !matchesText(reader.name(element) ?? '', query.name)) return false;
+        if (hiddenForAria(element)) return false;
+        const wanted = query.states ?? {};
+        if (wanted.checked !== undefined || wanted.pressed !== undefined || wanted.expanded !== undefined || wanted.selected !== undefined) {
+          const found = states(element, query.value.value);
+          if (wanted.checked !== undefined && found.checked !== wanted.checked) return false;
+          if (wanted.pressed !== undefined && found.pressed !== wanted.pressed) return false;
+          if (wanted.expanded !== undefined && found.expanded !== wanted.expanded) return false;
+          if (wanted.selected !== undefined && found.selected !== wanted.selected) return false;
+        }
+        if (wanted.disabled !== undefined && reader.disabled(element) !== wanted.disabled) return false;
+        return query.level === undefined || level(element) === query.level;
+      }
+      case 'text':
+        return matchesText(text(element), query.value);
+      case 'label':
+        return (reader.labels(element) ?? []).some((label) => matchesText(label, query.value));
+      case 'displayValue': {
+        const value = displayValue(element);
+        return value !== null && matchesText(value, query.value);
+      }
+      case 'placeholder': {
+        const placeholder = element.getAttribute('placeholder');
+        return placeholder !== null && matchesText(placeholder, query.value);
+      }
+      case 'testId': {
+        const testId = element.getAttribute(options.testIdAttribute);
+        return testId !== null && matchesText(testId, query.value);
+      }
+    }
+  };
+  return { matches, text };
 };

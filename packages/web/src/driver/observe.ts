@@ -233,11 +233,10 @@ function selectorParts(expression: LocatorExpression): [string, PagePart[]][] {
  * truncation; an off-site one stays a boundary node by design.
  */
 async function captureTree(session: BidiSession, context: string, framePath: readonly string[], budget: number, deadline: number): Promise<CapturedTree> {
-  const { metadata: decoded, elements } = await session.readEncoded('tree', [{
-    testIdAttribute: session.settings.testIdAttribute,
-    secureFieldSelector: SECURE_FIELD_SELECTOR,
-    mode: { kind: 'tree', maxNodes: budget, idSeed: session.refs.reserveIds(budget), nameLimit: OBSERVED_NAME_LIMIT, textLimit: OBSERVED_TEXT_LIMIT },
-  }], context);
+  const { metadata: decoded, elements } = await session.readEncoded('tree', [
+    { testIdAttribute: session.settings.testIdAttribute, secureFieldSelector: SECURE_FIELD_SELECTOR },
+    { maxNodes: budget, idSeed: session.refs.reserveIds(budget), nameLimit: OBSERVED_NAME_LIMIT, textLimit: OBSERVED_TEXT_LIMIT },
+  ], context);
   const { nodes, ids } = decoded;
   if (!Array.isArray(ids) || ids.length !== nodes.length || elements.length !== nodes.length) {
     throw new EngineError('ENGINE_FAILURE', 'observation ids do not align with its nodes', { retryable: false });

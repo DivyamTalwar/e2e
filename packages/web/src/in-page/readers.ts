@@ -7,12 +7,12 @@
  */
 
 import { createHash } from 'node:crypto';
-import { createResolver, createTextMatching, type LocatorExpression, type SemanticQuery, type TextMatching } from '@e2e-dev/core/engine';
+import { createResolver, createTextMatching, type LocatorExpression, type TextMatching } from '@e2e-dev/core/engine';
 import { createAccessibleNames } from './accessible-name.ts';
 import { CLOSED_SHADOW_ROOTS_KEY } from './closed-shadow.ts';
 import { frameContentInset } from './document.ts';
 import { createDom } from './dom.ts';
-import { createLocatorReads } from './locator-match.ts';
+import { createLocatorMatch } from './locator-match.ts';
 import { createSemanticReader } from './read-semantics.ts';
 import type { RawNodeData, RawObservedNode, TreeLimits } from './read-node.ts';
 import { selectChain, type PagePart } from './select-chain.ts';
@@ -33,9 +33,6 @@ export const BUILTINS_INIT_SCRIPT = `(() => {
 
 /** What every reader builds the semantic reader with. */
 export type ReadOptions = { readonly testIdAttribute: string; readonly secureFieldSelector: string };
-
-/** What the `tree` reader walks the document with. */
-type TreeOptions = ReadOptions & { readonly mode: TreeLimits & { readonly kind: 'tree' } };
 
 /**
  * A reader's metadata beside the elements it read: one JSON string when the
@@ -91,7 +88,7 @@ interface SelectedFrames {
 
 /**
  * Builds the readers in the page over the reader `semantics` builds for each
- * read from its name computation `names`, a locate's reads `locatorReads`,
+ * read from its name computation `names`, a locate's matching `locatorMatch`,
  * the contract's locator rules `resolver`, its text rule `matchesText`, the
  * selector chain `select`, the DOM helpers `dom` over the recorded closed
  * shadow roots, and `contentInset` (`frameContentInset`). Serialized with
@@ -102,7 +99,7 @@ interface SelectedFrames {
 function createReaders(
   semantics: typeof createSemanticReader,
   names: typeof createAccessibleNames,
-  locatorReads: typeof createLocatorReads,
+  locatorMatch: typeof createLocatorMatch,
   resolver: typeof createResolver,
   { matchesText }: TextMatching,
   select: typeof selectChain,
@@ -128,20 +125,17 @@ function createReaders(
     return element.isConnected ? semantics(options, names).hidden(element) : true;
   };
 
-  /** Reads the document's semantic tree: the walk's metadata, and the walked elements. */
-  const tree = (options: TreeOptions): Encoded<TreeMetadata> => {
+  /** Reads the document's semantic tree within `limits`: the walk's metadata, and the walked elements. */
+  const tree = (options: ReadOptions, limits: TreeLimits): Encoded<TreeMetadata> => {
     // A document a navigation just opened has no root yet: it reads as no nodes, which the caller repeats.
     if (document.documentElement === null) return [encode({ nodes: [], ids: [], truncated: false }), []];
-    const observation = semantics(options, names).tree(document.documentElement, options.mode);
+    const observation = semantics(options, names).tree(document.documentElement, limits);
     return [encode({ nodes: observation.nodes, ids: observation.ids, truncated: observation.truncated }), observation.elements];
   };
 
   /**
    * Resolves `expression` (as JSON) in the document by the contract's
-   * locator rules, matching each element by Playwright's engines over the
-   * reader's locator reads (`createLocatorReads`): text queries and text filters
-   * on the element's joined text, label queries on any of its labels, role
-   * queries skipping what is hidden from the accessibility tree. Every
+   * locator rules, matching each element as `createLocatorMatch` does. Every
    * element through open and recorded closed shadow roots is a candidate, in
    * Playwright's match order: a root's light DOM before the content of its
    * shadow roots, each root in turn. `selectors` holds each `selector` of
@@ -174,50 +168,15 @@ function createReaders(
       for (const [shadowHost, shadow] of shadows) walkRoot(shadow.children, shadowHost);
     };
     walkRoot([document.documentElement], undefined);
-    const reads = locatorReads(semantics(options, names), options.secureFieldSelector);
-    const matches = (element: Element, query: SemanticQuery): boolean => {
-      if (query.visible === true && (frameHidden || reads.hidden(element))) return false;
-      switch (query.kind) {
-        case 'role': {
-          if (query.value.kind !== 'string' || frameHidden || !reads.hasRole(element, query.value.value)) return false;
-          if (query.name !== undefined && !matchesText(reads.name(element) ?? '', query.name)) return false;
-          if (reads.hiddenForAria(element)) return false;
-          const wanted = query.states ?? {};
-          if (wanted.checked !== undefined || wanted.pressed !== undefined || wanted.expanded !== undefined || wanted.selected !== undefined) {
-            const states = reads.states(element, query.value.value);
-            if (wanted.checked !== undefined && states.checked !== wanted.checked) return false;
-            if (wanted.pressed !== undefined && states.pressed !== wanted.pressed) return false;
-            if (wanted.expanded !== undefined && states.expanded !== wanted.expanded) return false;
-            if (wanted.selected !== undefined && states.selected !== wanted.selected) return false;
-          }
-          if (wanted.disabled !== undefined && reads.disabled(element) !== wanted.disabled) return false;
-          return query.level === undefined || reads.level(element) === query.level;
-        }
-        case 'text':
-          return matchesText(reads.text(element), query.value);
-        case 'label':
-          return (reads.labels(element) ?? []).some((label) => matchesText(label, query.value));
-        case 'displayValue': {
-          const value = reads.displayValue(element);
-          return value !== null && matchesText(value, query.value);
-        }
-        case 'placeholder': {
-          const placeholder = element.getAttribute('placeholder');
-          return placeholder !== null && matchesText(placeholder, query.value);
-        }
-        case 'testId': {
-          const testId = element.getAttribute(options.testIdAttribute);
-          return testId !== null && matchesText(testId, query.value);
-        }
-      }
-    };
+    const reader = semantics(options, names);
+    const { matches, text } = locatorMatch(reader, options, matchesText, frameHidden);
     // oxlint-disable-next-line e2e/no-unchecked-json -- the expression the driver serialized for this call
     const parsed = JSON.parse(expression) as LocatorExpression;
     const found = resolver<Element>({
       nodes,
       parent: (element) => parents.get(element),
       matches,
-      hasText: (element, pattern) => matchesText(reads.text(element), pattern),
+      hasText: (element, pattern) => matchesText(text(element), pattern),
       selector: (selector, candidates) => {
         const hits = selections.get(selector);
         return hits === undefined ? [] : candidates.filter((element) => hits.has(element));
@@ -227,7 +186,7 @@ function createReaders(
       },
     })(parsed);
     const described = found.map((element) => {
-      const node = reads.describe(element);
+      const node = reader.describe(element);
       return frameHidden ? { ...node, states: { ...node.states, hidden: true } } : node;
     });
     return [encode(described), found];
@@ -307,7 +266,7 @@ export type ReaderResult<K extends ReaderName> = Wire<ReturnType<Readers[K]>>;
 const READERS = `(() => {
   const { ${BUILTIN_NAMES.join(', ')} } = globalThis[globalThis.Symbol.for(${JSON.stringify(BUILTINS_KEY)})] ?? globalThis;
   return (${createReaders.toString()})(
-    (${createSemanticReader.toString()}), (${createAccessibleNames.toString()}), (${createLocatorReads.toString()}), (${createResolver.toString()}), (${createTextMatching.toString()})(),
+    (${createSemanticReader.toString()}), (${createAccessibleNames.toString()}), (${createLocatorMatch.toString()}), (${createResolver.toString()}), (${createTextMatching.toString()})(),
     (${selectChain.toString()}), (${createDom.toString()})(${JSON.stringify(CLOSED_SHADOW_ROOTS_KEY)}), (${frameContentInset.toString()}),
   );
 })()`;
