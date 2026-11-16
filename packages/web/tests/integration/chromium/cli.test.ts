@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-const BIN = path.resolve(import.meta.dirname, '../../dist/bin.js');
+const BIN = path.resolve(import.meta.dirname, '../../../dist/bin.js');
 
 /** Spawns the command with `args` and the given extra environment. */
 function runBin(args: readonly string[], env: NodeJS.ProcessEnv = {}): ChildProcess {

@@ -19,9 +19,9 @@ import type {
   SemanticQuery,
   TextPattern,
 } from '@e2e-dev/core/engine';
-import { web } from '../../src/index.ts';
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
+import { testWeb } from '../helpers/web-session.ts';
 
 function cleanup(): EngineCleanupContext {
   return { signal: new AbortController().signal, timeoutMs: 30_000 };
@@ -83,7 +83,7 @@ async function boot(engine: EngineHandle, app: FixtureApp): Promise<void> {
 describe('locators inside closed shadow roots', () => {
   let app: FixtureApp;
   let artifactsDir: string;
-  const engine = web();
+  const engine = testWeb();
   const op = operation('closed-1');
   const locate = (expression: LocatorExpression) => engine.locate!(expression, op);
 
@@ -252,7 +252,7 @@ describe('locators inside closed shadow roots', () => {
 describe('match order across one closed root', () => {
   let app: FixtureApp;
   let artifactsDir: string;
-  const engine = web();
+  const engine = testWeb();
   const op = operation('closed-order');
 
   beforeAll(async () => {

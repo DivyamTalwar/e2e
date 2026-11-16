@@ -15,8 +15,9 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Locator } from 'e2e';
 import type { EngineFixtureContext, EngineHandle, LocatorExpression, NodeRef, OperationContext } from '@e2e-dev/core/engine';
-import { web, type BrowserExpectation } from '../../src/index.ts';
+import type { BrowserExpectation } from '../../src/index.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
+import { onFirefox, testWeb } from '../helpers/web-session.ts';
 
 const BUDGET_MS = 1_000;
 /** The action timeout a read left to the harness's default budget takes. */
@@ -101,7 +102,7 @@ describe('operations on a hung page', () => {
 
   /** Boots a fresh engine and attempt. */
   async function start(): Promise<void> {
-    engine = web();
+    engine = testWeb();
     await engine.init!({
       runId: 'run-hung',
       targetName: 'web',
@@ -194,7 +195,8 @@ describe('operations on a hung page', () => {
     const locate = await bounded(() => engine.locate!(button('Next'), operation()));
     expect(locate.error).toMatchObject({ code: 'OPERATION_TIMEOUT' });
     const tap = await bounded(() => engine.performAt!({ x: 10, y: 10 }, { kind: 'tap' }, operation()));
-    expect(tap.error).toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED' });
+    // Firefox sends a pointer only once the page rendered a frame, which a stuck renderer never does: no input went out.
+    expect(tap.error).toMatchObject({ code: onFirefox ? 'OPERATION_TIMEOUT' : 'ACTION_MAY_HAVE_COMMITTED' });
   });
 
   it('keeps the reason Playwright gives for a tap that cannot land, ahead of the deadline', async () => {

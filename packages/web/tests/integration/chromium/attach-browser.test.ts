@@ -6,10 +6,10 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { attachBrowser } from '../../src/index.ts';
-import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../helpers/cdp-host.ts';
-import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
-import { startPageServer, type PageServer } from '../helpers/web-session.ts';
+import { attachBrowser } from '../../../src/index.ts';
+import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
+import { startPageServer, type PageServer } from '../../helpers/web-session.ts';
 
 /** The page targets Chrome lists over its DevTools HTTP endpoint. */
 async function pages(endpoint: string): Promise<{ id: string; url: string }[]> {

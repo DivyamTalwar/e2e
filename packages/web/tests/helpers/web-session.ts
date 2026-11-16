@@ -45,9 +45,8 @@ export function testBrowser(): BrowserName {
   return name;
 }
 
-/** Whether the suite runs on Firefox, for a test that names a Firefox limit in its skip. */
+/** Whether the suite runs on Firefox, for a test that asserts a Firefox limit. */
 export const onFirefox = testBrowser() === 'firefox';
-
 
 /** `web(options)` on the suite's browser, for a test that drives the engine contract by hand. */
 export function testWeb(options: WebOptions = {}): EngineHandle {
@@ -56,9 +55,7 @@ export function testWeb(options: WebOptions = {}): EngineHandle {
 
 /** How to boot the session. */
 export interface WebSessionOptions {
-  /** The browser; defaults to `testBrowser()`. A `web.browser` wins. */
-  readonly browser?: BrowserName;
-  /** The `web()` options. */
+  /** The `web()` options, on the suite's browser unless they name one. */
   readonly web?: WebOptions;
   /** The app's URL; defaults to the page server's origin. */
   readonly appUrl?: string;
@@ -256,13 +253,12 @@ function withAttemptSinks(engine: EngineHandle, sinks: AttemptSinks | undefined)
 /**
  * Boots a web engine through the runner's public host (`openHost` from
  * `e2e/runner`), starts one attempt, and hands back the attempt's real
- * `browser` fixture beside the engine's own contract. The browser is
- * `options.browser`, else the one `testBrowser()` names.
+ * `browser` fixture beside the engine's own contract, on the suite's browser.
  */
 export async function startWebSession(options: WebSessionOptions = {}): Promise<WebSession> {
   const server = await startPageServer();
   const { origin } = server;
-  const engine = web({ browser: options.browser ?? testBrowser(), ...options.web });
+  const engine = testWeb(options.web);
   const ownRoot = options.projectRoot === undefined ? mkdtempSync(path.join(tmpdir(), 'e2e-web-root-')) : undefined;
   const projectRoot = options.projectRoot ?? ownRoot!;
   // The runner keeps output inside the project.

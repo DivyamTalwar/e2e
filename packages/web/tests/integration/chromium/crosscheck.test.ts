@@ -7,12 +7,12 @@
 
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { crossCheck, openCheckPage } from '../crosscheck/crosscheck.ts';
-import type { BidiPage } from '../helpers/bidi-page.ts';
-import { diffExpectations, keyOf, readExpectations, TODO_REASON, writeExpectations } from '../crosscheck/expectations.ts';
-import { FIXTURE_PAGES } from '../crosscheck/fixtures.ts';
+import { crossCheck, openCheckPage } from '../../crosscheck/crosscheck.ts';
+import type { BidiPage } from '../../helpers/bidi-page.ts';
+import { diffExpectations, keyOf, readExpectations, TODO_REASON, writeExpectations } from '../../crosscheck/expectations.ts';
+import { FIXTURE_PAGES } from '../../crosscheck/fixtures.ts';
 
-const EXPECTED = path.join(import.meta.dirname, '../crosscheck/expected.txt');
+const EXPECTED = path.join(import.meta.dirname, '../../crosscheck/expected.txt');
 const HEADER = [
   '# Known disagreements between the engine tree and Chrome, one per line:',
   '# page | oracle field | role "name" | ours <value> | theirs <value> | reason',

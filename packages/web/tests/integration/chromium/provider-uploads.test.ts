@@ -10,11 +10,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { EngineHandle, JsonValue, OperationContext } from '@e2e-dev/core/engine';
-import { web as webEngine, type BrowserProvider } from '../../src/index.ts';
-import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../helpers/cdp-host.ts';
-import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
-import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { browserFixture, bySelector } from '../helpers/web-session.ts';
+import { web as webEngine, type BrowserProvider } from '../../../src/index.ts';
+import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
+import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
+import { browserFixture, bySelector } from '../../helpers/web-session.ts';
 
 function operation(): OperationContext {
   return { timeoutMs: 15_000, signal: new AbortController().signal, runId: 'run-uploads', attemptId: 'a1', origin: 'test' };

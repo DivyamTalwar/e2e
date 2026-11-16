@@ -506,7 +506,7 @@ the fixture project (`tests/integration/agent-ai-trace.test.ts` shows how).
 
 ## Cross-checking the web engine's tree
 
-`packages/web/tests/integration/crosscheck.test.ts` reads every node of the
+`packages/web/tests/integration/chromium/crosscheck.test.ts` reads every node of the
 web engine's semantic tree against two oracles on the same page: Chrome's
 accessibility tree over CDP (role, name, checked, disabled, expanded,
 selected, pressed, heading level, and interactive nodes the tree left out)
@@ -517,7 +517,7 @@ every web-benchmark scenario in `benchmark.yml` or locally:
 
 ```bash
 pnpm --filter @e2e-dev/web-benchmark run build && pnpm --filter @e2e-dev/web-benchmark run start &
-CROSSCHECK_BENCHMARK_URL=http://127.0.0.1:4280 pnpm --filter @e2e-dev/web exec vitest run tests/integration/crosscheck.test.ts
+CROSSCHECK_BENCHMARK_URL=http://127.0.0.1:4280 pnpm --filter @e2e-dev/web exec vitest run tests/integration/chromium/crosscheck.test.ts
 ```
 
 - Every disagreement must be listed in `tests/crosscheck/expected.txt` with a

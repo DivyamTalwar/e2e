@@ -95,7 +95,7 @@ jobs:
         run: |
           pnpm --filter @e2e-dev/web-benchmark run start > /tmp/benchmark-app.log 2>&1 &
           for _ in $(seq 1 60); do curl -sf "$CROSSCHECK_BENCHMARK_URL" > /dev/null && break; sleep 1; done
-          pnpm --filter @e2e-dev/web exec vitest run --project integration tests/integration/crosscheck.test.ts
+          pnpm --filter @e2e-dev/web exec vitest run --project integration tests/integration/chromium/crosscheck.test.ts
       # The comment is the result; the artifact is evidence for it. A storage
       # quota that refuses the upload must not turn a green suite red.
       - name: Upload report

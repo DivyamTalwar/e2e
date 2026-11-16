@@ -2,8 +2,8 @@ import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, it } from 'vitest';
-import { connectBidiOverCdp } from '../../src/driver/launch.ts';
-import { closeRemoteChrome, launchRemoteChrome } from '../helpers/cdp-host.ts';
+import { connectBidiOverCdp } from '../../../src/driver/launch.ts';
+import { closeRemoteChrome, launchRemoteChrome } from '../../helpers/cdp-host.ts';
 
 /** A TCP listener exposes a numeric port rather than a pipe path. */
 function isTcpAddress(value: ReturnType<Server['address']>): value is AddressInfo {

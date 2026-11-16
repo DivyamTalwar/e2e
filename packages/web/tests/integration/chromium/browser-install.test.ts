@@ -8,9 +8,9 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { launchBidiBrowser } from '../../src/driver/launch.ts';
-import { browserPlatform, downloadUrl, PINS } from '../../src/install/builds.ts';
-import { browserExecutable, installBrowsers } from '../../src/install/provision.ts';
+import { launchBidiBrowser } from '../../../src/driver/launch.ts';
+import { browserPlatform, downloadUrl, PINS } from '../../../src/install/builds.ts';
+import { browserExecutable, installBrowsers } from '../../../src/install/provision.ts';
 
 const platform = browserPlatform();
 const { buildId } = PINS['chrome-headless-shell'];
