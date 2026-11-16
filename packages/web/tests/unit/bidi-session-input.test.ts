@@ -102,14 +102,14 @@ describe('BidiInput.send', () => {
     await held.input.send(moveSources(30, 30));
     const moves = fake.commands('input.performActions').map((command) => (command.params['actions'] as { actions: { type: string; pressure?: number }[] }[])[0]!.actions[0]!.pressure);
     expect(moves).toEqual([undefined, undefined, 0.5]);
-    expect(held.pointer).toEqual({ x: 30, y: 30 });
+    expect(held.input.pointer).toEqual({ x: 30, y: 30 });
   });
 
   it('moves the mouse to where a swipe wheels, in the same call', async () => {
     const fake = new FakeBidi().on('input.performActions', { result: {} });
     const held = await session(fake);
     await held.input.send(swipeSources(40, 60, 0, 50));
-    expect(held.pointer).toEqual({ x: 40, y: 60 });
+    expect(held.input.pointer).toEqual({ x: 40, y: 60 });
     expect(fake.commands('input.performActions')).toHaveLength(1);
   });
 
@@ -124,10 +124,10 @@ describe('BidiInput.send', () => {
         await expect(held.input.send(moveSources(x, y))).rejects.toMatchObject({ code: 'INVALID_ARGUMENT', message: expect.stringContaining('outside the 100x100 viewport') });
         await expect(held.input.send(swipeSources(x, y, 0, 10))).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
       }
-      expect(held.dispatches).toBe(0);
+      expect(held.input.dispatches).toBe(0);
       expect(fake.commands('input.performActions')).toEqual([]);
       await held.input.send(clickSources(100, 100));
-      expect(held.dispatches).toBe(1);
+      expect(held.input.dispatches).toBe(1);
     }
   });
 
@@ -153,19 +153,19 @@ describe('BidiInput.send', () => {
     const held = await session(fake);
     const suppressed = (verdict: string | null): boolean => verdict === 'covered';
     await held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), async () => 'covered', suppressed);
-    expect(held.dispatches).toBe(0);
+    expect(held.input.dispatches).toBe(0);
     await held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), async () => null, suppressed);
-    expect(held.dispatches).toBe(1);
+    expect(held.input.dispatches).toBe(1);
     fail = true;
     await expect(held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), async () => 'covered', suppressed)).rejects.toThrow('gone');
-    expect(held.dispatches).toBe(2);
+    expect(held.input.dispatches).toBe(2);
   });
 
   it('takes input whose tab closed under it (a click that closes its own tab) as dispatched, not failed', async () => {
     const fake = new FakeBidi().on('input.performActions', { error: 'no such frame', message: 'Browsing context is gone' });
     const held = await session(fake);
     await expect(held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), async () => null, (verdict) => verdict !== null)).resolves.toBeNull();
-    expect(held.dispatches).toBe(1);
+    expect(held.input.dispatches).toBe(1);
   });
 
   it('counts input whose verdict never comes as dispatched, so an operation timing out on it may have committed', async () => {
@@ -173,7 +173,7 @@ describe('BidiInput.send', () => {
     const held = await session(fake);
     void held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), () => new Promise<never>(() => undefined), () => true);
     await vi.waitFor(() => expect(fake.commands('input.performActions')).toHaveLength(1));
-    expect(held.dispatches).toBe(1);
+    expect(held.input.dispatches).toBe(1);
   });
 
   it('sends a key WebDriver has no value for as CDP key events that carry the modifiers BiDi holds', async () => {

@@ -185,8 +185,8 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     },
     mouse: {
       move: (x, y) => run('mouse.move', (session, { signal }) => session.input.send(moveSources(Math.round(x), Math.round(y)), signal), { input: true }),
-      wheel: (deltaX, deltaY) => run('mouse.wheel', (session, { signal }) => session.input.send(wheelSources(session.pointer.x, session.pointer.y, deltaX, deltaY), signal), { input: true }),
-      down: () => run('mouse.down', (session, { signal }) => session.input.send(pressDownSources(session.pointer.x, session.pointer.y), signal), { input: true }),
+      wheel: (deltaX, deltaY) => run('mouse.wheel', (session, { signal }) => session.input.send(wheelSources(session.input.pointer.x, session.input.pointer.y, deltaX, deltaY), signal), { input: true }),
+      down: () => run('mouse.down', (session, { signal }) => session.input.send(pressDownSources(session.input.pointer.x, session.input.pointer.y), signal), { input: true }),
       up: () => run('mouse.up', (session, { signal }) => session.input.send(releaseSources(), signal), { input: true }),
     },
   };

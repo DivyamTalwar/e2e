@@ -54,7 +54,7 @@ const SCROLL_ALIGNMENTS = [
  */
 export async function perform(session: BidiSession, ref: NodeRef, action: LocatorAction, timeoutMs: number, signal: AbortSignal): Promise<void> {
   if (action.kind === 'swipe' && ref.id === ROOT_NODE_ID) {
-    await wheel(session, session.pointer, await session.viewportSize(), action.direction, action.momentum ?? 'none', signal);
+    await wheel(session, session.input.pointer, await session.viewportSize(), action.direction, action.momentum ?? 'none', signal);
     return;
   }
   const deadline = new Deadline(timeoutMs);
@@ -102,7 +102,7 @@ export async function perform(session: BidiSession, ref: NodeRef, action: Locato
       const aimed = await session.page.run(wheelAim, [target.element], target.context);
       if (aimed.aim !== 'blocked') {
         const { box } = aimed;
-        const at = aimed.aim === 'pointer' ? session.pointer : { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        const at = aimed.aim === 'pointer' ? session.input.pointer : { x: box.x + box.width / 2, y: box.y + box.height / 2 };
         return wheel(session, at, box.width > 0 ? box : await session.viewportSize(), action.direction, action.momentum ?? 'none', signal);
       }
       const point = await pointerPoint(session, target, deadline, false, signal);
@@ -175,7 +175,7 @@ export async function typeInto(session: BidiSession, text: string, signal: Abort
     }
     await flush();
     signal.throwIfAborted();
-    session.mutated();
+    session.input.mutated();
     for (const context of await session.documentContexts(session.requireContext())) {
       if (await unlessStale(session.page.run(insertFocusedText, [segment], context), false)) break;
     }
@@ -267,7 +267,7 @@ async function scrollIntoView(session: BidiSession, target: NodeTarget, deadline
 /** Focuses the element, a page change its focus handlers may make; an element that takes no focus keeps the old one, as Playwright's `focus` leaves it. */
 async function focusOn(session: BidiSession, target: NodeTarget, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
-  session.mutated();
+  session.input.mutated();
   await session.page.run(focus, [target.element], target.context);
 }
 
@@ -377,10 +377,10 @@ async function mutateWhenReady(session: BidiSession, deadline: Deadline, signal:
     try {
       outcome = await mutate();
     } catch (cause) {
-      session.mutated();
+      session.input.mutated();
       throw cause;
     }
-    if (outcome.kind === 'ok' || outcome.kind === 'refused') session.mutated();
+    if (outcome.kind === 'ok' || outcome.kind === 'refused') session.input.mutated();
     return outcome;
   }, prefix);
 }
@@ -452,7 +452,7 @@ async function setInputFiles(session: BidiSession, target: NodeTarget, paths: re
     if (directory && !takesDirectory) throw new TestError('INVALID_ARGUMENT', 'File input does not support directories, pass individual files instead');
     if (!directory && takesDirectory) throw new TestError('INVALID_ARGUMENT', '[webkitdirectory] input requires passing a path to a directory');
     signal.throwIfAborted();
-    session.mutated();
+    session.input.mutated();
     if (remote === undefined) {
       await connection.send('input.setFiles', { context, element: { sharedId: element.sharedId }, files });
       return;

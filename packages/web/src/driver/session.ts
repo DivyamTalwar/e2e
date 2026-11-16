@@ -4,7 +4,7 @@
  * it, with the primitives every other module drives the page through.
  */
 
-import { EngineError, withTimeout, type AppLogEntry, type EngineSnapshot, type ViewportPoint, type ViewportSize } from '@e2e-dev/core/engine';
+import { EngineError, withTimeout, type AppLogEntry, type EngineSnapshot, type ViewportSize } from '@e2e-dev/core/engine';
 import { DialogRouter } from './dialogs.ts';
 import type { WebScreencastOptions } from '../options.ts';
 import type { ProtectedApp } from '../protected-app.ts';
@@ -368,7 +368,7 @@ export class BidiSession {
 
   /** Calls a page function the test compiled (`compileEvaluation`) with `arg` and returns its whole result; the test's code may change the page, as input would. */
   evaluate(declaration: string, arg: PageArgument | undefined): Promise<PageValue> {
-    this.mutated();
+    this.input.mutated();
     return this.page.call(declaration, arg === undefined ? [] : [arg], { awaitPromise: true, maxObjectDepth: null });
   }
 
@@ -382,21 +382,6 @@ export class BidiSession {
     this.refs.clear();
     this.frames.clear();
     this.input.reset();
-  }
-
-  /** Input sends and page mutations so far (`BidiInput.dispatches`). */
-  get dispatches(): number {
-    return this.input.dispatches;
-  }
-
-  /** Where the mouse last moved in the tab. */
-  get pointer(): ViewportPoint {
-    return this.input.pointer;
-  }
-
-  /** Counts a change the driver or the test's code made in the page (a fill, a select, an evaluate), which may have reached the app. */
-  mutated(): void {
-    this.input.mutated();
   }
 
   /** The viewport in CSS pixels: the attempt's, else the window's. */
