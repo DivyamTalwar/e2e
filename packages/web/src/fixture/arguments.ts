@@ -11,13 +11,21 @@ import { MEDIA_KEYS, mediaProblem, type WebMedia } from '../options.ts';
 /**
  * Where each cookie of `browser.setCookies` lands. The harness's URL rule
  * decides which targets are admitted; a domain cookie is checked as the
- * origin it would be sent to, and a relative `url` lands on the base URL the
- * way `goto` would. A target that is not http(s) is `POLICY_DENIED`.
+ * origin it would be sent to, under the app's scheme (`http` for an app with
+ * no URL), and a relative `url` lands on the base URL the way `goto` would.
+ * A target that is not http(s) is `POLICY_DENIED`; a cookie that names
+ * neither a `url` nor a `domain` is refused by name.
  */
 export function cookieTargets(cookies: Parameters<Browser['setCookies']>[0], context: EngineFixtureContext): CookieTarget[] {
-  const scheme = new URL(context.app.resolveUrl('')).protocol === 'https:' ? 'https' : 'http';
+  // An app without a URL has no site either, and no base to read a scheme from.
+  const scheme = (): string => (context.app.site !== undefined && new URL(context.app.resolveUrl('')).protocol === 'https:' ? 'https' : 'http');
   return cookies.map((cookie) => {
-    const target = context.app.resolveUrl(cookie.url === undefined ? `${scheme}://${cookie.domain.replace(/^\./, '')}` : cookie.url);
+    // A test is JavaScript at run time, so the type alone does not rule out a cookie that names neither.
+    const named: { readonly url?: string; readonly domain?: string } = cookie;
+    if (named.url === undefined && named.domain === undefined) {
+      throw new TestError('INVALID_ARGUMENT', `browser.setCookies: cookie ${JSON.stringify(cookie.name)} needs a url or a domain`);
+    }
+    const target = context.app.resolveUrl(cookie.url ?? `${scheme()}://${cookie.domain.replace(/^\./, '')}`);
     if (!/^https?:/.test(target)) throw new ConfigurationError('POLICY_DENIED', `cookie URL must be http(s): ${target}`);
     return cookie.url === undefined ? { domain: cookie.domain, path: cookie.path ?? '/' } : { url: target };
   });

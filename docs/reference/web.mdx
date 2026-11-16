@@ -754,10 +754,14 @@ await browser.setCookies([{ url: 'http://localhost:3000', name: 'tz', value: 'UT
 - A relative `url` resolves against the base URL, as `goto` resolves it.
 - For the `domain` form the scheme follows the base URL, and a leading `.` is
   stripped.
+- A full `url` or a `domain` needs no `app.url`, so both work with
+  [`attachBrowser`](#attachbrowser).
 
 | Throws | When |
 | --- | --- |
 | `POLICY_DENIED` | An unparseable target or a forbidden scheme. Nothing is set. |
+| `APP_URL_REQUIRED` | A relative `url` on a target with no `app.url`. Nothing is set. |
+| `INVALID_ARGUMENT` | A cookie with neither `url` nor `domain`. Nothing is set. |
 
 ```ts
 export interface CookieFields {

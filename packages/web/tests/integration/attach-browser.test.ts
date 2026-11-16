@@ -91,4 +91,28 @@ describe('attachBrowser', () => {
     expect(await (await response).text()).toBe('served');
     expect(await attached.browser.url()).toBe(page);
   });
+
+  it('sets a cookie that names its own url or domain, though the attach has no app URL', async () => {
+    await using attached = await attachBrowser(endpoint);
+    const { browser } = attached;
+    const { hostname } = new URL(server.origin);
+    try {
+      await browser.setCookies([
+        { name: 'attach-url', value: '1', url: `${server.origin}/account/settings` },
+        { name: 'attach-domain', value: '2', domain: hostname, path: '/admin' },
+      ]);
+      const set = (await browser.cookies()).filter((cookie) => cookie.name.startsWith('attach-'));
+      expect(set.map(({ name, value, domain, path }) => ({ name, value, domain, path })).toSorted((a, b) => a.name.localeCompare(b.name))).toEqual([
+        { name: 'attach-domain', value: '2', domain: hostname, path: '/admin' },
+        { name: 'attach-url', value: '1', domain: hostname, path: '/account/' },
+      ]);
+      await expect(browser.setCookies([{ name: 'attach-relative', value: '3', url: '/account' }])).rejects.toMatchObject({ code: 'APP_URL_REQUIRED' });
+      await expect(browser.setCookies([{ name: 'attach-nowhere', value: '4' } as never])).rejects.toMatchObject({
+        code: 'INVALID_ARGUMENT',
+        message: 'browser.setCookies: cookie "attach-nowhere" needs a url or a domain',
+      });
+    } finally {
+      await browser.clearCookies({ name: /^attach-/ });
+    }
+  });
 });
