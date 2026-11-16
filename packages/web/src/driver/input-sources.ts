@@ -80,9 +80,10 @@ export function dragStepMs(durationMs: number): number {
   return Math.round(durationMs / DRAG_STEPS);
 }
 
-/** The pointer moves through `points`, each taking `stepMs`. */
-export function moveActions(points: readonly { x: number; y: number }[], stepMs: number): Input.PointerSourceAction[] {
-  return points.map((point) => ({ type: 'pointerMove' as const, x: point.x, y: point.y, origin: 'viewport' as const, ...(stepMs > 0 ? { duration: stepMs } : {}) }));
+/** The source that ends a drag after its press: the mouse moves through `points`, each step taking `stepMs`, and releases the primary button at the last. */
+export function dragReleaseSources(points: readonly ViewportPoint[], stepMs: number): Input.SourceActions[] {
+  const moves = points.map((point): Input.PointerSourceAction => ({ type: 'pointerMove', x: point.x, y: point.y, origin: 'viewport', ...(stepMs > 0 ? { duration: stepMs } : {}) }));
+  return [mouse([...moves, { type: 'pointerUp', button: 0 }])];
 }
 
 /** The source of one wheel gesture at a viewport point. */
@@ -99,7 +100,7 @@ export function swipeSources(x: number, y: number, deltaX: number, deltaY: numbe
 }
 
 /** The one mouse pointer source every pointer action of the driver goes through. */
-export function mouse(actions: Input.PointerSourceAction[]): Input.PointerSourceActions {
+function mouse(actions: Input.PointerSourceAction[]): Input.PointerSourceActions {
   return { type: 'pointer', id: 'mouse', parameters: { pointerType: 'mouse' }, actions };
 }
 

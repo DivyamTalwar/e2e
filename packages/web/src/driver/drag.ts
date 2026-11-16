@@ -15,7 +15,7 @@ import type { Protocol } from 'devtools-protocol';
 import { EngineError, raceAbort } from '@e2e-dev/core/engine';
 import type { BidiInput } from './input.ts';
 import { releaseQuietly, unlessStale } from '../errors.ts';
-import { dragPath, mouse, moveActions, pressDownSources, releaseSources } from './input-sources.ts';
+import { dragPath, dragReleaseSources, moveSources, pressDownSources, releaseSources } from './input-sources.ts';
 import type { BidiConnection } from './connection.ts';
 import { callFunction } from './script.ts';
 
@@ -90,14 +90,14 @@ export async function chromiumDrag(
     intercepting = true;
     await input.interceptDrags(true);
     // One discrete move, as Playwright's: an interpolated one would be checked before it passed the drag threshold.
-    await input.send([mouse(moveActions([first!], 0))], signal);
+    await input.send(moveSources(first!.x, first!.y), signal);
     const started = await Promise.all(documents.map((each) => unlessStale(callFunction(connection, each, dragStarted, [], { awaitPromise: true }), false)));
     const data = started.includes(true) ? await raceAbort(dragData, signal, 'drag') : undefined;
     signal.throwIfAborted();
     await input.interceptDrags(false);
     intercepting = false;
     if (data === undefined) {
-      await input.send([mouse([...moveActions(rest, stepMs), { type: 'pointerUp', button: 0 }])], signal);
+      await input.send(dragReleaseSources(rest, stepMs), signal);
       pressed = false;
       return;
     }
@@ -157,7 +157,7 @@ export async function firefoxDrag(
   try {
     const [, ...steps] = dragPath(from, await resolveTarget());
     await Promise.all(documents.map((each) => unlessStale(callFunction(connection, each, watchUndropped), undefined)));
-    await input.send([mouse([...moveActions(steps, stepMs), { type: 'pointerUp', button: 0 }])], signal);
+    await input.send(dragReleaseSources(steps, stepMs), signal);
     released = true;
   } finally {
     if (!released) await releaseQuietly(input.send(releaseSources()));
