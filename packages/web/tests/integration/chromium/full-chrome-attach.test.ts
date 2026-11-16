@@ -18,16 +18,16 @@ import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
 import { browserExecutable } from '../../../src/install/provision.ts';
 
 /** The pinned full Chrome's executable, when it is installed. */
-async function installedChrome(): Promise<string | undefined> {
+function installedChrome(): string | undefined {
   try {
-    const executable = await browserExecutable('chromium', true);
+    const executable = browserExecutable('chromium', true);
     return existsSync(executable) ? executable : undefined;
   } catch {
     return undefined;
   }
 }
 
-const fullChrome = await installedChrome();
+const fullChrome = installedChrome();
 
 describe.skipIf(fullChrome === undefined)('attaching to the pinned full Chrome over CDP', () => {
   let app: FixtureApp;

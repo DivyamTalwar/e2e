@@ -24,9 +24,9 @@ afterEach(async () => {
 });
 
 /** Lays out the chromium builds named in the cache: the headless shell, the full browser, or both. */
-async function lay(...builds: readonly ('shell' | 'full')[]): Promise<void> {
+function lay(...builds: readonly ('shell' | 'full')[]): void {
   for (const build of builds) {
-    const executable = await browserExecutable('chromium', build === 'full', env);
+    const executable = browserExecutable('chromium', build === 'full', env);
     mkdirSync(path.dirname(executable), { recursive: true });
     writeFileSync(executable, '');
   }
@@ -39,7 +39,7 @@ function served(build: BuildName): string {
 
 describe.skipIf(platform === undefined)('browserCheck', () => {
   it('passes an installed browser and warns of a first-run download', async () => {
-    await lay('shell');
+    lay('shell');
     expect(await browserCheck('chromium', env, false)).toEqual([{ id: 'browser', status: 'pass', message: 'chromium is installed' }]);
     expect(await browserCheck('firefox', env, false)).toEqual([
       { id: 'browser', status: 'warn', message: 'firefox is not installed; the first run downloads it, or run "npx @e2e-dev/web install firefox" now' },
@@ -47,7 +47,7 @@ describe.skipIf(platform === undefined)('browserCheck', () => {
   });
 
   it('names the install of the full build a headed chromium run launches', async () => {
-    await lay('shell');
+    lay('shell');
     expect(await browserCheck('chromium', env, true)).toEqual([
       { id: 'browser', status: 'warn', message: 'chromium is not installed; the first run downloads it, or run "npx @e2e-dev/web install chromium --headed" now' },
     ]);
@@ -57,7 +57,7 @@ describe.skipIf(platform === undefined)('browserCheck', () => {
 
 describe.skipIf(platform === undefined)('ensureBrowsersInstalled', () => {
   it('downloads nothing when every browser is installed', async () => {
-    await lay('shell');
+    lay('shell');
     const logs: string[] = [];
     await ensureBrowsersInstalled(['chromium', 'chromium'], { env, headed: false, log: (line) => logs.push(line) });
     expect(logs).toEqual([]);
@@ -65,7 +65,7 @@ describe.skipIf(platform === undefined)('ensureBrowsersInstalled', () => {
   });
 
   it('downloads only the missing browsers, deduplicated, and nothing else', async () => {
-    await lay('shell');
+    lay('shell');
     const logs: string[] = [];
     await expect(ensureBrowsersInstalled(['chromium', 'firefox', 'firefox'], { env, headed: false, log: (line) => logs.push(line) })).rejects.toMatchObject({ code: 'BROWSER_INSTALL_FAILED' });
     expect(server.requests).toEqual([served('firefox')]);
@@ -73,7 +73,7 @@ describe.skipIf(platform === undefined)('ensureBrowsersInstalled', () => {
   });
 
   it('reads the build the run mode launches: a headed run needs full Chrome', async () => {
-    await lay('shell');
+    lay('shell');
     await expect(ensureBrowsersInstalled(['chromium'], { env, headed: true, log: () => {} })).rejects.toMatchObject({
       code: 'BROWSER_INSTALL_FAILED',
       message: expect.stringContaining('run "npx @e2e-dev/web install chromium --headed"'),
@@ -93,7 +93,7 @@ describe.skipIf(platform === undefined)('installBrowsers', () => {
     server.route(served('chrome-headless-shell'), Buffer.from('not chrome'));
     const failure = installBrowsers(['chromium'], { env, headed: false, log: () => {} });
     await expect(failure).rejects.toMatchObject({ code: 'BROWSER_INSTALL_FAILED', message: expect.stringMatching(/has SHA-256 [0-9a-f]{64}, expected [0-9a-f]{64}; refusing it/) });
-    expect(existsSync(await browserExecutable('chromium', false, env))).toBe(false);
+    expect(existsSync(browserExecutable('chromium', false, env))).toBe(false);
     expect(readdirSync(path.join(cache, 'chrome-headless-shell'))).toEqual([]);
   });
 

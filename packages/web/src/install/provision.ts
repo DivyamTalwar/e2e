@@ -38,21 +38,16 @@ function requirePlatform(): BrowserPlatform {
   return platform;
 }
 
-/** The executable of the build `name` runs in this mode. */
-function executableOf(name: BrowserName, headed: boolean, env: NodeJS.ProcessEnv): string {
+/** The executable of the build `name` runs in this mode, whether or not it is installed yet. */
+export function browserExecutable(name: BrowserName, headed: boolean, env: NodeJS.ProcessEnv = process.env): string {
   const { browser, buildId } = buildOf(name, headed);
   return executablePath(browsersPath(env), browser, buildId, requirePlatform());
-}
-
-/** The executable of the build `name` runs in this mode, whether or not it is installed yet. */
-export async function browserExecutable(name: BrowserName, headed: boolean, env: NodeJS.ProcessEnv = process.env): Promise<string> {
-  return executableOf(name, headed, env);
 }
 
 /** Whether the build `name` runs in this mode is on disk. */
 function isBrowserInstalled(name: BrowserName, env: NodeJS.ProcessEnv, headed: boolean): boolean {
   try {
-    return existsSync(executableOf(name, headed, env));
+    return existsSync(browserExecutable(name, headed, env));
   } catch {
     return false;
   }

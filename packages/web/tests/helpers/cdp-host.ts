@@ -38,7 +38,7 @@ export async function launchRemoteChrome(options: RemoteChromeOptions = {}): Pro
   // at all; they change nothing about the attach under test.
   // The pinned headless shell is always headless, the build a headless launch
   // runs, and as a blank host needs no extension workers.
-  const proc = spawn(options.fullChrome ?? (await browserExecutable('chromium', false)), [
+  const proc = spawn(options.fullChrome ?? browserExecutable('chromium', false), [
     ...(options.fullChrome === undefined ? ['--disable-extensions', '--disable-component-extensions-with-background-pages'] : ['--headless=new']),
     '--remote-debugging-port=0',
     '--no-first-run',

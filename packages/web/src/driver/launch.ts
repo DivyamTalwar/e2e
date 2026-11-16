@@ -84,7 +84,7 @@ export async function launchBidiBrowser(name: BrowserName, options: BidiLaunchOp
   const { signal, timeoutMs } = options;
   const what = `BiDi ${name} launch`;
   if (signal.aborted) throw cancelled(`${what} cancelled`);
-  const executable = options.executablePath ?? (await browserExecutable(name, options.headed, options.env));
+  const executable = options.executablePath ?? browserExecutable(name, options.headed, options.env);
   const profile = mkdtempSync(path.join(os.tmpdir(), `e2e-bidi-${name}-`));
   const failure = (cause: unknown): EngineError => launchFailure(`${what} failed`, cause);
   let watchdog: Watchdog;

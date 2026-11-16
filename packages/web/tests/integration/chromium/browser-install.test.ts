@@ -39,7 +39,7 @@ describe.skipIf(!online)('installing the pinned headless shell', () => {
   it('downloads it into the cache and opens a BiDi session on it', { timeout: 300_000 }, async () => {
     const logs: string[] = [];
     await installBrowsers(['chromium'], { log: (line) => logs.push(line), env, headed: false });
-    const executable = await browserExecutable('chromium', false, env);
+    const executable = browserExecutable('chromium', false, env);
     expect(existsSync(executable)).toBe(true);
     expect(logs).toEqual([`Downloading chrome-headless-shell ${buildId} into ${cache}`]);
     expect(readdirSync(path.join(cache, 'chrome-headless-shell'))).toEqual([`${platform!.cacheKey}-${buildId}`]);

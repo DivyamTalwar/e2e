@@ -57,7 +57,7 @@ afterEach(() => {
 });
 
 it.skipIf(platform.value === 'win32')('runs apt without blocking the event loop, so the install lock keeps its heartbeat', async () => {
-  const executable = await browserExecutable('chromium', false, env);
+  const executable = browserExecutable('chromium', false, env);
   mkdirSync(path.dirname(executable), { recursive: true });
   writeFileSync(executable, '');
   const logs: string[] = [];

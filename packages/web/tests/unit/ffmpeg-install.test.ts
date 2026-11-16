@@ -38,7 +38,7 @@ describe('ensureFfmpeg', () => {
   });
 
   it('is not downloaded by preparing a chromium run', async () => {
-    const executable = await browserExecutable('chromium', false, env);
+    const executable = browserExecutable('chromium', false, env);
     mkdirSync(path.dirname(executable), { recursive: true });
     writeFileSync(executable, '');
     await ensureBrowsersInstalled(['chromium'], { env, headed: false, log: () => {} });
