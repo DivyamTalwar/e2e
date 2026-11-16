@@ -528,8 +528,9 @@ CROSSCHECK_BENCHMARK_URL=http://127.0.0.1:4280 pnpm --filter @e2e-dev/web exec v
 - Deliberate vocabulary choices (a `listitem` named from content, `box`, an
   editor host as `textbox`, Chrome's own role names) are policies at the top
   of `tests/crosscheck/crosscheck.ts`, each with its reason, not lines.
-- A reader change (`src/in-page/read-semantics.ts`) runs it before the PR.
-  A bug in that family starts as a fixture page line here.
+- A reader change (`src/in-page/read-semantics.ts`, and `accessible-name.ts`
+  and `locator-match.ts` beside it) runs it before the PR. A bug in that
+  family starts as a fixture page line here.
 - Pages load with Playwright's clock paused (`openCheckPage`), so a timer
   cannot replace a node between the engine's read and the oracles'. Content a
   timer reveals is never read: build fixture pages synchronously.

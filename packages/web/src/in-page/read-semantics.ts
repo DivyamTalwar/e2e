@@ -3,30 +3,28 @@
  * runs it inside the page (`readers.ts` builds the readers a document keeps
  * from its source), so it must stay one self-contained function: no imports
  * beyond types, no module-scope references, every constant inside the body.
- * That is why it has a file of its own.
+ * That is why it has a file of its own, and why the name computation it
+ * builds on (`accessible-name.ts`) reaches it as an argument.
  */
 
-import type { LocatorReads, RawNodeData, RawObservedNode, SemanticMode, SemanticResult } from './read-node.ts';
+import type { createAccessibleNames } from './accessible-name.ts';
+import type { RawNodeData, RawObservation, RawObservedNode, TreeLimits } from './read-node.ts';
 
 /**
- * Serialized into the page by Playwright. Must stay self-contained: no outer
- * captures beyond its two arguments.
+ * Builds the semantic reader for one read of a document: it keeps what it
+ * reads of an element (`memoized`) and the page may change between two
+ * calls, so each call into the page builds its own. Must stay
+ * self-contained: no outer captures beyond its two arguments.
  *
- * `mode.kind === 'node'` reads exactly one element for locator reads, in
- * the selector engine's task that found it (`read-selector.ts`,
- * `label-selector.ts`), so the element is always in its document.
- * `mode.kind === 'hidden'` answers that one element's `states.hidden` alone.
- * `mode.kind === 'tree'` walks the subtree for one agent observation and
- * returns live element handles aligned with the flattened node list.
- * `mode.kind === 'locator'` returns the reads a locate matches elements by
- * (`LocatorReads`), each kept for the rest of the read. The modes also
- * project nodes differently; those differences are data (see `projection`
- * below), not scattered branches.
+ * `tree` walks the document for one agent observation. The other methods
+ * read one element as a locate matches and reports it (`locator-match.ts`).
+ * The two project nodes differently; those differences are data (see
+ * `Projection` below), not scattered branches.
  */
-export const readSemanticsFunction = <Mode extends SemanticMode>(
-  element: Element,
-  options: { testIdAttribute: string; secureFieldSelector: string; mode: Mode },
-): SemanticResult<Mode> => {
+export const createSemanticReader = (
+  options: { testIdAttribute: string; secureFieldSelector: string },
+  accessibleNames: typeof createAccessibleNames,
+) => {
   const SKIP_TAGS = [
     'script',
     'style',
@@ -61,55 +59,6 @@ export const readSemanticsFunction = <Mode extends SemanticMode>(
   const NON_HOST_TAGS = [...OPAQUE_TAGS, 'iframe', 'img', 'hr', 'br', 'wbr', 'area', 'a', 'button', 'input', 'textarea', 'select'];
   /** Options listed under one select; a country picker's tail is not worth the tokens. */
   const MAX_SELECT_OPTIONS = 60;
-  /** Input types whose accessible name falls back to the placeholder (HTML-AAM 4.1.1). */
-  const PLACEHOLDER_NAMED_INPUT_TYPES = ['text', 'password', 'number', 'search', 'tel', 'email', 'url'];
-
-  /**
-   * How the active mode projects one node, expressed as data so `describe`
-   * stays branch-free. Tree mode is the model-bound projection: bounded line
-   * text (`lineTextOf`), a bounded attribute projection, hrefs reduced to
-   * origin+path, the root document named by its title, and no value on a
-   * checkbox or radio, whose value attribute is an app token its checked
-   * state already says more than. Node mode is the full locator-read surface.
-   * Locator mode reads names as Playwright's locators compare them: a list
-   * row, a status, or an alert takes no name from its content, and an element
-   * the accessible name leaves unnamed (a hidden control) is named by its
-   * first label, as `getByLabel` finds it.
-   */
-  const projection: {
-    attributes: readonly string[] | null;
-    textLimit: number | null;
-    nameLimit: number | null;
-    redactHref: boolean;
-    lineText: boolean;
-    documentRoot: boolean;
-    checkableValue: boolean;
-    rowContentNames: boolean;
-    labelNames: boolean;
-  } =
-    options.mode.kind === 'tree'
-      ? {
-          attributes: ['type', 'autocomplete', 'href', 'role', 'placeholder'],
-          textLimit: options.mode.textLimit,
-          nameLimit: options.mode.nameLimit,
-          redactHref: true,
-          lineText: true,
-          documentRoot: true,
-          checkableValue: false,
-          rowContentNames: true,
-          labelNames: false,
-        }
-      : {
-          attributes: null,
-          textLimit: null,
-          nameLimit: null,
-          redactHref: false,
-          lineText: false,
-          documentRoot: false,
-          checkableValue: true,
-          rowContentNames: options.mode.kind !== 'locator',
-          labelNames: options.mode.kind === 'locator',
-        };
 
   /**
    * Per-element memo for the facts several passes need. A tree walk asks for
@@ -397,462 +346,9 @@ export const readSemanticsFunction = <Mode extends SemanticMode>(
     return el.textContent ?? '';
   };
 
-  /**
-   * State of one accname walk. `inReference` is set inside an aria-labelledby
-   * traversal, where a nested reference is not followed (accname 2B);
-   * `hiddenAllowed` when that traversal began at a hidden target, whose whole
-   * subtree then counts (2A); `visited` holds every element already read, so a
-   * descendant that references its ancestor, or two that reference each other,
-   * contribute once. `accessible` is set for an accessible name, which reads
-   * CSS generated content (`::before`, `::after`) and an embedded control's
-   * value as accname does, and unset for label text, which Playwright's
-   * `getByLabel` reads without either. `fromContent` is set while reading
-   * the content of an element accname names from content, where a
-   * descendant adds its own content only when its role allows it
-   * (`addsContentToName`).
-   */
-  interface NameWalk {
-    readonly inReference: boolean;
-    readonly hiddenAllowed: boolean;
-    readonly visited: Set<Element>;
-    readonly accessible: boolean;
-    readonly fromContent: boolean;
-  }
-
   /** Computed style of any element, SVG included, or undefined in a document with no view. */
   const styleOf = (el: Element): CSSStyleDeclaration | undefined =>
     el.ownerDocument.defaultView?.getComputedStyle(el);
-
-  /** A walk from the top, with the elements that may not contribute again already visited. */
-  const nameWalk = (visited: readonly Element[], accessible: boolean, fromContent = false): NameWalk => ({
-    inReference: false,
-    hiddenAllowed: false,
-    visited: new Set(visited),
-    accessible,
-    fromContent,
-  });
-
-  /**
-   * Private-use code points: icon-font glyphs (Font Awesome's `\f090`) that
-   * render as a picture and read as nothing a person could type. Each one
-   * becomes a space once a name is computed, so `<button><i class="fa
-   * fa-sign-in"></i> Login</button>` is the button "Login" and the role
-   * locator, which tolerates them where a name has a space or begins or
-   * ends, finds it by that.
-   */
-  const ICON_GLYPHS = /\p{Co}/gu;
-
-  /** A computed name or label as the tree reports it: each icon glyph a space, whitespace collapsed. */
-  const withoutGlyphs = (name: string): string => {
-    const spaced = name.replace(ICON_GLYPHS, ' ');
-    return spaced === name ? name : spaced.replace(/\s+/g, ' ').trim();
-  };
-
-  /**
-   * An element's name as the tree reports it. A name of icon glyphs alone
-   * (`<button title="Delete"><i class="fa fa-trash"></i></button>`, which the
-   * browser names by the glyph) falls back to the element's `title`, the
-   * word a person hovering it reads, else to no name.
-   */
-  const reportedName = (el: Element, name: string | null): string | null => {
-    if (name === null) return null;
-    const shown = withoutGlyphs(name);
-    if (shown !== '' || shown === name) return shown;
-    const title = (el.getAttribute('title') ?? '').trim();
-    return title === '' ? null : title;
-  };
-
-  /**
-   * The text a `content` value contributes, as Playwright's role selector
-   * reads it: its strings and `attr()` values, or only the alternative text
-   * after a `/`. Contributing anything else (an image, a counter, a quote)
-   * makes it contribute nothing.
-   */
-  const contentTextOf = (el: Element, value: string): string | null => {
-    const tokens: string[] = [];
-    const token = /\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[-\w]+\((?:[^()"']|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')*\)|\/|[-\w]+)/gy;
-    let match: RegExpExecArray | null;
-    let end = 0;
-    while ((match = token.exec(value)) !== null) {
-      tokens.push(match[1]!);
-      end = token.lastIndex;
-    }
-    if (value.slice(end).trim() !== '') return null;
-    let text = '';
-    for (const part of tokens.slice(tokens.lastIndexOf('/') + 1)) {
-      const attribute = /^attr\(\s*([-\w]+)\s*\)$/.exec(part);
-      if (attribute !== null) text += el.getAttribute(attribute[1]!) ?? '';
-      else if (part.startsWith('"') || part.startsWith("'")) {
-        text += part.slice(1, -1).replace(/\\([0-9a-fA-F]{1,6})\s?|\\(.)/g, (_all, hex: string | undefined, char: string | undefined) =>
-          hex === undefined ? char! : String.fromCodePoint(Number.parseInt(hex, 16)));
-      } else return null;
-    }
-    return text;
-  };
-
-  /**
-   * What an element's `::before` or `::after` adds to a name (accname 2F.ii):
-   * its content's text, spaced like a block when the pseudo element is not
-   * inline; empty when it shows nothing.
-   */
-  const generatedContentOf = (el: Element, pseudo: '::before' | '::after'): string => {
-    const style = el.ownerDocument.defaultView?.getComputedStyle(el, pseudo);
-    if (style === undefined || style.display === 'none' || style.visibility === 'hidden') return '';
-    const value = style.content;
-    if (value === '' || value === 'none' || value === 'normal') return '';
-    const text = contentTextOf(el, value);
-    if (text === null) return '';
-    return style.display === 'inline' ? text : ` ${text} `;
-  };
-
-  /** An element's `::before` contribution, once per read: nested named-from-content roles walk the same descendants again. */
-  const beforeContentOf = memoized((el: Element) => generatedContentOf(el, '::before'));
-  /** An element's `::after` contribution, once per read. */
-  const afterContentOf = memoized((el: Element) => generatedContentOf(el, '::after'));
-
-  /** True for a subtree the name computation drops: aria-hidden, or hidden by style as innerText leaves it out. */
-  const isNameHidden = (el: Element, style: CSSStyleDeclaration | undefined): boolean =>
-    (el.getAttribute('aria-hidden') ?? '').toLowerCase() === 'true' ||
-    (style !== undefined && (style.display === 'none' || style.visibility === 'hidden'));
-
-  /** `alt` of an element HTML-AAM names by it: an `<img>` or an `<input type="image">`. */
-  const altOf = (el: Element): string | null => {
-    const named = el instanceof HTMLImageElement || (el instanceof HTMLInputElement && el.type === 'image');
-    const alt = named ? el.getAttribute('alt') : null;
-    return alt !== null && alt.trim() !== '' ? alt.trim() : null;
-  };
-
-  /**
-   * The `<title>` child an SVG element is named by (SVG-AAM), as Playwright
-   * reads it: `<svg><title>Close</title></svg>` is the image "Close". An svg
-   * marked `presentation` or `none` takes no name of its own from it, though
-   * the title still names a link or button around it.
-   */
-  const svgTitleOf = (el: Element): string | null => {
-    if (!(el instanceof SVGElement)) return null;
-    const title = Array.from(el.children).find((child) => child instanceof SVGTitleElement);
-    const text = (title?.textContent ?? '').replace(/\s+/g, ' ').trim();
-    return text === '' ? null : text;
-  };
-
-  /** True for an element whose role removes its semantics: `presentation` or `none`. */
-  const isPresentational = (el: Element): boolean => {
-    const role = implicitRole(el);
-    return role === 'presentation' || role === 'none';
-  };
-
-  /**
-   * True for a referenced target accname 2A reads whole: hidden itself, or
-   * under an `aria-hidden` ancestor, which excludes it from the tree as
-   * surely as its own attribute would.
-   */
-  const isReferenceHidden = (el: Element): boolean => isHidden(el) || el.closest('[aria-hidden="true" i]') !== null;
-
-  /**
-   * The element an id names for `el`, looked up in `el`'s own tree: an IDREF
-   * resolves in the tree scope it is written in, so a shadow tree's ids are
-   * its own and `getElementById` on the document never sees them. A root of
-   * either kind answers for its tree once the reader holds the element.
-   */
-  const referencedElementOf = (el: Element, id: string): Element | null => {
-    const root = el.getRootNode();
-    return root instanceof Document || root instanceof DocumentFragment ? root.getElementById(id) : null;
-  };
-
-  /**
-   * Each aria-labelledby target's contribution (accname 2B), in attribute
-   * order, unnamed targets dropped; null when the targets' joined text is
-   * empty, so the element names itself. The join is untrimmed, as Playwright
-   * reads it: a target holding only whitespace, or two unnamed targets, end
-   * the computation with no names. A hidden target is read whole, as a screen
-   * reader reads it, and a reference inside a target is not followed, so this
-   * is null inside a reference traversal too.
-   */
-  const referencedNamesOf = (el: Element, walk: NameWalk): string[] | null => {
-    if (walk.inReference) return null;
-    const ids = (el.getAttribute('aria-labelledby') ?? '').trim();
-    if (ids === '') return null;
-    const contributions: string[] = [];
-    for (const id of ids.split(/\s+/)) {
-      const target = referencedElementOf(el, id);
-      if (target === null) continue;
-      contributions.push(
-        contentNameOf(target, styleOf(target), {
-          inReference: true,
-          hiddenAllowed: isReferenceHidden(target),
-          visited: walk.visited,
-          accessible: walk.accessible,
-          fromContent: false,
-        }),
-      );
-    }
-    if (contributions.join(' ') === '') return null;
-    return contributions.map((text) => text.replace(/\s+/g, ' ').trim()).filter((name) => name !== '');
-  };
-
-  /**
-   * What an embedded control contributes to a name computed through another
-   * element (accname 2C), by the rules Playwright's role selector applies, so
-   * `<button>Flash the screen <input value="3"> times</button>` is the button
-   * "Flash the screen 3 times": a textbox or searchbox its current value (an
-   * editable element its text), a combobox or listbox its selected options'
-   * names (a native select with none selected its first option, a text field
-   * with none its value), and a range widget its `aria-valuetext`, else its
-   * `aria-valuenow`, else its `value` attribute. A menu contributes nothing,
-   * and neither does a secure field, whose value no name may carry. Null for
-   * any other element, and for one its own `aria-labelledby` names, which is
-   * named, not embedded.
-   */
-  const embeddedControlNameOf = (el: Element, walk: NameWalk): string | null => {
-    const role = implicitRole(el);
-    if (role === null) return null;
-    if (el.id !== '' && (el.getAttribute('aria-labelledby') ?? '').trim().split(/\s+/).indexOf(el.id) !== -1) return null;
-    if (el.matches(options.secureFieldSelector)) return '';
-    if (role === 'textbox' || role === 'searchbox') {
-      return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.value : el.textContent ?? '';
-    }
-    if (role === 'combobox' || role === 'listbox') {
-      let selected: Element[];
-      if (el instanceof HTMLSelectElement) {
-        selected = Array.from(el.selectedOptions);
-        if (selected.length === 0 && el.options.length > 0) selected.push(el.options[0]!);
-      } else {
-        const listbox = role === 'combobox' ? ariaOwnedOf(el).find((owned) => implicitRole(owned) === 'listbox') : el;
-        selected = listbox === undefined
-          ? []
-          : ariaOwnedOf(listbox).filter((owned) => owned.getAttribute('aria-selected') === 'true' && implicitRole(owned) === 'option');
-      }
-      if (selected.length === 0 && el instanceof HTMLInputElement) return el.value;
-      return selected.map((option) => contentNameOf(option, styleOf(option), walk)).join(' ');
-    }
-    if (role === 'progressbar' || role === 'scrollbar' || role === 'slider' || role === 'spinbutton' || role === 'meter') {
-      if (el.hasAttribute('aria-valuetext')) return el.getAttribute('aria-valuetext') ?? '';
-      if (el.hasAttribute('aria-valuenow')) return el.getAttribute('aria-valuenow') ?? '';
-      return el.getAttribute('value') ?? '';
-    }
-    return role === 'menu' ? '' : null;
-  };
-
-  /**
-   * Every element under `el` and every element its `aria-owns` names, with
-   * theirs: what a composite widget owns, as Playwright's role selector
-   * collects a combobox's listbox and a listbox's options.
-   */
-  const ariaOwnedOf = (el: Element): Element[] => {
-    const owned = Array.from(el.querySelectorAll('*'));
-    for (const id of (el.getAttribute('aria-owns') ?? '').trim().split(/\s+/)) {
-      const target = id === '' ? null : referencedElementOf(el, id);
-      if (target !== null) owned.push(target, ...Array.from(target.querySelectorAll('*')));
-    }
-    return owned;
-  };
-
-  /**
-   * What one element contributes to a name computed through another: as an
-   * aria-labelledby target (accname 2B) or as a descendant read for name from
-   * content (2F). Its own references, else its value as an embedded control,
-   * its `aria-label`, its `alt`, its children, then its `title`. So
-   * `<button><img alt="Search"></button>` is the button "Search", an icon
-   * whose only child is
-   * `<svg aria-labelledby="t"><title id="t">Close</title></svg>` is "Close",
-   * and a hidden `<span>` a button references still names it. Any other form
-   * control's content is its value, not label text, so it contributes nothing.
-   * The title is the fallback only for empty content, untrimmed as Playwright
-   * reads it: the spaces a block-level child adds count, so a flex container's
-   * blockified icon keeps the container's `title` out of the name, the name
-   * `getByRole` then fails to match.
-   */
-  const contentNameOf = (el: Element, style: CSSStyleDeclaration | undefined, walk: NameWalk): string => {
-    if (walk.visited.has(el)) return '';
-    walk.visited.add(el);
-    if (!walk.hiddenAllowed && isNameHidden(el, style)) return '';
-    const referenced = referencedNamesOf(el, walk);
-    if (referenced !== null) return referenced.join(' ');
-    const embedded = walk.accessible ? embeddedControlNameOf(el, walk) : null;
-    if (embedded !== null) return embedded;
-    const ariaLabel = el.getAttribute('aria-label');
-    if (ariaLabel !== null && ariaLabel.trim() !== '') return ariaLabel.trim();
-    const alternative = altOf(el) ?? svgTitleOf(el);
-    if (alternative !== null) return alternative;
-    if (NAME_OPAQUE_TAGS.has(el.tagName)) return '';
-    if (walk.fromContent && !addsContentToName(el)) return excludedDescendantNameOf(el, walk);
-    const content = childrenNameOf(el, walk);
-    if (content !== '') return content;
-    const title = el.getAttribute('title');
-    return title === null ? '' : title.trim();
-  };
-
-  /**
-   * True when a descendant adds its own content to a name from content, as
-   * Playwright's `allowsNameFromContent` reads it: no role, a role named from
-   * content, or a text or structure role. So a tree item holding its child
-   * `group` is named by its own label, and a tab by its text without its
-   * `status` badge.
-   */
-  const addsContentToName = (el: Element): boolean => {
-    const tag = el.tagName.toLowerCase();
-    const role = explicitRole(el) === null && tag in PLAYWRIGHT_TAG_ROLES ? PLAYWRIGHT_TAG_ROLES[tag] ?? null : implicitRole(el);
-    return role === null || ACCNAME_CONTENT_ROLES.has(role) || CONTENT_DESCENDANT_ROLES.has(role);
-  };
-
-  /**
-   * Tags whose role Playwright reads differently from `implicitRole` in a way
-   * that decides whether they add their content: an `<address>` has none, so
-   * its text counts, and a `<blockquote>`, `<math>`, or `<search>` has one
-   * that is not named from content.
-   */
-  const PLAYWRIGHT_TAG_ROLES: Readonly<Record<string, string | null>> = {
-    address: null,
-    blockquote: 'blockquote',
-    math: 'math',
-    search: 'search',
-  };
-
-  /**
-   * What a descendant that adds no content of its own adds to a name from
-   * content instead: a fieldset its legend, a figure its figcaption, read
-   * whole, and anything else its title.
-   */
-  const excludedDescendantNameOf = (el: Element, walk: NameWalk): string => {
-    const caption = namingChildOf(el);
-    if (caption !== undefined) return contentNameOf(caption, styleOf(caption), { ...walk, fromContent: false });
-    return el.getAttribute('title')?.trim() ?? '';
-  };
-
-  /**
-   * The children's contributions joined as Playwright's role selector joins
-   * them: a space on each side of a block-level child and of a `<br>`, none
-   * around an inline one. `<img alt="Search">Go` reads "SearchGo" and
-   * `<div>A</div><div>B</div>` reads "A B", so the name a role query matched
-   * is the name the node reports. An accessible name wraps them in the
-   * element's generated content, so `<button class="next">Go</button>` with
-   * `.next::after { content: " \2192" }` is the button "Go →".
-   */
-  const childrenNameOf = (el: Element, walk: NameWalk): string => {
-    let out = walk.accessible ? beforeContentOf(el) : '';
-    for (const child of contentChildrenOf(el)) {
-      if (child.nodeType === 3) {
-        out += child.nodeValue ?? '';
-        continue;
-      }
-      if (!(child instanceof Element)) continue;
-      const style = styleOf(child);
-      const token = contentNameOf(child, style, walk);
-      const block = child.tagName === 'BR' || (style?.display ?? 'inline') !== 'inline';
-      out += block ? ` ${token} ` : token;
-    }
-    return walk.accessible ? out + afterContentOf(el) : out;
-  };
-
-  /**
-   * The nodes a name from content reads under an element, in the order the
-   * page composes them: a `<slot>` reads what is assigned to it, and a host
-   * reads its light children (a slotted one skipped, its slot reads it) and
-   * then its shadow tree, so `<button>` whose text lives behind a shadow root
-   * is named by that text as Playwright's role selector names it. Which light
-   * children are slotted is read from the root's slots, not from each child's
-   * `assignedSlot`: a closed root hides that property from the outside while
-   * the tracked root's slots still list their assigned nodes.
-   */
-  const contentChildrenOf = (el: Element): ChildNode[] => {
-    if (el instanceof HTMLSlotElement) {
-      const assigned = el.assignedNodes();
-      if (assigned.length > 0) return assigned as ChildNode[];
-    }
-    const shadow = shadowRootOf(el);
-    if (shadow === null) return Array.from(el.childNodes);
-    const slotted = new Set<Node>();
-    for (const slot of Array.from(shadow.querySelectorAll('slot'))) {
-      for (const node of slot.assignedNodes()) slotted.add(node);
-    }
-    const own = Array.from(el.childNodes).filter((child) => !slotted.has(child));
-    return own.concat(Array.from(shadow.childNodes));
-  };
-
-  /**
-   * Text for an accessible name from an element's own content (accname 2F):
-   * its descendants' contributions, hidden and aria-hidden subtrees dropped (a
-   * required-field marker, a decorative glyph), whitespace collapsed. The
-   * element's own attributes are `accessibleName`'s business; this reads what
-   * is inside it. `accessible` reads CSS generated content and embedded
-   * controls' values too, as an accessible name does and label text does not.
-   * `named` is the element the text names when that is not `el` (a control
-   * read through its `<label>`), which never contributes to its own name.
-   * `fromContent` when accname names `el` from its content, so each
-   * descendant's role decides whether its content counts.
-   */
-  const nameTextOf = (el: Element, accessible: boolean, named: Element = el, fromContent = false): string => {
-    if (isNameHidden(el, styleOf(el))) return '';
-    if (NAME_OPAQUE_TAGS.has(el.tagName)) return '';
-    return childrenNameOf(el, nameWalk([el, named], accessible, fromContent)).replace(/\s+/g, ' ').trim();
-  };
-
-  const NAME_OPAQUE_TAGS: ReadonlySet<string> = new Set(['TEXTAREA', 'SELECT', 'INPUT', 'SCRIPT', 'STYLE']);
-
-  /** Roles accname names from their content (2F), the list Playwright's role selector uses. */
-  const ACCNAME_CONTENT_ROLES: ReadonlySet<string> = new Set([
-    'button',
-    'cell',
-    'checkbox',
-    'columnheader',
-    'gridcell',
-    'heading',
-    'link',
-    'menuitem',
-    'menuitemcheckbox',
-    'menuitemradio',
-    'option',
-    'radio',
-    'row',
-    'rowheader',
-    'switch',
-    'tab',
-    'tooltip',
-    'treeitem',
-  ]);
-
-  /**
-   * Text and structure roles whose content a descendant adds to a name from
-   * content, besides `ACCNAME_CONTENT_ROLES` (Playwright's
-   * `allowsNameFromContent`).
-   */
-  const CONTENT_DESCENDANT_ROLES: ReadonlySet<string> = new Set([
-    'caption', 'code', 'contentinfo', 'definition', 'deletion', 'emphasis', 'insertion', 'list', 'listitem',
-    'mark', 'none', 'paragraph', 'presentation', 'region', 'row', 'rowgroup', 'section', 'strong',
-    'subscript', 'superscript', 'table', 'term', 'time',
-  ]);
-
-  /** Roles the tree and node reads also name from their content, so a list row or a message reads as one line (`projection.rowContentNames`). */
-  const ROW_CONTENT_ROLES: ReadonlySet<string> = new Set(['listitem', 'status', 'alert']);
-
-  /** HTML-AAM: the child element that names its parent when nothing ARIA does. */
-  const NAMING_CHILD_TAGS: Readonly<Record<string, string>> = { fieldset: 'legend', figure: 'figcaption', table: 'caption' };
-
-  /** The `<legend>`, `<figcaption>`, or `<caption>` child that names a fieldset, figure, or table (`NAMING_CHILD_TAGS`). */
-  const namingChildOf = (el: Element): Element | undefined => {
-    const captionTag = NAMING_CHILD_TAGS[el.tagName.toLowerCase()];
-    return captionTag === undefined ? undefined : Array.from(el.children).find((child) => child.tagName.toLowerCase() === captionTag);
-  };
-
-  /** The `<label>` elements associated with a labelable element (button, input, meter, output, progress, select, textarea). */
-  const associatedLabels = (el: Element): readonly HTMLLabelElement[] => {
-    const labels = (el as Element & { labels?: NodeListOf<HTMLLabelElement> | null }).labels;
-    return labels === undefined || labels === null ? [] : Array.from(labels);
-  };
-
-  /** The label sources an exact label query may match; see `RawNodeData.labels`. */
-  const labelsOf = (el: Element): string[] | null => {
-    const labels: string[] = [];
-    const ariaLabel = el.getAttribute('aria-label');
-    if (ariaLabel !== null && ariaLabel.trim() !== '') labels.push(ariaLabel.trim());
-    for (const name of referencedNamesOf(el, nameWalk([], false)) ?? []) labels.push(name);
-    for (const label of associatedLabels(el)) {
-      const text = nameTextOf(label, false);
-      if (text !== '') labels.push(text);
-    }
-    const shown = labels.map(withoutGlyphs).filter((label) => label !== '');
-    return shown.length === 0 ? null : shown;
-  };
 
   /**
    * Text owned directly by an element, excluding descendant elements. An
@@ -935,24 +431,6 @@ export const readSemanticsFunction = <Mode extends SemanticMode>(
   };
 
   /**
-   * The text an element owns, read as a person reads its line: its own text
-   * with every inline descendant's text in place, so `<p>Read our <a>privacy
-   * policy</a> for details.</p>` reads as the whole sentence while the link
-   * stays a node of its own. Block-level descendants are nodes of their own
-   * and only separate words. An element with no text of its own owns none: a
-   * wrapper of elements leaves them to say what they say (`ownsLine`).
-   */
-  const lineTextOf = memoized((el: Element): string =>
-    ownsLine(el) ? lineRunOf(el).replace(/\s+/g, ' ').trim() : '');
-
-  /**
-   * True when an element reads its own line: it has text of its own, or it
-   * offers an action inside an ancestor's line, where its words are what a
-   * person aims at.
-   */
-  const ownsLine = (el: Element): boolean => directTextOf(el) !== '' || (offersAction(el) && isReadInLine(el));
-
-  /**
    * True when an element with no role still says it can be acted on: it is
    * focusable through `tabindex`, it has a click handler set as an attribute
    * or a property (`onclick`), or it is an `<a>` with no `href`, which an app
@@ -966,93 +444,6 @@ export const readSemanticsFunction = <Mode extends SemanticMode>(
     if (el.tagName.toLowerCase() === 'a' || el.hasAttribute('onclick')) return true;
     return el instanceof HTMLElement && el.onclick !== null;
   });
-
-  /**
-   * True when an element's text is already read in an ancestor's line
-   * (`lineTextOf`), so the element has nothing to add on text alone. A line
-   * longer than the projection's text bound is cut, so its inline
-   * descendants stay listed and nothing past the cut is lost.
-   */
-  const isReadInLine = memoized((el: Element): boolean => {
-    const parent = flatParentOf(el);
-    if (parent === null || !flowsInLine(el)) return false;
-    if (!ownsLine(parent)) return isReadInLine(parent);
-    const fits = projection.textLimit === null || lineTextOf(parent).length <= projection.textLimit;
-    return fits && !isHidden(parent);
-  });
-
-  const accessibleName = memoized((el: Element): string | null => {
-    // accname reads a labelledby reference (2B) before the element's own aria-label (2C).
-    const referenced = referencedNamesOf(el, nameWalk([], true));
-    if (referenced !== null) return referenced.join(' ');
-    const ariaLabel = el.getAttribute('aria-label');
-    if (ariaLabel !== null && ariaLabel.trim() !== '') return ariaLabel.trim();
-    const labels = associatedLabels(el);
-    if (labels.length > 0) {
-      const joined = labels
-        .map((label) => nameTextOf(label, true, el))
-        .join(' ')
-        .trim();
-      if (joined !== '') return joined;
-    }
-    const alternative = altOf(el) ?? (isPresentational(el) ? null : svgTitleOf(el));
-    if (alternative !== null) return alternative;
-    const caption = namingChildOf(el);
-    const captionText = caption === undefined ? '' : nameTextOf(caption, true);
-    if (captionText !== '') return captionText;
-    if (el instanceof HTMLInputElement && (el.type === 'button' || el.type === 'submit' || el.type === 'reset')) {
-      if (el.value.trim() !== '') return el.value.trim();
-      // HTML-AAM: a submit or reset button with no value reads its default label.
-      if (el.type === 'submit') return 'Submit';
-      if (el.type === 'reset') return 'Reset';
-    }
-    const role = implicitRole(el);
-    if (role !== null && (ACCNAME_CONTENT_ROLES.has(role) || (projection.rowContentNames && ROW_CONTENT_ROLES.has(role)))) {
-      const text = nameTextOf(el, true, el, ACCNAME_CONTENT_ROLES.has(role));
-      if (text !== '') return text;
-    }
-    const title = el.getAttribute('title');
-    if (title !== null && title.trim() !== '') return title.trim();
-    // HTML-AAM names an unlabeled text control by its placeholder, after the
-    // title: a bare search box is `textbox "Search…"`, not an anonymous field.
-    if (isPlaceholderNamed(el)) {
-      const placeholder = el.getAttribute('placeholder');
-      if (placeholder !== null && placeholder.trim() !== '') return placeholder.trim();
-      const ariaPlaceholder = el.getAttribute('aria-placeholder');
-      if (ariaPlaceholder !== null && ariaPlaceholder.trim() !== '') return ariaPlaceholder.trim();
-      if (isEditingHost(el)) return editorPlaceholderOf(el);
-    }
-    return null;
-  });
-
-  /**
-   * The controls a placeholder may name: text-like inputs and textareas
-   * (HTML-AAM 4.1.1), and the textbox and searchbox roles `aria-placeholder`
-   * applies to, an editing host among them.
-   */
-  const isPlaceholderNamed = (el: Element): boolean => {
-    if (el instanceof HTMLTextAreaElement) return true;
-    if (el instanceof HTMLInputElement) return PLACEHOLDER_NAMED_INPUT_TYPES.indexOf(el.type) !== -1;
-    const role = implicitRole(el);
-    return role === 'textbox' || role === 'searchbox';
-  };
-
-  /**
-   * The placeholder a rich-text editor paints from `data-placeholder`, the one
-   * convention its frameworks share: Quill sets it on the host; ProseMirror
-   * and TipTap set it on the first empty block and drop it once the document
-   * has content, as the painted hint goes.
-   */
-  const editorPlaceholderOf = (host: Element): string | null => {
-    const own = host.getAttribute('data-placeholder');
-    if (own !== null && own.trim() !== '') return own.trim();
-    for (const block of Array.from(host.querySelectorAll('[data-placeholder]'))) {
-      if ((block.textContent ?? '').trim() !== '') continue;
-      const placeholder = block.getAttribute('data-placeholder');
-      if (placeholder !== null && placeholder.trim() !== '') return placeholder.trim();
-    }
-    return null;
-  };
 
   /**
    * Closed shadow roots the context's init script recorded, when it ran in this
@@ -1080,7 +471,7 @@ export const readSemanticsFunction = <Mode extends SemanticMode>(
     }
     return null;
   };
-  const focusedElement = focusedElementOf(element.ownerDocument);
+  const focusedElement = focusedElementOf(document);
 
   /**
    * The text selected inside a focused field: the slice between an input's or
@@ -1185,7 +576,7 @@ export const readSemanticsFunction = <Mode extends SemanticMode>(
     if (!(el instanceof HTMLInputElement) || (el.type !== 'checkbox' && el.type !== 'radio')) return false;
     if (style?.visibility !== 'visible' || isSkippedContent(el)) return false;
     const INTERACTIVE = 'a,button,input,select,textarea,summary,[contenteditable],[role="button"],[role="link"]';
-    return associatedLabels(el).some(
+    return Array.from(el.labels ?? []).some(
       (label) =>
         styleOf(label)?.display !== 'contents' &&
         !isHidden(label) &&
@@ -1479,7 +870,7 @@ export const readSemanticsFunction = <Mode extends SemanticMode>(
    * anywhere above shifts every `nth-child` index beneath it.
    *
    * Each `namedSelectorOf` probe is a document-wide `querySelectorAll`, so this
-   * is deliberately not called for every node of a tree walk; see `projection`.
+   * is deliberately not called for every node of a tree walk; see `Projection`.
    */
   const pathTo = (el: Element): { selector: string; anchored: boolean } => {
     const named = namedSelectorOf(el);
@@ -1503,18 +894,15 @@ export const readSemanticsFunction = <Mode extends SemanticMode>(
    * resolved against the document it was just read from, within this
    * observation, and never stored. This is the one place a selector is
    * derived: each `namedSelectorOf` probe is a document-wide query, and no
-   * runner consumes a per-node selector, so neither read mode pays for one.
+   * runner consumes a per-node selector, so neither projection pays for one.
    */
   const frameSelectorOf = (el: Element): string => pathTo(el).selector;
 
   /**
-   * The role both read modes report for one element.
-   *
-   * A tree walk and a single-node re-read have to agree: the runner acts on a
-   * node it selected from an observation by re-reading that node and requiring
-   * the same signature, so a role the walk invents and the re-read does not
-   * makes the node unactionable. Anything the walk used to attach after the fact
-   * belongs here instead.
+   * The role both projections report for one element. A tree walk and a
+   * locate's re-read have to agree: the runner acts on a node it selected
+   * from an observation by re-reading that node and requiring the same
+   * signature, so a role only the walk attached would make it unactionable.
    */
   const roleOf = (el: Element, tag: string): string | null => {
     const implicit = implicitRole(el);
@@ -1571,119 +959,30 @@ export const readSemanticsFunction = <Mode extends SemanticMode>(
     return role !== null && ARIA_DISABLED_ROLES.indexOf(role) !== -1 && ariaDisabledInChain(el);
   };
 
-  /** The name the projection reports: the accessible name, else, with `projection.labelNames`, the element's first label. */
-  const projectedName = memoized((el: Element): string | null => {
-    const name = reportedName(el, accessibleName(el));
-    return name !== null || !projection.labelNames ? name : (labelsOf(el)?.[0] ?? null);
-  });
+  const names = accessibleNames({ implicitRole, explicitRole, isHidden, shadowRootOf, isEditingHost, memoized }, options.secureFieldSelector);
 
   /**
-   * The reads a locate matches by, as Playwright's engines read an element
-   * where they differ from the tree: its text as the text engine joins it
-   * (shadow roots included), whether the role engine counts it hidden
-   * (`isElementHiddenForAria`), and its ARIA states with `mixed` and absent
-   * kept apart from false (`getAriaChecked`, `getAriaPressed`,
-   * `getAriaExpanded`, `getAriaSelected`), and its level (`getAriaLevel`: a
-   * heading tag's before `aria-level`, none without either). Everything
-   * else is this reader's, in the locator projection.
+   * How a read projects one node, expressed as data so `describe` stays
+   * branch-free. The tree's is the model-bound projection: bounded line
+   * text (`lineTextOf`), a bounded attribute projection, hrefs reduced to
+   * origin+path, the root document named by its title, a list row, a
+   * status, or an alert named from its content, and no value on a checkbox
+   * or radio, whose value attribute is an app token its checked state
+   * already says more than. A locate's is the full locator-read surface
+   * (`LOCATOR`).
    */
-  const locatorReads = (): LocatorReads => {
-    const texts = new Map<Element | ShadowRoot, string>();
-    const joinedTextOf = (root: Element | ShadowRoot): string => {
-      const cached = texts.get(root);
-      if (cached !== undefined) return cached;
-      let full = '';
-      const skipped = root.nodeType === 1 && (['SCRIPT', 'NOSCRIPT', 'STYLE'].indexOf(root.nodeName) !== -1 || (document.head !== null && document.head.contains(root)));
-      if (!skipped) {
-        if (root.nodeName === 'INPUT' && ['submit', 'button', 'reset'].indexOf((root as HTMLInputElement).type) !== -1) {
-          full = (root as HTMLInputElement).value;
-        } else {
-          for (let child = root.firstChild; child !== null; child = child.nextSibling) {
-            if (child.nodeType === 3) full += child.nodeValue ?? '';
-            else if (child.nodeType === 1) full += joinedTextOf(child as Element);
-          }
-          const shadow = root.nodeType === 1 ? (root as Element).shadowRoot : null;
-          if (shadow !== null) full += joinedTextOf(shadow);
-        }
-      }
-      texts.set(root, full);
-      return full;
-    };
-    const belongsHidden = memoized((el: Element): boolean => {
-      if (el.parentElement !== null && el.parentElement.shadowRoot !== null && el.assignedSlot === null) return true;
-      if (styleOf(el)?.display === 'none' || (el.getAttribute('aria-hidden') ?? '').toLowerCase() === 'true') return true;
-      const parent = parentOrHostOf(el);
-      return parent !== null && belongsHidden(parent);
-    });
-    const hiddenForAria = memoized((el: Element): boolean => {
-      if (['STYLE', 'SCRIPT', 'NOSCRIPT', 'TEMPLATE'].indexOf(el.nodeName) !== -1) return true;
-      const style = styleOf(el);
-      if (style === undefined) return true;
-      const slot = el.nodeName === 'SLOT';
-      if (style.display === 'contents' && !slot) {
-        for (let child = el.firstChild; child !== null; child = child.nextSibling) {
-          if (child.nodeType === 1 && !hiddenForAria(child as Element)) return false;
-          if (child.nodeType === 3 && (child.nodeValue ?? '').trim() !== '') return false;
-        }
-        return true;
-      }
-      const option = el.nodeName === 'OPTION' && el.closest('select') !== null;
-      const styleVisible = (typeof el.checkVisibility !== 'function' || el.checkVisibility()) && style.visibility === 'visible';
-      if (!option && !slot && !styleVisible) return true;
-      return belongsHidden(el);
-    });
-    const CHECKED_ROLES = ['checkbox', 'menuitemcheckbox', 'option', 'radio', 'switch', 'menuitemradio', 'treeitem'];
-    const EXPANDED_ROLES = ['application', 'button', 'checkbox', 'combobox', 'gridcell', 'link', 'listbox', 'menuitem', 'row', 'rowheader', 'tab', 'treeitem', 'columnheader', 'menuitemcheckbox', 'menuitemradio', 'switch'];
-    const SELECTED_ROLES = ['gridcell', 'option', 'row', 'tab', 'rowheader', 'columnheader', 'treeitem'];
-    const ariaState = (el: Element, attribute: string): boolean | 'mixed' => {
-      const value = el.getAttribute(attribute);
-      return value === 'true' ? true : value === 'mixed' ? 'mixed' : false;
-    };
-    return {
-      hasRole: (el, role) => {
-        const implicit = implicitRole(el);
-        if (implicit !== null) return implicit === role;
-        if (el.localName === 'iframe') return role === 'iframe';
-        return role === 'box' && isVisibleEmptyBox(el);
-      },
-      name: projectedName,
-      labels: labelsOf,
-      text: (el) => joinedTextOf(el).replace(/\u200b/g, '').trim().replace(/\s+/g, ' '),
-      hidden: (el) => isHidden(el),
-      hiddenForAria,
-      states: (el, role) => {
-        const input = el instanceof HTMLInputElement ? el : null;
-        let checked: boolean | 'mixed' = false;
-        if (input !== null && input.indeterminate) checked = 'mixed';
-        else if (input !== null && (input.type === 'checkbox' || input.type === 'radio')) checked = input.checked;
-        else if (CHECKED_ROLES.indexOf(role) !== -1) checked = ariaState(el, 'aria-checked');
-        let expanded: boolean | null = null;
-        if (el instanceof HTMLDetailsElement) expanded = el.open;
-        else if (EXPANDED_ROLES.indexOf(role) !== -1 && el.hasAttribute('aria-expanded')) expanded = el.getAttribute('aria-expanded') === 'true';
-        return {
-          checked,
-          pressed: role === 'button' ? ariaState(el, 'aria-pressed') : false,
-          expanded,
-          selected: el instanceof HTMLOptionElement ? el.selected : SELECTED_ROLES.indexOf(role) !== -1 && (el.getAttribute('aria-selected') ?? '').toLowerCase() === 'true',
-        };
-      },
-      disabled: isDisabled,
-      level: (el) => {
-        const tag = el.tagName.toLowerCase();
-        if (/^h[1-6]$/.test(tag)) return Number(tag.slice(1));
-        const attribute = el.getAttribute('aria-level');
-        const level = attribute === null ? Number.NaN : Number(attribute);
-        return Number.isInteger(level) && level >= 1 ? level : null;
-      },
-      displayValue: (el) =>
-        el.matches('input:not([type="checkbox" i]):not([type="radio" i]), textarea, select') && !el.matches(options.secureFieldSelector)
-          ? (el as HTMLInputElement).value
-          : null,
-      describe: (el) => describe(el),
-    };
-  };
+  interface Projection {
+    readonly attributes: readonly string[] | null;
+    readonly textLimit: number | null;
+    readonly nameLimit: number | null;
+    readonly redactHref: boolean;
+    readonly documentRoot: boolean;
+    readonly checkableValue: boolean;
+    readonly text: (el: Element) => string;
+    readonly name: (el: Element) => string | null;
+  }
 
-  const describe = (el: Element, style = styleOf(el)): RawNodeData => {
+  const describe = (el: Element, projection: Projection, style = styleOf(el)): RawNodeData => {
     const tag = el.tagName.toLowerCase();
     const autocomplete = (el.getAttribute('autocomplete') ?? '').toLowerCase();
 
@@ -1770,16 +1069,13 @@ export const readSemanticsFunction = <Mode extends SemanticMode>(
       }
     }
 
-    let text: string;
-    if (secure) text = '';
-    else if (projection.lineText) text = lineTextOf(el);
-    else text = textOf(el);
+    let text = secure ? '' : projection.text(el);
     if (projection.textLimit !== null) text = text.slice(0, projection.textLimit);
 
-    let name = projectedName(el);
+    let name = projection.name(el);
     if (projection.nameLimit !== null && name !== null) name = name.slice(0, projection.nameLimit);
     // A secure field withholds its value, never its labels: a password field is still found by its label.
-    const labels = labelsOf(el);
+    const labels = names.labelsOf(el);
     const isDocumentRoot = projection.documentRoot && tag === 'html';
     if (isDocumentRoot) name = el.ownerDocument.title;
 
@@ -1825,152 +1121,235 @@ export const readSemanticsFunction = <Mode extends SemanticMode>(
     };
   };
 
-  // The conditional return type resolves per call site; inside the body the
-  // discriminant narrows the value but not the generic, hence the casts.
-  if (options.mode.kind === 'hidden') return isHidden(element) as SemanticResult<Mode>;
-  if (options.mode.kind === 'node') {
-    return describe(element) as SemanticResult<Mode>;
-  }
-  if (options.mode.kind === 'nodes') {
-    return options.mode.elements.map((el) => describe(el)) as SemanticResult<Mode>;
-  }
-  if (options.mode.kind === 'locator') return locatorReads() as SemanticResult<Mode>;
+  /**
+   * The name a locate compares, as Playwright's locators read it: the
+   * accessible name, which a list row, a status, or an alert does not take
+   * from its content, else the first label of an element it leaves unnamed
+   * (a hidden control), as `getByLabel` finds it.
+   */
+  const locatorName = memoized((el: Element): string | null =>
+    names.reportedName(el, names.accessibleName(el, false)) ?? names.labelsOf(el)?.[0] ?? null);
 
-  const maxNodes = options.mode.maxNodes;
-  const nodes: RawObservedNode[] = [];
-  const elements: Element[] = [];
-  const ids: string[] = [];
-  let nextId = options.mode.idSeed;
-  let truncated = false;
-
-  // The id lives on the element itself under a registry symbol: invisible to
-  // application code (no attribute, no enumerable property), gone with the
-  // element, and readable by every later observation of the same document.
-  const REF_KEY = Symbol.for('e2e.observation.ref');
-  const stamp = (el: Element): string => {
-    const carrier = el as Element & { [REF_KEY]?: string };
-    let id = carrier[REF_KEY];
-    if (id === undefined) {
-      id = `n${String(nextId)}`;
-      nextId += 1;
-      carrier[REF_KEY] = id;
-    }
-    return id;
+  /** A locate's projection: the full locator-read surface, nothing bounded or redacted. */
+  const LOCATOR: Projection = {
+    attributes: null,
+    textLimit: null,
+    nameLimit: null,
+    redactHref: false,
+    documentRoot: false,
+    checkableValue: true,
+    text: textOf,
+    name: locatorName,
   };
 
-  const include = (el: Element, parent: number, style = styleOf(el)): number => {
-    const data = describe(el, style);
-    nodes.push({ ...data, parent });
-    elements.push(el);
-    ids.push(stamp(el));
-    return nodes.length - 1;
-  };
+  /**
+   * Walks the document under `root` for one agent observation: every node
+   * worth showing a model, in the model-bound projection, with live element
+   * handles and node ids aligned with the flattened list.
+   */
+  const tree = (root: Element, limits: TreeLimits): RawObservation => {
+    /**
+     * The text an element owns, read as a person reads its line: its own text
+     * with every inline descendant's text in place, so `<p>Read our <a>privacy
+     * policy</a> for details.</p>` reads as the whole sentence while the link
+     * stays a node of its own. Block-level descendants are nodes of their own
+     * and only separate words. An element with no text of its own owns none: a
+     * wrapper of elements leaves them to say what they say (`ownsLine`).
+     */
+    const lineTextOf = memoized((el: Element): string =>
+      ownsLine(el) ? lineRunOf(el).replace(/\s+/g, ' ').trim() : '');
 
-  /** True when a node carries semantics worth sending to a model. */
-  const isInteresting = (el: Element): boolean => {
-    if (el.hasAttribute(options.testIdAttribute)) return true;
-    if (implicitRole(el) !== null && !isPresentational(el)) return true;
-    if (accessibleName(el) !== null) return true;
-    if (offersAction(el) && isReadInLine(el)) return lineTextOf(el) !== '';
-    return directTextOf(el) !== '' && !isReadInLine(el);
-  };
+    /**
+     * True when an element reads its own line: it has text of its own, or it
+     * offers an action inside an ancestor's line, where its words are what a
+     * person aims at.
+     */
+    const ownsLine = (el: Element): boolean => directTextOf(el) !== '' || (offersAction(el) && isReadInLine(el));
 
-  const walk = (el: Element, parent: number): void => {
-    if (truncated) return;
-    const tag = el.tagName.toLowerCase();
-    if (SKIP_TAGS.indexOf(tag) !== -1) return;
-    // Read once and share: `isHidden` and the empty-box test both need it, and
-    // this walk already pays one `getComputedStyle` per node.
-    const style = styleOf(el);
-    if (hidesSubtree(el, style)) return;
-    // Outside an open modal dialog everything is inert (`modalScopeOf`); the
-    // dialog's ancestors are walked to reach it and list nothing of their own.
-    const place = modal === undefined ? 'inside' : modal.placeOf(el);
-    if (place === 'outside') return;
-    const hidden = isHidden(el, style);
-    // The two elements listed by a rule of their own carry nothing a person
-    // sees past their edges: a frame with no box shows none of its document,
-    // and a select with none offers no options.
-    if (hidden && (tag === 'iframe' || tag === 'select')) return;
+    /**
+     * True when an element's text is already read in an ancestor's line
+     * (`lineTextOf`), so the element has nothing to add on text alone. A line
+     * longer than the walk's text bound is cut, so its inline descendants
+     * stay listed and nothing past the cut is lost.
+     */
+    const isReadInLine = memoized((el: Element): boolean => {
+      const parent = flatParentOf(el);
+      if (parent === null || !flowsInLine(el)) return false;
+      if (!ownsLine(parent)) return isReadInLine(parent);
+      const fits = lineTextOf(parent).length <= limits.textLimit;
+      return fits && !isHidden(parent);
+    });
 
-    // Iframes are emitted as boundary nodes and never entered: their content
-    // lives in another document, which the engine captures per frame and
-    // stitches under this node.
-    if (tag === 'iframe') {
-      if (nodes.length >= maxNodes) {
-        truncated = true;
-        return;
+    /** The accessible name as the tree reads it: a list row, a status, or an alert takes it from its content too. */
+    const accessibleName = memoized((el: Element): string | null => names.accessibleName(el, true));
+    const projection: Projection = {
+      attributes: ['type', 'autocomplete', 'href', 'role', 'placeholder'],
+      textLimit: limits.textLimit,
+      nameLimit: limits.nameLimit,
+      redactHref: true,
+      documentRoot: true,
+      checkableValue: false,
+      text: lineTextOf,
+      name: (el) => names.reportedName(el, accessibleName(el)),
+    };
+
+    const nodes: RawObservedNode[] = [];
+    const elements: Element[] = [];
+    const ids: string[] = [];
+    let nextId = limits.idSeed;
+    let truncated = false;
+
+    // The id lives on the element itself under a registry symbol: invisible to
+    // application code (no attribute, no enumerable property), gone with the
+    // element, and readable by every later observation of the same document.
+    const REF_KEY = Symbol.for('e2e.observation.ref');
+    const stamp = (el: Element): string => {
+      const carrier = el as Element & { [REF_KEY]?: string };
+      let id = carrier[REF_KEY];
+      if (id === undefined) {
+        id = `n${String(nextId)}`;
+        nextId += 1;
+        carrier[REF_KEY] = id;
       }
-      const index = include(el, parent, style);
-      const node = nodes[index]!;
-      node.frameSelector = frameSelectorOf(el);
-      if (node.name === null) {
-        const title = el.getAttribute('title');
-        if (title !== null && title.trim() !== '') node.name = title.trim();
-      }
-      return;
-    }
+      return id;
+    };
 
-    let nextParent = parent;
-    const drawnByLabel = hidden && isDrawnByLabel(el, style);
-    // An empty painted rectangle carries no semantics to be "interesting" by and
-    // is still something a person sees and aims at; `roleOf` names it `box`.
-    if (place !== 'ancestor' && (!hidden || drawnByLabel) && (isInteresting(el) || isVisibleEmptyBox(el))) {
-      if (nodes.length >= maxNodes) {
-        truncated = true;
-        return;
-      }
-      nextParent = include(el, parent, style);
-      // Listed on purpose, so not "hidden", as a select's options are below.
-      if (drawnByLabel) nodes[nextParent]!.states.hidden = false;
-    }
-    // A closed select paints none of its options, so the hidden test would
-    // drop every one of them — and a model shown `combobox "Category"` alone
-    // has to guess the labels it may pick. The options are what the control
-    // offers, so they are listed under it, bounded like any long list.
-    if (tag === 'select') {
-      let offered = 0;
-      for (const option of Array.from((el as HTMLSelectElement).options)) {
-        if (offered >= MAX_SELECT_OPTIONS) break;
-        if (!isOfferedOption(option)) continue;
-        offered += 1;
-        if (nodes.length >= maxNodes) {
+    const include = (el: Element, parent: number, style = styleOf(el)): number => {
+      const data = describe(el, projection, style);
+      nodes.push({ ...data, parent });
+      elements.push(el);
+      ids.push(stamp(el));
+      return nodes.length - 1;
+    };
+
+    /** True when a node carries semantics worth sending to a model. */
+    const isInteresting = (el: Element): boolean => {
+      if (el.hasAttribute(options.testIdAttribute)) return true;
+      const role = implicitRole(el);
+      if (role !== null && role !== 'presentation' && role !== 'none') return true;
+      if (accessibleName(el) !== null) return true;
+      if (offersAction(el) && isReadInLine(el)) return lineTextOf(el) !== '';
+      return directTextOf(el) !== '' && !isReadInLine(el);
+    };
+
+    const walk = (el: Element, parent: number): void => {
+      if (truncated) return;
+      const tag = el.tagName.toLowerCase();
+      if (SKIP_TAGS.indexOf(tag) !== -1) return;
+      // Read once and share: `isHidden` and the empty-box test both need it, and
+      // this walk already pays one `getComputedStyle` per node.
+      const style = styleOf(el);
+      if (hidesSubtree(el, style)) return;
+      // Outside an open modal dialog everything is inert (`modalScopeOf`); the
+      // dialog's ancestors are walked to reach it and list nothing of their own.
+      const place = modal === undefined ? 'inside' : modal.placeOf(el);
+      if (place === 'outside') return;
+      const hidden = isHidden(el, style);
+      // The two elements listed by a rule of their own carry nothing a person
+      // sees past their edges: a frame with no box shows none of its document,
+      // and a select with none offers no options.
+      if (hidden && (tag === 'iframe' || tag === 'select')) return;
+
+      // Iframes are emitted as boundary nodes and never entered: their content
+      // lives in another document, which the engine captures per frame and
+      // stitches under this node.
+      if (tag === 'iframe') {
+        if (nodes.length >= limits.maxNodes) {
           truncated = true;
           return;
         }
-        const index = include(option, nextParent, styleOf(option));
+        const index = include(el, parent, style);
         const node = nodes[index]!;
-        // Listed on purpose, so not "hidden"; the label is the name and the
-        // value attribute is the app's internal token, not something to show.
-        node.states.hidden = false;
-        node.value = null;
+        node.frameSelector = frameSelectorOf(el);
+        if (node.name === null) {
+          const title = el.getAttribute('title');
+          if (title !== null && title.trim() !== '') node.name = title.trim();
+        }
+        return;
       }
-      return;
-    }
-    if (OPAQUE_TAGS.indexOf(tag) !== -1) return;
-    // The element keeps its box, and nothing under it renders (`isSkippedContent`).
-    if (style?.getPropertyValue('content-visibility') === 'hidden') return;
-    for (const child of Array.from(el.children)) walk(child, nextParent);
-    // A shadow root is part of what the user sees, so it is part of what the
-    // model is shown. Walking the host's light children and its shadow tree
-    // double-counts nothing: slotted elements are light children, and the shadow
-    // tree holds the `<slot>` placeholders rather than copies of them. A closed
-    // root is unreachable from `shadowRoot`, so it comes from the record the
-    // context's init script kept when the page attached it.
-    const shadow = shadowRootOf(el);
-    if (shadow !== null) {
-      for (const child of Array.from(shadow.children)) walk(child, nextParent);
-    }
+
+      let nextParent = parent;
+      const drawnByLabel = hidden && isDrawnByLabel(el, style);
+      // An empty painted rectangle carries no semantics to be "interesting" by and
+      // is still something a person sees and aims at; `roleOf` names it `box`.
+      if (place !== 'ancestor' && (!hidden || drawnByLabel) && (isInteresting(el) || isVisibleEmptyBox(el))) {
+        if (nodes.length >= limits.maxNodes) {
+          truncated = true;
+          return;
+        }
+        nextParent = include(el, parent, style);
+        // Listed on purpose, so not "hidden", as a select's options are below.
+        if (drawnByLabel) nodes[nextParent]!.states.hidden = false;
+      }
+      // A closed select paints none of its options, so the hidden test would
+      // drop every one of them, and a model shown `combobox "Category"` alone
+      // has to guess the labels it may pick. The options are what the control
+      // offers, so they are listed under it, bounded like any long list.
+      if (tag === 'select') {
+        let offered = 0;
+        for (const option of Array.from((el as HTMLSelectElement).options)) {
+          if (offered >= MAX_SELECT_OPTIONS) break;
+          if (!isOfferedOption(option)) continue;
+          offered += 1;
+          if (nodes.length >= limits.maxNodes) {
+            truncated = true;
+            return;
+          }
+          const index = include(option, nextParent, styleOf(option));
+          const node = nodes[index]!;
+          // Listed on purpose, so not "hidden"; the label is the name and the
+          // value attribute is the app's internal token, not something to show.
+          node.states.hidden = false;
+          node.value = null;
+        }
+        return;
+      }
+      if (OPAQUE_TAGS.indexOf(tag) !== -1) return;
+      // The element keeps its box, and nothing under it renders (`isSkippedContent`).
+      if (style?.getPropertyValue('content-visibility') === 'hidden') return;
+      for (const child of Array.from(el.children)) walk(child, nextParent);
+      // A shadow root is part of what the user sees, so it is part of what the
+      // model is shown. Walking the host's light children and its shadow tree
+      // double-counts nothing: slotted elements are light children, and the shadow
+      // tree holds the `<slot>` placeholders rather than copies of them. A closed
+      // root is unreachable from `shadowRoot`, so it comes from the record the
+      // context's init script kept when the page attached it.
+      const shadow = shadowRootOf(el);
+      if (shadow !== null) {
+        for (const child of Array.from(shadow.children)) walk(child, nextParent);
+      }
+    };
+
+    // Read before the walk: the page behind a modal dialog comes first in tree
+    // order, and would otherwise spend the node budget the dialog needs.
+    const modal = modalScopeOf(root.ownerDocument);
+    // The root is the document the screen shows, listed whatever its own box: a
+    // page of fixed controls leaves `<html>` with no height of its own.
+    nodes[include(root, -1)]!.states.hidden = false;
+    if (isInert(root)) return { nodes, elements, ids, truncated };
+    for (const child of Array.from(root.children)) walk(child, 0);
+
+    return { nodes, elements, ids, truncated };
   };
 
-  // Read before the walk: the page behind a modal dialog comes first in tree
-  // order, and would otherwise spend the node budget the dialog needs.
-  const modal = modalScopeOf(element.ownerDocument);
-  // The root is the document the screen shows, listed whatever its own box: a
-  // page of fixed controls leaves `<html>` with no height of its own.
-  nodes[include(element, -1)]!.states.hidden = false;
-  if (isInert(element)) return { nodes, elements, ids, truncated } as SemanticResult<Mode>;
-  for (const child of Array.from(element.children)) walk(child, 0);
-
-  return { nodes, elements, ids, truncated } as SemanticResult<Mode>;
+  return {
+    /** The element's `states.hidden`. */
+    hidden: (el: Element): boolean => isHidden(el),
+    /** The element's `states.disabled`. */
+    disabled: isDisabled,
+    /** Whether the element's role is `role`; the empty-box role is computed only when asked for. */
+    hasRole: (el: Element, role: string): boolean => {
+      const implicit = implicitRole(el);
+      if (implicit !== null) return implicit === role;
+      if (el.localName === 'iframe') return role === 'iframe';
+      return role === 'box' && isVisibleEmptyBox(el);
+    },
+    /** The name a role query compares. */
+    name: locatorName,
+    /** The label sources a label query compares; see `RawNodeData.labels`. */
+    labels: names.labelsOf,
+    /** The element as a node read, in a locate's projection. */
+    describe: (el: Element): RawNodeData => describe(el, LOCATOR),
+    tree,
+  };
 };

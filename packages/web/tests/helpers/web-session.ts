@@ -25,7 +25,8 @@ import { openHost, type E2EHost, type E2ESession } from 'e2e/runner';
 import type { TargetApp } from 'e2e';
 import { web, type Browser, type WebOptions } from '../../src/index.ts';
 import { BROWSER_NAMES, isBrowserName, type BrowserName } from '../../src/browsers.ts';
-import { readSemanticsFunction } from '../../src/in-page/read-semantics.ts';
+import { createAccessibleNames } from '../../src/in-page/accessible-name.ts';
+import { createSemanticReader } from '../../src/in-page/read-semantics.ts';
 import { SECURE_FIELD_SELECTOR, type RawNodeData } from '../../src/in-page/read-node.ts';
 
 /** Answers one request the page server got for a path a test registered. */
@@ -102,7 +103,7 @@ export interface WebSession {
   locate(expression: LocatorExpression): Promise<readonly SemanticNode[]>;
   /** Locates exactly one node for `expression` and performs `action` on it. */
   act(expression: LocatorExpression, action: LocatorAction): Promise<void>;
-  /** The in-page reader's node read of the first element `selector` matches. */
+  /** The in-page reader's node read of the first element `selector` matches, as a locate reports a match. */
   readNode(selector: string): Promise<RawNodeData>;
   /** Resolves once every iframe of the top document finished loading. */
   waitForFrames(): Promise<void>;
@@ -311,8 +312,8 @@ export async function startWebSession(options: WebSessionOptions = {}): Promise<
       await engine.perform!(located[0]!.ref, action, op());
     },
     readNode: (selector) => session.browser.evaluate(
-      `({ selector, options }) => (${readSemanticsFunction.toString()})(document.querySelector(selector), options)`,
-      { selector, options: { testIdAttribute: 'data-testid', secureFieldSelector: SECURE_FIELD_SELECTOR, mode: { kind: 'node' } } },
+      `({ selector, options }) => (${createSemanticReader.toString()})(options, (${createAccessibleNames.toString()})).describe(document.querySelector(selector))`,
+      { selector, options: { testIdAttribute: 'data-testid', secureFieldSelector: SECURE_FIELD_SELECTOR } },
     ) as unknown as Promise<RawNodeData>,
     waitForFrames: () => session.browser.evaluate(async () => {
       const loaded = (frame: HTMLIFrameElement) => frame.contentDocument === null || frame.contentDocument.readyState === 'complete';

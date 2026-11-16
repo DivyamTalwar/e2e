@@ -8,8 +8,10 @@
 
 import { createHash } from 'node:crypto';
 import { createResolver, createTextMatching, type LocatorExpression, type SemanticQuery, type TextMatching } from '@e2e-dev/core/engine';
-import { readSemanticsFunction } from './read-semantics.ts';
-import type { RawNodeData, RawObservedNode, SemanticMode } from './read-node.ts';
+import { createAccessibleNames } from './accessible-name.ts';
+import { createLocatorReads } from './locator-match.ts';
+import { createSemanticReader } from './read-semantics.ts';
+import type { RawNodeData, RawObservedNode, TreeLimits } from './read-node.ts';
 import type { PageArgument, Wire } from '../driver/script.ts';
 
 /** Where `BUILTINS_INIT_SCRIPT` keeps the builtins a page had before its own scripts ran. */
@@ -25,11 +27,11 @@ export const BUILTINS_INIT_SCRIPT = `(() => {
   Object.defineProperty(globalThis, key, { value: Object.freeze({ ${BUILTIN_NAMES.join(', ')} }), enumerable: false, configurable: false, writable: false });
 })();`;
 
-/** What every reader passes the semantic reader beside its mode. */
+/** What every reader builds the semantic reader with. */
 type ReadOptions = { readonly testIdAttribute: string; readonly secureFieldSelector: string };
 
 /** What the `tree` reader walks the document with. */
-type TreeOptions = ReadOptions & { readonly mode: Extract<SemanticMode, { kind: 'tree' }> };
+type TreeOptions = ReadOptions & { readonly mode: TreeLimits & { readonly kind: 'tree' } };
 
 /**
  * A reader's metadata beside the elements it read: one JSON string when the
@@ -46,13 +48,14 @@ interface TreeMetadata {
 }
 
 /**
- * Builds the readers in the page over the shared semantic reader `read`,
+ * Builds the readers in the page over the reader `semantics` builds for each
+ * read from its name computation `names`, a locate's reads `locatorReads`,
  * the contract's locator rules `resolver`, and its text rule `matchesText`.
  * Serialized with `toString()`, so it closes over nothing of this module;
  * the builtins it names are the ones `READERS` binds around it, which the
  * document had before its own scripts ran.
  */
-function createReaders(read: typeof readSemanticsFunction, resolver: typeof createResolver, { matchesText }: TextMatching) {
+function createReaders(semantics: typeof createSemanticReader, names: typeof createAccessibleNames, locatorReads: typeof createLocatorReads, resolver: typeof createResolver, { matchesText }: TextMatching) {
   /** Whether `fn` reads as the native `JSON.stringify`; false when the page broke `Function.prototype.toString`, so it cannot tell. */
   const nativeStringify = (fn: unknown): boolean => {
     if (typeof fn !== 'function') return false;
@@ -69,21 +72,21 @@ function createReaders(read: typeof readSemanticsFunction, resolver: typeof crea
 
   /** Whether `element` reads as hidden to the semantic reader, its `states.hidden`: for an iframe, whether everything inside it is hidden. */
   const hidden = (element: Element, options: ReadOptions): boolean => {
-    return element.isConnected ? read(element, { ...options, mode: { kind: 'hidden' } }) : true;
+    return element.isConnected ? semantics(options, names).hidden(element) : true;
   };
 
   /** Reads the document's semantic tree: the walk's metadata, and the walked elements. */
   const tree = (options: TreeOptions): Encoded<TreeMetadata> => {
     // A document a navigation just opened has no root yet: it reads as no nodes, which the caller repeats.
     if (document.documentElement === null) return [encode({ nodes: [], ids: [], truncated: false }), []];
-    const observation = read(document.documentElement, options);
+    const observation = semantics(options, names).tree(document.documentElement, options.mode);
     return [encode({ nodes: observation.nodes, ids: observation.ids, truncated: observation.truncated }), observation.elements];
   };
 
   /**
    * Resolves `expression` (as JSON) in the document by the contract's
    * locator rules, matching each element by Playwright's engines over the
-   * reader's locator reads (`LocatorReads`): text queries and text filters
+   * reader's locator reads (`createLocatorReads`): text queries and text filters
    * on the element's joined text, label queries on any of its labels, role
    * queries skipping what is hidden from the accessibility tree. Every
    * element through open and recorded closed shadow roots is a candidate, in
@@ -112,7 +115,7 @@ function createReaders(read: typeof readSemanticsFunction, resolver: typeof crea
       for (const [shadowHost, shadow] of shadows) walkRoot(shadow.children, shadowHost);
     };
     walkRoot([document.documentElement], undefined);
-    const reads = read(document.documentElement, { ...options, mode: { kind: 'locator' } });
+    const reads = locatorReads(semantics(options, names), options.secureFieldSelector);
     const selections = new Map(selected.map(([selector, elements]) => [selector, new Set(elements)]));
     const matches = (element: Element, query: SemanticQuery): boolean => {
       if (query.visible === true && (frameHidden || reads.hidden(element))) return false;
@@ -191,8 +194,7 @@ function createReaders(read: typeof readSemanticsFunction, resolver: typeof crea
         if (control) element = control;
       }
     }
-    const [node] = read(document.documentElement, { ...options, mode: { kind: 'nodes', elements: [element] } });
-    return node === undefined ? false : node.states.disabled === true;
+    return semantics(options, names).disabled(element);
   };
 
   return Object.freeze({ hidden, tree, locate, disabled });
@@ -211,13 +213,13 @@ export type ReaderArgs<K extends ReaderName> = Wire<Parameters<Readers[K]>> & re
 export type ReaderResult<K extends ReaderName> = Wire<ReturnType<Readers[K]>>;
 
 /**
- * The readers over one shared semantic reader and the contract's locator
- * and text rules, all compiled where the builtins the document had before
- * its own scripts ran shadow the page's.
+ * The readers over the semantic reader, its name computation, a locate's
+ * reads, and the contract's locator and text rules, all compiled where the
+ * builtins the document had before its own scripts ran shadow the page's.
  */
 const READERS = `(() => {
   const { ${BUILTIN_NAMES.join(', ')} } = globalThis[globalThis.Symbol.for(${JSON.stringify(BUILTINS_KEY)})] ?? globalThis;
-  return (${createReaders.toString()})((${readSemanticsFunction.toString()}), (${createResolver.toString()}), (${createTextMatching.toString()})());
+  return (${createReaders.toString()})((${createSemanticReader.toString()}), (${createAccessibleNames.toString()}), (${createLocatorReads.toString()}), (${createResolver.toString()}), (${createTextMatching.toString()})());
 })()`;
 
 /** Where a document keeps its readers: named by their source, so another driver version attached to the same browser keeps its own. */

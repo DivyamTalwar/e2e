@@ -15,7 +15,6 @@ import { OBSERVED_NAME_LIMIT, OBSERVED_TEXT_LIMIT, type SemanticNode } from '@e2
 import { readerInstallCall } from '../../src/in-page/readers.ts';
 import { CLOSED_SHADOW_ROOTS_INIT_SCRIPT, CLOSED_SHADOW_ROOTS_KEY } from '../../src/in-page/closed-shadow.ts';
 import { MODAL_ORDER_INIT_SCRIPT } from '../../src/in-page/modal-dialogs.ts';
-import { readSemanticsFunction } from '../../src/in-page/read-semantics.ts';
 import { SECURE_FIELD_SELECTOR, type RawObservedNode } from '../../src/in-page/read-node.ts';
 import { openBidiPage, type BidiPage } from '../helpers/bidi-page.ts';
 import { assembleTree } from '../../src/driver/observe.ts';
@@ -49,7 +48,7 @@ const STRUCTURAL_ROLES = new Set(['document', 'text', 'generic', 'none', 'presen
 /**
  * Roles the tree names from content where accname, Chrome, and Playwright's
  * getByRole leave them unnamed (`ROW_CONTENT_ROLES` in
- * `src/in-page/read-semantics.ts`): a list row or a status message is read
+ * `src/in-page/accessible-name.ts`): a list row or a status message is read
  * by what it says, and located by its text rather than that name.
  */
 const ENGINE_NAMED_ROLES = new Set(['listitem', 'status', 'alert']);
@@ -96,7 +95,7 @@ const INTERACTIVE_CHROME_ROLES = new Set([
 
 /**
  * Icon-font glyphs, private-use code points, which the tree drops from a
- * name (`ICON_GLYPHS` in `src/in-page/read-semantics.ts`). Removed from
+ * name (`ICON_GLYPHS` in `src/in-page/accessible-name.ts`). Removed from
  * Chrome's name before it is compared.
  */
 const ICON_GLYPHS = /\p{Co}/gu;
@@ -160,12 +159,14 @@ interface TaggedRead {
 }
 
 /**
- * Walks the document with the engine's reader, tags each walked element
- * with its node id under `MARKER`, and reads where it sits. Runs in the page.
+ * Walks the document with the engine's `tree` reader, tags each walked
+ * element with its node id under `MARKER`, and reads where it sits. Runs in
+ * the page.
  */
 const TAG_DOCUMENT = `(options, marker) => {
-  const observation = (${readSemanticsFunction.toString()})(document.documentElement, options);
-  const facts = observation.elements.map((element, index) => {
+  const [metadata, elements] = (${readerInstallCall('tree')})(options);
+  const observation = typeof metadata === 'string' ? JSON.parse(metadata) : metadata;
+  const facts = elements.map((element, index) => {
     element.setAttribute(marker, observation.ids[index]);
     const root = element.getRootNode();
     const view = element.ownerDocument.defaultView;
