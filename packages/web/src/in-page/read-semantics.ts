@@ -8,7 +8,7 @@
  */
 
 import type { createAccessibleNames } from './accessible-name.ts';
-import type { RawNodeData, RawObservation, RawObservedNode, TreeLimits } from './read-node.ts';
+import type { RawNodeData, RawObservation, RawObservedFrame, RawObservedNode, TreeLimits } from './read-node.ts';
 
 /**
  * Builds the semantic reader for one read of a document: it keeps what it
@@ -1181,6 +1181,7 @@ export const createSemanticReader = (
     };
 
     const nodes: RawObservedNode[] = [];
+    const frames: RawObservedFrame[] = [];
     const elements: Element[] = [];
     const ids: string[] = [];
     let nextId = limits.idSeed;
@@ -1246,8 +1247,8 @@ export const createSemanticReader = (
           return;
         }
         const index = include(el, parent, style);
+        frames.push({ node: index, selector: frameSelectorOf(el) });
         const node = nodes[index]!;
-        node.frameSelector = frameSelectorOf(el);
         if (node.name === null) {
           const title = el.getAttribute('title');
           if (title !== null && title.trim() !== '') node.name = title.trim();
@@ -1313,10 +1314,10 @@ export const createSemanticReader = (
     // The root is the document the screen shows, listed whatever its own box: a
     // page of fixed controls leaves `<html>` with no height of its own.
     nodes[include(root, -1)]!.states.hidden = false;
-    if (isInert(root)) return { nodes, elements, ids, truncated };
+    if (isInert(root)) return { nodes, frames, elements, ids, truncated };
     for (const child of Array.from(root.children)) walk(child, 0);
 
-    return { nodes, elements, ids, truncated };
+    return { nodes, frames, elements, ids, truncated };
   };
 
   return {

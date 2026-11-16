@@ -2,9 +2,10 @@
  * Nested documents. An iframe's document is its own
  * browsing context, reached through the iframe element's `contentWindow`;
  * the surface remembers, for each child context it entered, the iframe
- * element that holds it, and each frame's document reads how it lays the
- * frame out (the `frame` reader), so a box measured inside the child can be
- * placed in the top-level viewport the pointer and the screenshot share.
+ * element that holds it, and the document holding a frame reads how it lays
+ * the frame out (the `frameBox` reader, and the `tree` reader for each
+ * iframe it lists), so a box measured inside the child can be placed in the
+ * top-level viewport the pointer and the screenshot share.
  */
 
 import { EngineError, TestError, type LocatorExpression, type SemanticNode } from '@e2e-dev/core/engine';

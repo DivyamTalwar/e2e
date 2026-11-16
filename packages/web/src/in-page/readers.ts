@@ -14,7 +14,7 @@ import { frameContentInset } from './document.ts';
 import { createDom } from './dom.ts';
 import { createLocatorMatch } from './locator-match.ts';
 import { createSemanticReader } from './read-semantics.ts';
-import type { RawNodeData, RawObservedNode, TreeLimits } from './read-node.ts';
+import type { RawNodeData, RawObservedFrame, RawObservedNode, TreeLimits } from './read-node.ts';
 import { selectChain, type PagePart } from './select-chain.ts';
 
 /** Where `BUILTINS_INIT_SCRIPT` keeps the builtins a page had before its own scripts ran. */
@@ -45,6 +45,8 @@ interface TreeMetadata {
   readonly nodes: RawObservedNode[];
   readonly ids: string[];
   readonly truncated: boolean;
+  /** Each iframe among `nodes`, with how the document lays it out, read with the nodes so a child document is placed in the box its node reports. */
+  readonly frames: (RawObservedFrame & { readonly box: FrameBox })[];
 }
 
 /** A `selector` of a located expression that the page could not parse, with the page's reason. */
@@ -127,9 +129,10 @@ function createReaders(
   /** Reads the document's semantic tree within `limits`: the walk's metadata, and the walked elements. */
   const tree = (options: ReadOptions, limits: TreeLimits): Encoded<TreeMetadata> => {
     // A document a navigation just opened has no root yet: it reads as no nodes, which the caller repeats.
-    if (document.documentElement === null) return [encode({ nodes: [], ids: [], truncated: false }), []];
+    if (document.documentElement === null) return [encode({ nodes: [], ids: [], truncated: false, frames: [] }), []];
     const observation = semantics(options, names).tree(document.documentElement, limits);
-    return [encode({ nodes: observation.nodes, ids: observation.ids, truncated: observation.truncated }), observation.elements];
+    const frames = observation.frames.map((frame) => ({ ...frame, box: frameBox(observation.elements[frame.node]!) }));
+    return [encode({ nodes: observation.nodes, ids: observation.ids, truncated: observation.truncated, frames }), observation.elements];
   };
 
   /**
@@ -213,9 +216,12 @@ function createReaders(
     return semantics(options, names).disabled(element);
   };
 
-  /** How this document lays out its frame element `element` (`FrameBox`). */
-  const frameBox = (element: HTMLElement): FrameBox => {
-    if (element.getClientRects().length === 0) return null;
+  /** Whether `element` is a frame element, of any realm: one adopted from another document is no `HTMLElement` of this window. */
+  const isFrame = (element: Element): element is HTMLElement => element.localName === 'iframe' || element.localName === 'frame';
+
+  /** How this document lays out its frame element `element` (`FrameBox`); null for an element that is none. */
+  const frameBox = (element: Element): FrameBox => {
+    if (!isFrame(element) || element.getClientRects().length === 0) return null;
     const inset = contentInset(element);
     if (dom.turned(element)) {
       const [quad]: (DOMQuad | undefined)[] = 'getBoxQuads' in element && typeof element.getBoxQuads === 'function' ? element.getBoxQuads({ box: 'border', relativeTo: element.ownerDocument }) : [];
@@ -236,7 +242,7 @@ function createReaders(
   const selectFrame = (parts: PagePart[], options: ReadOptions): SelectedFrames | string => {
     const found = select(parts);
     if (typeof found === 'string') return found;
-    const frames = found.filter((element): element is HTMLElement => element.localName === 'iframe' || element.localName === 'frame');
+    const frames = found.filter(isFrame);
     const [only] = frames;
     return only === undefined || frames.length > 1 ? { count: frames.length } : { count: 1, only: { element: only, hidden: hidden(only, options), box: frameBox(only) } };
   };

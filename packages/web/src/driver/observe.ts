@@ -226,19 +226,20 @@ function selectorParts(expression: LocatorExpression): [string, PagePart[]][] {
 
 /**
  * Reads one document's tree in one call (the reader's metadata as one JSON
- * string, each walked element as its shared id), then each iframe on the
- * app's site, stitched under its boundary node within the node budget and
- * the deadline. An on-site frame left unread marks the tree truncated; a
- * frame whose document went away mid-read shows nothing, which is not
- * truncation; an off-site one stays a boundary node by design.
+ * string, each walked element as its shared id, each iframe with the box
+ * its document lays it out in), then each iframe on the app's site,
+ * stitched under its boundary node within the node budget and the deadline.
+ * An on-site frame left unread marks the tree truncated; a frame whose
+ * document went away mid-read, or has none to read yet, shows nothing,
+ * which is not truncation; an off-site one stays a boundary node by design.
  */
 async function captureTree(session: BidiSession, context: string, framePath: readonly string[], budget: number, deadline: number): Promise<CapturedTree> {
   const { metadata: decoded, elements } = await session.page.readEncoded('tree', [
     { testIdAttribute: session.settings.testIdAttribute, secureFieldSelector: SECURE_FIELD_SELECTOR },
     { maxNodes: budget, idSeed: session.refs.reserveIds(budget), nameLimit: OBSERVED_NAME_LIMIT, textLimit: OBSERVED_TEXT_LIMIT },
   ], context);
-  const { nodes, ids } = decoded;
-  if (!Array.isArray(ids) || ids.length !== nodes.length || elements.length !== nodes.length) {
+  const { nodes, ids, frames } = decoded;
+  if (!Array.isArray(ids) || ids.length !== nodes.length || elements.length !== nodes.length || !Array.isArray(frames) || frames.some((frame) => elements[frame.node] === undefined)) {
     throw new EngineError('ENGINE_FAILURE', 'observation ids do not align with its nodes', { retryable: false });
   }
   if (nodes.length === 0) throw new EngineError('NODE_STALE', 'observation produced no nodes', { retryable: true });
@@ -248,41 +249,26 @@ async function captureTree(session: BidiSession, context: string, framePath: rea
   let nodeCount = nodes.length;
   let truncated = decoded.truncated;
   const frameChildren = new Map<number, FrameChild>();
-  for (let index = 0; index < nodes.length; index += 1) {
-    const selector = nodes[index]!.frameSelector;
-    if (selector === undefined) continue;
+  for (const { node: index, selector, box } of frames) {
     const frame: NodeTarget = { element: elements[index]!, context };
     const child = await unlessStale(contentContext(session.connection, frame), undefined);
     if (child === undefined) continue;
     const tree = await unlessStale(session.connection.send('browsingContext.getTree', { root: child, maxDepth: 0 }), undefined);
     if (tree === undefined || !isOnSiteFrame(tree.contexts[0]?.url ?? '', session.settings.site)) continue;
     const remaining = budget - nodeCount;
-    if (framePath.length >= MAX_FRAME_DEPTH || remaining <= 0 || Date.now() >= deadline || nodes[index]!.rect === null) {
+    if (framePath.length >= MAX_FRAME_DEPTH || remaining <= 0 || Date.now() >= deadline || box === null) {
       truncated = true;
       continue;
     }
     session.frames.enter(child, frame);
-    const read = await unlessStale(readFrame(session, frame, child, [...framePath, selector], remaining, deadline), undefined);
-    if (read === undefined) continue;
-    for (const [id, target] of read.captured.generation) generation.set(id, target);
-    frameChildren.set(index, { tree: read.captured.tree, box: read.box });
-    nodeCount += read.captured.nodeCount;
-    truncated ||= read.captured.truncated;
+    const captured = await unlessStale(captureTree(session, child, [...framePath, selector], remaining, deadline), undefined);
+    if (captured === undefined) continue;
+    for (const [id, target] of captured.generation) generation.set(id, target);
+    frameChildren.set(index, { tree: captured.tree, box });
+    nodeCount += captured.nodeCount;
+    truncated ||= captured.truncated;
   }
   return { tree: assembleTree(nodes, ids, framePath, frameChildren), generation, nodeCount, truncated };
-}
-
-/** One child document's tree, and how the document around it lays out the frame that shows it. */
-async function readFrame(
-  session: BidiSession,
-  frame: NodeTarget,
-  child: string,
-  framePath: readonly string[],
-  budget: number,
-  deadline: number,
-): Promise<{ box: FrameBox; captured: CapturedTree }> {
-  const box = await session.page.reader('frameBox', [frame.element], frame.context);
-  return { box, captured: await captureTree(session, child, framePath, budget, deadline) };
 }
 
 /**

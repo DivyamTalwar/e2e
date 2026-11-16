@@ -56,13 +56,21 @@ export interface RawNodeData {
 export interface RawObservedNode extends RawNodeData {
   /** Index of the nearest included ancestor, or -1 for the root. */
   parent: number;
-  /** Unique CSS selector of this `<iframe>` element; set only for iframes. */
-  frameSelector?: string;
+}
+
+/** One `<iframe>` element the walk listed. */
+export interface RawObservedFrame {
+  /** Index of the iframe's node in `nodes`. */
+  node: number;
+  /** Unique CSS selector of the element. */
+  selector: string;
 }
 
 /** One walked document. */
 export interface RawObservation {
   nodes: RawObservedNode[];
+  /** The iframes among `nodes`, in walk order. */
+  frames: RawObservedFrame[];
   /** True when the node budget stopped the walk before the document was read whole. */
   truncated: boolean;
   /** Live element handles positionally aligned with `nodes`. */

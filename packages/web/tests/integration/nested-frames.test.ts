@@ -5,8 +5,10 @@
  * located node's box is in the top-level viewport, as the contract asks.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LocatorExpression } from '@e2e-dev/core/engine';
+import { BidiConnection } from '../../src/driver/connection.ts';
+import { readerCall } from '../../src/in-page/readers.ts';
 import { startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 /** Escapes HTML for a double-quoted attribute value, so a document can carry a nested `srcdoc`. */
@@ -249,6 +251,24 @@ describe('a position inside a framed node', () => {
     await page.browser.frameLocator('#pad').locator('#target').click({ position: { x: 5, y: 7 } });
     // The padding box starts at (40, 30) of the frame's document, past the 10px border.
     await expect.poll(() => page.browser.evaluate(() => document.title)).toBe('target 45,37');
+  });
+
+  it('observes a moving frame\'s document in the box its node reports, read with the nodes', async () => {
+    // The page moves the frame on every timer turn, so two reads of it never agree.
+    const move = "let left = 0; const frame = document.querySelector('iframe'); setInterval(() => { left = (left + 7) % 500; frame.style.left = left + 'px'; }, 0)";
+    await page.setContent(`<style>body { margin: 0 }</style><iframe title="moving" style="position: absolute; top: 20px; width: 200px; height: 100px; border: 0" srcdoc="<p>inside</p>"></iframe><script>${move}</script>`);
+    await page.waitForFrames();
+    const calls = vi.spyOn(BidiConnection.prototype, 'send');
+    try {
+      const frame = (await page.nodes()).find((node) => node.role === 'iframe')!;
+      const { x, y } = frame.children![0]!.rect!;
+      expect({ x, y }).toEqual({ x: frame.rect!.x, y: frame.rect!.y });
+      const declarations = calls.mock.calls.filter(([method]) => method === 'script.callFunction').map(([, params]) => (params as { functionDeclaration: string }).functionDeclaration);
+      expect(declarations.filter((declaration) => declaration === readerCall('tree'))).toHaveLength(2);
+      expect(declarations).not.toContain(readerCall('frameBox'));
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('observes and locates a node in a scaled frame at the box the page shows it in', async () => {
