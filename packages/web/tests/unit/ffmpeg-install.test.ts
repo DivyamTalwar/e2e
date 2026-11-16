@@ -41,7 +41,7 @@ describe('ensureFfmpeg', () => {
     const executable = await browserExecutable('chromium', false, env);
     mkdirSync(path.dirname(executable), { recursive: true });
     writeFileSync(executable, '');
-    await ensureBrowsersInstalled(['chromium'], { env, log: () => {} });
+    await ensureBrowsersInstalled(['chromium'], { env, headed: false, log: () => {} });
     expect(server.requests).toEqual([]);
   });
 

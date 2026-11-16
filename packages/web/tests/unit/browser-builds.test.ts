@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { crc32 } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { browserPlatform, downloadUrl, executablePath, extractZip, installBuild, type BrowserPlatform, type BuildInstall, type BuildName, type ExecRunner } from '../../src/install/builds.ts';
+import { browserPlatform, downloadUrl, executablePath, extractZip, installBuild, PINS, type BrowserPlatform, type BuildInstall, type BuildName, type ExecRunner } from '../../src/install/builds.ts';
 import { newOwner, withCacheLock, writeOwner } from '../../src/install/lock.ts';
 import { sha256Of, startArchiveServer, type ArchiveServer } from '../helpers/archive-server.ts';
 
@@ -65,18 +65,35 @@ const WIN = browserPlatform('win32', 'x64')!;
 
 describe('browserPlatform', () => {
   it.each([
-    ['darwin', 'arm64', { cacheKey: 'mac_arm', os: 'mac', chrome: 'mac-arm64', firefox: 'mac' }],
-    ['darwin', 'x64', { cacheKey: 'mac', os: 'mac', chrome: 'mac-x64', firefox: 'mac' }],
-    ['linux', 'x64', { cacheKey: 'linux', os: 'linux', chrome: 'linux64', firefox: 'linux-x86_64' }],
-    ['linux', 'arm64', { cacheKey: 'linux_arm', os: 'linux', chrome: 'linux-arm64', firefox: 'linux-aarch64' }],
-    ['win32', 'x64', { cacheKey: 'win64', os: 'win', chrome: 'win64', firefox: 'win64' }],
-    ['win32', 'arm64', { cacheKey: 'win64', os: 'win', chrome: 'win64', firefox: 'win64' }],
+    ['darwin', 'arm64', { cacheKey: 'mac_arm', os: 'mac', chrome: 'mac-arm64', firefox: 'mac', node: 'darwin-arm64' }],
+    ['darwin', 'x64', { cacheKey: 'mac', os: 'mac', chrome: 'mac-x64', firefox: 'mac', node: 'darwin-x64' }],
+    ['linux', 'x64', { cacheKey: 'linux', os: 'linux', chrome: 'linux64', firefox: 'linux-x86_64', node: 'linux-x64' }],
+    ['linux', 'arm64', { cacheKey: 'linux_arm', os: 'linux', chrome: 'linux-arm64', firefox: 'linux-aarch64', node: 'linux-arm64' }],
+    ['win32', 'x64', { cacheKey: 'win64', os: 'win', chrome: 'win64', firefox: 'win64', node: 'win32-x64' }],
+    ['win32', 'arm64', { cacheKey: 'win64', os: 'win', chrome: 'win64', firefox: 'win64', node: 'win32-x64' }],
   ] as const)('maps %s %s', (platform, arch, expected) => {
     expect(browserPlatform(platform, arch)).toEqual(expected);
   });
 
   it.each([['win32', 'ia32'], ['linux', 'ppc64'], ['freebsd', 'x64'], ['aix', 'ppc64']] as const)('has no builds for %s %s', (platform, arch) => {
     expect(browserPlatform(platform, arch)).toBeUndefined();
+  });
+});
+
+describe('PINS', () => {
+  it('pins one Chromium build for the headless shell and full Chrome', () => {
+    expect(PINS.chrome.buildId).toBe(PINS['chrome-headless-shell'].buildId);
+  });
+
+  it.each(Object.entries(PINS))('holds a SHA-256 for each platform of %s', (_build, pin) => {
+    expect(Object.keys(pin.sha256)).toEqual(['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64', 'win32-x64']);
+    for (const sha256 of Object.values(pin.sha256)) expect(sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('is what the docs say the engine runs', () => {
+    const docs = readFileSync(new URL('../../../../docs/reference/web.mdx', import.meta.url), 'utf8');
+    expect(docs).toContain(`Chrome for Testing ${PINS.chrome.buildId} for`);
+    expect(docs).toContain(`Firefox ${PINS.firefox.buildId.replace('stable_', '')} for`);
   });
 });
 

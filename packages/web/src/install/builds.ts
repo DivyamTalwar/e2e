@@ -1,7 +1,8 @@
 /**
- * The pinned browser builds on disk: where each platform's Chrome for
- * Testing and Firefox archives live, where their executables land in the
- * browsers cache, and how a verified archive is staged and unpacked into it.
+ * The pinned builds (`builds.json`) and the browser builds on disk: where
+ * each platform's Chrome for Testing and Firefox archives live, where their
+ * executables land in the browsers cache, and how a verified archive is
+ * staged and unpacked into it.
  */
 
 import { execFile } from 'node:child_process';
@@ -13,6 +14,7 @@ import { text } from 'node:stream/consumers';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import type { Entry, Options, ZipFile } from 'yauzl';
+import pins from './builds.json' with { type: 'json' };
 import { downloadVerified } from './download.ts';
 import { removeAbandonedStaging, writeOwner, type LockOwner } from './lock.ts';
 
@@ -31,17 +33,28 @@ export interface BrowserPlatform {
   readonly chrome: 'mac-arm64' | 'mac-x64' | 'linux64' | 'linux-arm64' | 'win64';
   /** Mozilla's release directory name. */
   readonly firefox: 'mac' | 'linux-x86_64' | 'linux-aarch64' | 'win64';
+  /** Node's `${process.platform}-${process.arch}` for it, which keys its archives' hashes in `builds.json`. */
+  readonly node: 'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64' | 'win32-x64';
 }
 
 /** The platforms by `${process.platform}-${process.arch}`. Windows on Arm runs the x64 builds. */
 const PLATFORMS: Readonly<Record<string, BrowserPlatform>> = {
-  'darwin-arm64': { cacheKey: 'mac_arm', os: 'mac', chrome: 'mac-arm64', firefox: 'mac' },
-  'darwin-x64': { cacheKey: 'mac', os: 'mac', chrome: 'mac-x64', firefox: 'mac' },
-  'linux-x64': { cacheKey: 'linux', os: 'linux', chrome: 'linux64', firefox: 'linux-x86_64' },
-  'linux-arm64': { cacheKey: 'linux_arm', os: 'linux', chrome: 'linux-arm64', firefox: 'linux-aarch64' },
-  'win32-x64': { cacheKey: 'win64', os: 'win', chrome: 'win64', firefox: 'win64' },
-  'win32-arm64': { cacheKey: 'win64', os: 'win', chrome: 'win64', firefox: 'win64' },
+  'darwin-arm64': { cacheKey: 'mac_arm', os: 'mac', chrome: 'mac-arm64', firefox: 'mac', node: 'darwin-arm64' },
+  'darwin-x64': { cacheKey: 'mac', os: 'mac', chrome: 'mac-x64', firefox: 'mac', node: 'darwin-x64' },
+  'linux-x64': { cacheKey: 'linux', os: 'linux', chrome: 'linux64', firefox: 'linux-x86_64', node: 'linux-x64' },
+  'linux-arm64': { cacheKey: 'linux_arm', os: 'linux', chrome: 'linux-arm64', firefox: 'linux-aarch64', node: 'linux-arm64' },
+  'win32-x64': { cacheKey: 'win64', os: 'win', chrome: 'win64', firefox: 'win64', node: 'win32-x64' },
+  'win32-arm64': { cacheKey: 'win64', os: 'win', chrome: 'win64', firefox: 'win64', node: 'win32-x64' },
 };
+
+/**
+ * The builds the installer pins, from `builds.json`, which CI reads too:
+ * each one's id, and the SHA-256 of its archive by `BrowserPlatform.node`.
+ * Firefox's hashes come from Mozilla's `SHA256SUMS` for the release; Chrome
+ * for Testing publishes none, so its were computed from the archives when
+ * the build was pinned. A bump of a build updates its hashes.
+ */
+export const PINS = pins;
 
 /** Each build's executable inside its install directory; `{platform}` is Chrome for Testing's platform name. */
 const EXECUTABLES: Readonly<Record<BuildName, Readonly<Record<BuildOs, string>>>> = {

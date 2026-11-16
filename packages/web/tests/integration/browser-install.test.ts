@@ -9,16 +9,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { launchBidiBrowser } from '../../src/driver/launch.ts';
-import { browserPlatform, downloadUrl } from '../../src/install/builds.ts';
-import { browserExecutable, CHROMIUM_BUILD, installBrowsers } from '../../src/install/provision.ts';
+import { browserPlatform, downloadUrl, PINS } from '../../src/install/builds.ts';
+import { browserExecutable, installBrowsers } from '../../src/install/provision.ts';
 
 const platform = browserPlatform();
+const { buildId } = PINS['chrome-headless-shell'];
 
 /** Whether the headless shell's archive answers within a few seconds. */
 async function reachable(): Promise<boolean> {
   if (platform === undefined) return false;
   try {
-    const response = await fetch(downloadUrl('chrome-headless-shell', CHROMIUM_BUILD, platform), { method: 'HEAD', signal: AbortSignal.timeout(5_000) });
+    const response = await fetch(downloadUrl('chrome-headless-shell', buildId, platform), { method: 'HEAD', signal: AbortSignal.timeout(5_000) });
     return response.ok;
   } catch {
     return false;
@@ -40,8 +41,8 @@ describe.skipIf(!online)('installing the pinned headless shell', () => {
     await installBrowsers(['chromium'], { log: (line) => logs.push(line), env, headed: false });
     const executable = await browserExecutable('chromium', false, env);
     expect(existsSync(executable)).toBe(true);
-    expect(logs).toEqual([`Downloading chrome-headless-shell ${CHROMIUM_BUILD} into ${cache}`]);
-    expect(readdirSync(path.join(cache, 'chrome-headless-shell'))).toEqual([`${platform!.cacheKey}-${CHROMIUM_BUILD}`]);
+    expect(logs).toEqual([`Downloading chrome-headless-shell ${buildId} into ${cache}`]);
+    expect(readdirSync(path.join(cache, 'chrome-headless-shell'))).toEqual([`${platform!.cacheKey}-${buildId}`]);
 
     const browser = await launchBidiBrowser('chromium', { headed: false, timeoutMs: 30_000, executablePath: executable, env: process.env, signal: new AbortController().signal });
     try {
@@ -51,7 +52,7 @@ describe.skipIf(!online)('installing the pinned headless shell', () => {
         target: { context },
         awaitPromise: false,
       });
-      expect(result).toMatchObject({ type: 'success', result: { type: 'string', value: expect.stringContaining(`HeadlessChrome/${CHROMIUM_BUILD}`) } });
+      expect(result).toMatchObject({ type: 'success', result: { type: 'string', value: expect.stringContaining(`HeadlessChrome/${buildId}`) } });
     } finally {
       await browser.close();
     }

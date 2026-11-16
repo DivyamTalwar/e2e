@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { browserPlatform, downloadUrl } from '../../src/install/builds.ts';
+import { browserPlatform, downloadUrl, PINS, type BuildName } from '../../src/install/builds.ts';
 import { startArchiveServer, type ArchiveServer } from '../helpers/archive-server.ts';
-import { browserCheck, browserExecutable, CHROMIUM_BUILD, ensureBrowsersInstalled, FIREFOX_BUILD, installBrowsers } from '../../src/install/provision.ts';
+import { browserCheck, browserExecutable, ensureBrowsersInstalled, installBrowsers } from '../../src/install/provision.ts';
 
 const platform = browserPlatform();
 
@@ -33,9 +33,8 @@ async function lay(...builds: readonly ('shell' | 'full')[]): Promise<void> {
 }
 
 /** The mirror path the pinned archive of `build` is requested at. */
-function served(build: 'chrome' | 'chrome-headless-shell' | 'firefox'): string {
-  const buildId = build === 'firefox' ? FIREFOX_BUILD : CHROMIUM_BUILD;
-  return decodeURIComponent(downloadUrl(build, buildId, platform!, server.origin).slice(server.origin.length));
+function served(build: BuildName): string {
+  return decodeURIComponent(downloadUrl(build, PINS[build].buildId, platform!, server.origin).slice(server.origin.length));
 }
 
 describe.skipIf(platform === undefined)('browserCheck', () => {
@@ -52,7 +51,7 @@ describe.skipIf(platform === undefined)('ensureBrowsersInstalled', () => {
   it('downloads nothing when every browser is installed', async () => {
     await lay('shell');
     const logs: string[] = [];
-    await ensureBrowsersInstalled(['chromium', 'chromium'], { env, log: (line) => logs.push(line) });
+    await ensureBrowsersInstalled(['chromium', 'chromium'], { env, headed: false, log: (line) => logs.push(line) });
     expect(logs).toEqual([]);
     expect(server.requests).toEqual([]);
   });
@@ -60,7 +59,7 @@ describe.skipIf(platform === undefined)('ensureBrowsersInstalled', () => {
   it('downloads only the missing browsers, deduplicated, and nothing else', async () => {
     await lay('shell');
     const logs: string[] = [];
-    await expect(ensureBrowsersInstalled(['chromium', 'firefox', 'firefox'], { env, log: (line) => logs.push(line) })).rejects.toMatchObject({ code: 'BROWSER_INSTALL_FAILED' });
+    await expect(ensureBrowsersInstalled(['chromium', 'firefox', 'firefox'], { env, headed: false, log: (line) => logs.push(line) })).rejects.toMatchObject({ code: 'BROWSER_INSTALL_FAILED' });
     expect(server.requests).toEqual([served('firefox')]);
     expect(logs[0]).toBe('Downloading missing browsers (first run): firefox...');
   });
@@ -72,7 +71,7 @@ describe.skipIf(platform === undefined)('ensureBrowsersInstalled', () => {
   });
 
   it("installs into the run environment's cache, not the process's", async () => {
-    await expect(ensureBrowsersInstalled(['chromium'], { env, log: () => {} })).rejects.toThrow();
+    await expect(ensureBrowsersInstalled(['chromium'], { env, headed: false, log: () => {} })).rejects.toThrow();
     expect(server.requests).toEqual([served('chrome-headless-shell')]);
     expect(readdirSync(cache)).toEqual(['chrome-headless-shell']);
   });

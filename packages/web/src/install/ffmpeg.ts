@@ -9,26 +9,17 @@ import { chmodSync, createReadStream, createWriteStream, existsSync } from 'node
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
-import { EngineError, InfrastructureError } from '@e2e-dev/core/engine';
-import { installArchive } from './builds.ts';
+import { EngineError } from '@e2e-dev/core/engine';
+import { installArchive, PINS } from './builds.ts';
 import { mirrorOrigin } from './download.ts';
-import { cancelledCheck, withCacheLock } from './lock.ts';
-import { browsersPath } from './provision.ts';
+import { withCacheLock } from './lock.ts';
+import { browsersPath, installBuilds, type PinnedBuild } from './provision.ts';
 
-/** The ffmpeg-static release that encodes Chromium's screencast when the system has none with VP9, as a path on `FFMPEG_HOST`. */
-const FFMPEG_RELEASE = '/eugeneware/ffmpeg-static/releases/download/b6.1.1';
-
-/** Where `FFMPEG_RELEASE` is downloaded from, unless `E2E_BROWSERS_DOWNLOAD_HOST` names a mirror. */
+/** Where the pinned ffmpeg-static release is downloaded from, unless `E2E_BROWSERS_DOWNLOAD_HOST` names a mirror. */
 const FFMPEG_HOST = 'https://github.com';
 
-/** The SHA-256 of each platform's gzipped ffmpeg in `FFMPEG_RELEASE`. */
-const FFMPEG_SHA256: Readonly<Record<string, string>> = {
-  'darwin-arm64': '8923876afa8db5585022d7860ec7e589af192f441c56793971276d450ed3bbfa',
-  'darwin-x64': '929b375c1182d956c51f7ac25e0b2b0411fb01f6f407aa15c9758efeb4242106',
-  'linux-x64': 'bfe8a8fc511530457b528c48d77b5737527b504a3797a9bc4866aeca69c2dffa',
-  'linux-arm64': '754a678672298bc68156adff58aa7385a592c2b30b1d0ae8750c45c915c4bac0',
-  'win32-x64': '8883a3dffbd0a16cf4ef95206ea05283f78908dbfb118f73c83f4951dcc06d77',
-};
+/** The SHA-256 of each platform's gzipped ffmpeg in the pinned release, by `${process.platform}-${process.arch}`. */
+const FFMPEG_SHA256: Readonly<Record<string, string>> = PINS.ffmpeg.sha256;
 
 /** Whether `executable` runs and lists the VP9 encoder the screencast needs. */
 function encodesVp9(executable: string): boolean {
@@ -38,7 +29,7 @@ function encodesVp9(executable: string): boolean {
 
 /** The cached ffmpeg's directory. */
 function cachedFfmpegDirectory(env: NodeJS.ProcessEnv): string {
-  return path.join(browsersPath(env), 'ffmpeg-b6.1.1');
+  return path.join(browsersPath(env), `ffmpeg-${PINS.ffmpeg.buildId}`);
 }
 
 /** The cached ffmpeg's path for this platform. */
@@ -87,13 +78,15 @@ export async function ensureFfmpeg(env: NodeJS.ProcessEnv, context: FfmpegContex
     throw new EngineError('UNSUPPORTED_CAPABILITY', `recording video on chromium needs an ffmpeg with libvpx-vp9, and none is pinned for ${key}: set E2E_FFMPEG_PATH`, { retryable: false });
   }
   const executable = cachedFfmpeg(env);
-  const log = context.log ?? (() => undefined);
-  await withCacheLock(browsersPath(env), { log, signal: context.signal }, async (owner) => {
-    if (existsSync(executable)) return;
-    const url = `${mirrorOrigin(env) ?? FFMPEG_HOST}${FFMPEG_RELEASE}/ffmpeg-${key}.gz`;
-    log(`Downloading ffmpeg from ${url}`);
-    try {
-      await installArchive({
+  const url = `${mirrorOrigin(env) ?? FFMPEG_HOST}/eugeneware/ffmpeg-static/releases/download/${PINS.ffmpeg.buildId}/ffmpeg-${key}.gz`;
+  const lock = { log: context.log ?? (() => undefined), signal: context.signal };
+  const ffmpeg: PinnedBuild = {
+    label: 'ffmpeg',
+    announcement: `Downloading ffmpeg from ${url}`,
+    recovery: 'run "npx @e2e-dev/web install ffmpeg", or set E2E_FFMPEG_PATH to an ffmpeg with libvpx-vp9',
+    executable,
+    install: (owner) =>
+      installArchive({
         url,
         sha256,
         target: cachedFfmpegDirectory(env),
@@ -106,15 +99,8 @@ export async function ensureFfmpeg(env: NodeJS.ProcessEnv, context: FfmpegContex
         owner,
         env,
         signal: context.signal,
-      });
-    } catch (cause) {
-      cancelledCheck(context.signal);
-      throw new InfrastructureError(
-        'BROWSER_INSTALL_FAILED',
-        `could not install ffmpeg: ${cause instanceof Error ? cause.message : String(cause)}; run "npx @e2e-dev/web install ffmpeg", or set E2E_FFMPEG_PATH to an ffmpeg with libvpx-vp9`,
-        { cause },
-      );
-    }
-  });
+      }),
+  };
+  await withCacheLock(browsersPath(env), lock, (owner) => installBuilds([ffmpeg], owner, lock));
   return executable;
 }
