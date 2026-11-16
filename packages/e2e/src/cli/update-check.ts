@@ -11,11 +11,11 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import picocolors from 'picocolors';
-import { isCiMode } from '../config/resolve.ts';
-import { writeFileAtomicSync } from '../internal/atomic-write.ts';
-import { envFlag } from '../internal/env.ts';
+import { isCiMode } from '@e2e-dev/core/lib/config/resolve';
+import { writeFileAtomicSync } from '@e2e-dev/core/lib/internal/atomic-write';
+import { envFlag } from '@e2e-dev/core/lib/internal/env';
 import { detectWorkspacePackageManager, execCommand, readPackageManifest } from '../internal/package-manager.ts';
-import { isPlainObject } from '../internal/options.ts';
+import { isPlainObject } from '@e2e-dev/core/lib/internal/options';
 import { isRelease, latestRelease, olderThan } from '../internal/release.ts';
 import { telemetryConfigDir } from '../telemetry/store.ts';
 
@@ -23,7 +23,7 @@ const FILE_NAME = 'update-check.json';
 const CHECK_INTERVAL_MS = 86_400_000;
 /** The longest the check may hold the process after the command, once a day at most. */
 const FETCH_TIMEOUT_MS = 1_500;
-const CHANGELOG_URL = 'https://github.com/tester-army/e2e/blob/main/packages/e2e/CHANGELOG.md';
+const CHANGELOG_URL = 'https://github.com/e2e-inc/e2e/blob/main/packages/e2e/CHANGELOG.md';
 /**
  * `mcp` speaks JSON-RPC on stdio to a client, not to a person. `upgrade` is
  * the step the notice asks for; the version running it is the old one.

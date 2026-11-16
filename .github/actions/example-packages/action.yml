@@ -3,9 +3,13 @@ description: >-
   Installs an example's dependencies with e2e, @e2e-dev/web, and
   @e2e-dev/mobile swapped for the tarballs the examples workflow packed from
   main, so the example runs this checkout's packages instead of the npm
-  releases its package.json names.
+  releases its package.json names. @e2e-dev/core, which they all build on, comes
+  from its tarball through an override, since e2e names its exact snapshot.
 
 inputs:
+  agent-device-version:
+    description: Exact driver version for compatibility runs
+    default: ''
   working-directory:
     description: The directory with the example's test package.json.
     required: true
@@ -27,6 +31,7 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
+        AGENT_DEVICE_VERSION: ${{ inputs.agent-device-version }}
         PACKED: ${{ runner.temp }}/packed
       run: |
         set -euo pipefail
@@ -41,7 +46,14 @@ runs:
               console.log(`${name}: ${manifest[field][name]}`);
             }
           }
+          manifest.overrides = { ...manifest.overrides, "@e2e-dev/core": `file:${process.env.PACKED}/core.tgz` };
           fs.writeFileSync("package.json", `${JSON.stringify(manifest, null, 2)}\n`);
         '
+        if [ -n "$AGENT_DEVICE_VERSION" ]; then
+          node "$GITHUB_WORKSPACE/.github/scripts/agent-device.cjs" override npm
+        fi
         npm install --no-audit --no-fund
+        if [ -n "$AGENT_DEVICE_VERSION" ]; then
+          node "$GITHUB_WORKSPACE/.github/scripts/agent-device.cjs" verify npm
+        fi
         npx e2e --version

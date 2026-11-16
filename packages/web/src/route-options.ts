@@ -9,7 +9,7 @@
 
 import { statSync } from 'node:fs';
 import { types } from 'node:util';
-import { rejectUnknownOptions, TestError, validateJsonValue, type JsonValue } from 'e2e/engine';
+import { rejectUnknownOptions, TestError, validateJsonValue, type JsonValue } from '@e2e-dev/core/engine';
 import { headerProblem } from './protected-app.ts';
 
 /** What `route.fulfill` hands Playwright once the response is validated. */
@@ -26,7 +26,7 @@ export interface FulfillDecision {
 
 /**
  * What `route.continue` hands Playwright once the overrides are validated;
- * `headers` before the site's are merged in, a header set to `undefined`
+ * `headers` before the configured ones are merged in, a header set to `undefined`
  * left out so the request goes without it.
  */
 export interface ContinueDecision {

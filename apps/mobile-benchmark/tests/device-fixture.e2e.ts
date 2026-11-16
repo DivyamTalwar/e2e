@@ -98,6 +98,26 @@ test.describe('device fixture', () => {
     expect(lost?.code).toBe('APP_NOT_OPEN');
   });
 
+  // The app routes `e2e-benchmark://<scenario-slug>` to that scenario
+  // (`linking` in src/App.tsx), so the link lands on Login Form's own fields
+  // and Control Inventory is no longer on screen. The iOS simulator can stop
+  // a custom-scheme link at an "Open in “e2e Benchmark”?" prompt (it did on
+  // a freshly booted one, not on the runs after), so the prompt is answered
+  // only while it shows.
+  test('openLink opens the scenario a deep link names', async ({ device, screen }) => {
+    await device.openLink('e2e-benchmark://login-form');
+    const prompt = screen.getByRole('button', 'Open');
+    const email = screen.getByTestId('email-input');
+    await expect
+      .poll(async () => {
+        if (await prompt.isVisible()) await prompt.tap();
+        return email.isVisible();
+      }, { timeout: 10_000 })
+      .toBe(true);
+    expect((await device.foregroundApp()).bundleId).toBe(APP_ID);
+    await expect(screen.getByTestId('inventory-header')).toBeHidden();
+  });
+
   test('device.back pops the scenario', async ({ device, screen }) => {
     await device.back();
     await expect(screen.getByTestId('Control Inventory')).toBeVisible();
@@ -106,7 +126,7 @@ test.describe('device fixture', () => {
 
   // The client is bound to this worker's session, so a raw call reads the
   // screen this test is on, on the device the engine booted.
-  test('unstable_raw reaches the test session through agent-device', async ({ device, platform }) => {
+  test('unstable_raw reaches the test session through the raw driver', async ({ device, platform }) => {
     const { client, session, deviceId, deviceName } = device.unstable_raw;
     expect(platform).toBe(device.unstable_raw.platform);
     const own = (await client.sessions.list()).find((entry) => entry.name === session);

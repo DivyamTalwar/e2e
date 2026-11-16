@@ -6,7 +6,7 @@
 
 import { chromium, type Browser, type Page } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { SemanticNode } from 'e2e/engine';
+import type { SemanticNode } from '@e2e-dev/core/engine';
 import { captureDocument } from '../../src/observation.ts';
 import { readSemanticsFunction } from '../../src/in-page/read-semantics.ts';
 import { SECURE_FIELD_SELECTOR } from '../../src/read-node.ts';
@@ -68,6 +68,46 @@ describe('checked and selected', () => {
     expect(nodes.has('visibility')).toBe(true);
     for (const id of ['hidden', 'display', 'aria', 'group']) expect(nodes.has(id)).toBe(false);
     expect(await page.getByRole('option').allTextContents()).toEqual(['Visible', 'Disabled', 'No visibility', 'Restored']);
+  });
+
+  it('lists a checkbox or radio its own label draws over no box as shown, with its checked state', async () => {
+    await page.setContent(`
+      <style>.shrunk { opacity: 0; width: 0; height: 0; margin: 0; position: absolute }</style>
+      <label><input class="shrunk" type="checkbox" data-testid="agree" checked>Agree</label>
+      <label><input class="shrunk" type="radio" data-testid="large">Large</label>
+      <input class="shrunk" type="checkbox" id="unlabelled" data-testid="hidden-label"><label for="unlabelled" style="display:none">Gone</label>
+    `);
+    const nodes = await captureByTestId();
+    expect(nodes.get('agree')).toMatchObject({ role: 'checkbox', name: 'Agree', states: { checked: true } });
+    expect(nodes.get('large')).toMatchObject({ role: 'radio', name: 'Large', states: { checked: false } });
+    for (const id of ['agree', 'large']) expect(nodes.get(id)?.states?.hidden).not.toBe(true);
+    expect(nodes.has('hidden-label')).toBe(false);
+  });
+
+  it('leaves out a box-less control no label of its own draws in a way a tap can click', async () => {
+    await page.setContent(`
+      <style>.shrunk { opacity: 0; width: 0; height: 0; margin: 0; padding: 0; border: 0; position: absolute }</style>
+      <label><input class="shrunk" type="checkbox" data-testid="invisible" style="visibility:hidden">Invisible</label>
+      <label><input class="shrunk" type="text" data-testid="text">Name</label>
+      <skip-slot><input class="shrunk" type="checkbox" id="skipped" data-testid="skipped"></skip-slot>
+      <label for="skipped">Skipped</label>
+      <label style="display:contents"><input class="shrunk" type="checkbox" data-testid="contents"><span>Contents</span></label>
+      <label><input class="shrunk" type="checkbox" data-testid="link">Accept <a href="#terms">the terms</a></label>
+      <label role="button"><input class="shrunk" type="checkbox" data-testid="button-label">Button</label>
+      <label role="link"><input class="shrunk" type="checkbox" data-testid="link-label">Link</label>
+      <label contenteditable><input class="shrunk" type="checkbox" data-testid="editable-label">Editable</label>
+      <script>
+        customElements.define('skip-slot', class extends HTMLElement {
+          connectedCallback() {
+            this.attachShadow({ mode: 'open' }).innerHTML = '<div style="content-visibility:hidden;width:50px;height:50px"><slot></slot></div>';
+          }
+        });
+      </script>
+    `);
+    const nodes = await captureByTestId();
+    for (const id of ['invisible', 'text', 'skipped', 'contents', 'link', 'button-label', 'link-label', 'editable-label']) {
+      expect(nodes.has(id), id).toBe(false);
+    }
   });
 
   it('applies the option limit to offered choices after hidden options are excluded', async () => {

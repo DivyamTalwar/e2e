@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { AgentError, type ExecutorActions, type ExecutorModelCall, type StepExecutorContext } from 'e2e';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -159,7 +160,7 @@ describe('acp', () => {
     expect(log().filter((entry) => 'session' in entry)).toHaveLength(2);
   });
 
-  it('refuses actions that change the screen on an assertion, and lets it hover', async () => {
+  it('refuses actions that change the screen on an assertion, including hover', async () => {
     const { executor, log } = scripted([
       [{ call: 'tap', args: { target: 'n2' } }, { call: 'hover', args: { target: 'n2' } }, { call: 'complete_step', args: { status: 'failed', summary: 'no todo' } }],
     ]);
@@ -169,8 +170,36 @@ describe('acp', () => {
     // The runner gives a failed assertion its ASSERTION_FAILED code.
     expect(verdict).toEqual({ status: 'failed', summary: 'no todo' });
     expect(step.tap).not.toHaveBeenCalled();
-    expect(step.hover).toHaveBeenCalledWith({ id: 'n2' });
+    expect(step.hover).not.toHaveBeenCalled();
     expect(JSON.stringify(log().find((entry) => entry['call'] === 'tap'))).toContain('this step is an assertion');
+    expect(JSON.stringify(log().find((entry) => entry['call'] === 'hover'))).toContain('this step is an assertion');
+  });
+
+  it('refuses screen changes on an assertion that follows an act in the same session, and hints read-only tools', async () => {
+    const { executor, log } = scripted([[pass], [{ call: 'tap', args: { target: 'n2' } }, { call: 'hover', args: { target: 'n2' } }, pass]]);
+    const first = context({ verbs: ['tap', 'hover'] });
+    cleanups.push(first.end);
+    await expect(executor.runStep(first.ctx)).resolves.toMatchObject({ status: 'passed' });
+    const second = context({ kind: 'assert', verbs: ['tap', 'hover'], attempt: { attempt: first.ctx.attempt as never, end: first.end } });
+    await expect(executor.runStep(second.ctx)).resolves.toMatchObject({ status: 'passed' });
+    expect(second.tap).not.toHaveBeenCalled();
+    expect(second.hover).not.toHaveBeenCalled();
+    expect(JSON.stringify(log().find((entry) => entry['call'] === 'tap'))).toContain('this step is an assertion');
+    expect(JSON.stringify(log().find((entry) => entry['call'] === 'hover'))).toContain('this step is an assertion');
+    const session = log().find((entry) => 'session' in entry)?.['session'] as { readOnly?: string[] };
+    expect(session.readOnly?.toSorted()).toEqual(['complete_step', 'observe', 'screenshot']);
+  });
+
+  it('advertises action tools when the attempt begins with an assertion', async () => {
+    const { executor, log } = scripted([[pass], [{ call: 'tap', args: { target: 'n2' } }, pass]]);
+    const first = context({ kind: 'assert' });
+    cleanups.push(first.end);
+    await expect(executor.runStep(first.ctx)).resolves.toMatchObject({ status: 'passed' });
+    const second = context({ attempt: { attempt: first.ctx.attempt as never, end: first.end } });
+    await expect(executor.runStep(second.ctx)).resolves.toMatchObject({ status: 'passed' });
+    expect(second.tap).toHaveBeenCalledWith({ id: 'n2' });
+    const session = log().find(entry => 'session' in entry)?.['session'] as { tools: string[] };
+    expect(session.tools).toContain('tap');
   });
 
   it("concludes through the built-in agent's complete_step: blocked needs a code", async () => {
@@ -191,6 +220,18 @@ describe('acp', () => {
     // Nothing runs after the verdict.
     expect(step.tap).not.toHaveBeenCalled();
     expect(String(log().find((entry) => 'prompt' in entry)?.['prompt'])).toContain('Verdict rules:');
+  });
+
+  it('drops an inconclusive code from an act verdict and keeps it on an assertion, in one attempt', async () => {
+    const inconclusive = { call: 'complete_step', args: { status: 'failed', summary: 'not enough evidence', errorCode: 'ASSERTION_INCONCLUSIVE' } };
+    const { executor, log } = scripted([[inconclusive], [inconclusive]]);
+    const first = context();
+    cleanups.push(first.end);
+    await expect(executor.runStep(first.ctx)).resolves.toEqual({ status: 'failed', summary: 'not enough evidence' });
+    const second = context({ kind: 'assert', attempt: { attempt: first.ctx.attempt as never, end: first.end } });
+    await expect(executor.runStep(second.ctx)).resolves.toEqual(inconclusive.args);
+    expect(JSON.stringify(log())).toContain('the errorCode ASSERTION_INCONCLUSIVE you sent applies only to assertions and was ignored.');
+    expect(log().filter((entry) => 'session' in entry)).toHaveLength(1);
   });
 
   it('skips actions batched behind the verdict', async () => {
@@ -324,6 +365,25 @@ describe('acp', () => {
     await expect(run).rejects.toMatchObject({ code: 'STEP_TIMEOUT' });
     const second = context({ attempt: { attempt: first.ctx.attempt as never, end: first.end } });
     await expect(executor.runStep(second.ctx)).rejects.toMatchObject({ code: 'MODEL_PROVIDER_FAILED', message: expect.stringContaining('did not stop') });
+  });
+
+  it('preserves cancellation while waiting for the previous turn to stop', async () => {
+    const { executor, log } = scripted([[{ ignoreCancel: true }], [pass]]);
+    const first = context();
+    cleanups.push(first.end);
+    const run = executor.runStep(first.ctx);
+    await eventually(() => expect(log().filter((entry) => 'prompt' in entry)).toHaveLength(1));
+    first.abortStep(new AgentError('STEP_TIMEOUT', 'the first step timed out'));
+    await expect(run).rejects.toMatchObject({ code: 'STEP_TIMEOUT' });
+
+    const second = context({ attempt: { attempt: first.ctx.attempt as never, end: first.end } });
+    const next = executor.runStep(second.ctx);
+    await setImmediate();
+    const reason = new AgentError('STEP_TIMEOUT', 'the next step timed out');
+    second.abortStep(reason);
+    await expect(next).rejects.toBe(reason);
+    expect(second.ctx.observe).not.toHaveBeenCalled();
+    expect(log().filter((entry) => 'prompt' in entry)).toHaveLength(1);
   });
 
   it('allows only calls the adapter names as one of the step tools, never by text the agent wrote', async () => {

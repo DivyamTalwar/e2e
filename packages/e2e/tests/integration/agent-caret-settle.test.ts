@@ -1,7 +1,7 @@
 /** A caret key in a focused text field waits a second for its effect; a tap, a first focus, or a batched earlier action still waits the full window. */
 
 import { describe, expect, it } from 'vitest';
-import type { StepExecutorContext, StepExecutor } from '../../src/agent/executor.ts';
+import type { StepExecutorContext, StepExecutor } from '@e2e-dev/core/lib/agent/executor';
 import { createFakeEngine, FAKE_APP, FAKE_APP_URL } from '../helpers/fake-engine.ts';
 import { nodeIdFor } from '../helpers/fake-loop-model.ts';
 import { createProject, runExisting } from '../helpers/run-project.ts';

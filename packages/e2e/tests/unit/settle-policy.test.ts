@@ -1,7 +1,7 @@
 /** The change wait an action arms: the table's window, shortened only for a caret key in a focused text field. */
 
 import { describe, expect, it } from 'vitest';
-import { changeWaitAfter, SETTLE_AFTER } from '../../src/agent/settle-policy.ts';
+import { changeWaitAfter, SETTLE_AFTER } from '@e2e-dev/core/lib/agent/settle-policy';
 
 const full = SETTLE_AFTER.tap.changeWaitMs;
 const caretWait = 1000;

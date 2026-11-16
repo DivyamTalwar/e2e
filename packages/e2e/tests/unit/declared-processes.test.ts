@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { defineEngine } from '../../src/engine/index.ts';
-import { assignPorts, resolveConfig } from '../../src/config/resolve.ts';
-import { declaredCommands } from '../../src/run/declared-processes.ts';
-import type { TargetApp } from '../../src/types.ts';
+import { defineEngine } from '@e2e-dev/core/lib/engine/index';
+import { assignPorts } from '@e2e-dev/core/lib/config/resolve';
+import { resolveConfig } from '../../src/config/resolve-run.ts';
+import { declaredCommands } from '@e2e-dev/core/lib/run/declared-processes';
+import type { TargetApp } from '@e2e-dev/core/lib/types';
 import { snapshot } from '../helpers/snapshot.ts';
 
 const ROOT = '/tmp/e2e-declared-processes';
@@ -34,8 +35,8 @@ describe('declaredCommands', () => {
       ).targets,
     );
     expect(commands).toEqual([
-      { label: 'target "t0" command', command: dev, readyUrl: 'http://localhost:3000/', key: expect.any(String) },
-      { label: 'target "t2" command', command: { executable: 'pnpm', args: ['api'] }, readyUrl: 'http://localhost:4000/', key: expect.any(String) },
+      { label: 'target "t0" command', command: dev, readyUrl: 'http://localhost:3000/', key: expect.any(String), targetNames: ['t0', 't1'] },
+      { label: 'target "t2" command', command: { executable: 'pnpm', args: ['api'] }, readyUrl: 'http://localhost:4000/', key: expect.any(String), targetNames: ['t2'] },
     ]);
     expect(declaredCommands(configOf({ url: 'http://localhost:3000' }, {}).targets)).toEqual([]);
   });
@@ -52,11 +53,13 @@ describe('declaredCommands', () => {
         command: { executable: 'pnpm', args: ['dev', '--port', '4321'], env: { PORT: '4321' } },
         readyUrl: 'http://127.0.0.1:4321/',
         key: expect.any(String),
+        targetNames: ['t0', 't1'],
       },
     ]);
     // Two ports are two servers, each probed where it listens.
     const twoPorts = declaredCommands(assignPorts(configOf(shared, shared), { t0: 4321, t1: 4322 }).targets);
     expect(twoPorts.map((command) => command.readyUrl)).toEqual(['http://127.0.0.1:4321/', 'http://127.0.0.1:4322/']);
+    expect(twoPorts.map((command) => command.targetNames)).toEqual([['t0'], ['t1']]);
   });
 
   it('gives a command whose port 0 was allocated per run a key of its own', () => {

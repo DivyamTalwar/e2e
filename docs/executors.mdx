@@ -72,7 +72,11 @@ between turns to shorten the history, or returns `{ messages, stop }` when the
 step makes no progress. A message it rewrites, in place or by replacement,
 edits the request prefix, and on Anthropic models, whose thinking is bound
 to it, the loop then stops sending the reasoning from that message on.
-`guard()` stops new tool calls when the step is
+When the provider refuses a request as too large, the loop shortens the
+history and retries once if that makes the request smaller, else fails with
+`CONTEXT_OVERFLOW`; `inconclusiveOnOverflow: true` fails the step with
+`ASSERTION_INCONCLUSIVE` instead, for an assertion loop whose earlier screens
+are evidence. `guard()` stops new tool calls when the step is
 concluding and returns a failure to the model as text. `ctx.actions`
 authorizes, counts, and records each action, so these steps replay from the
 [cache](/cache) and run on any engine that supports `tap`.
@@ -146,7 +150,8 @@ export default {
 | --- | --- |
 | `ctx.step` | The `kind`, instruction, params, and `index` in the attempt's timeline. A configured secret's value in the instruction or a param reads `<secret:name>`. A `secrets.get()` handle arrives as a name-only placeholder that `typeSecret` fills |
 | `ctx.observe({ tree, pixels })` | Redacted screen text, with an optional node tree and masked screenshot |
-| `ctx.actions` | Checked and recorded actions: `tap`, `doubleTap`, `longPress`, `secondaryTap`, `hover`, `type`, `typeSecret`, `press`, `select`, `check`, `drag`, `scrollTo`, `scrollUntil`, `upload`, `scroll`, `navigate`, `back`, `resize`, and the point and keyboard actions below |
+| `ctx.read({ id }, { style })` | Secret-redacted computed styles of a currently listed node. See [Project tools](/tools#read-a-nodes-computed-style) |
+| `ctx.actions` | Checked and recorded actions: `tap`, `doubleTap`, `longPress`, `secondaryTap`, `hover`, `type`, `typeSecret`, `press`, `select`, `check`, `drag`, `scrollTo`, `scrollUntil`, `upload`, `scroll`, `navigate`, `back`, `resize`, `switchTab`, `closeTab`, and the point and keyboard actions below |
 | `ctx.target` | The target's `name`, `platform`, and `verbs`, the actions its engine supports. Offer only these to the model. `tapModifiers` is true when `tap`, `doubleTap`, and `secondaryTap` take `{ modifiers }` |
 | `ctx.signal` | Aborts on cancellation, at the step deadline, or on any other hard stop. The deadline can't stop work that ignores it |
 | `ctx.replayedPrefix` | Set when a cache replay ran part of the step first. See [Replay cache](#replay-cache) |
@@ -200,9 +205,10 @@ budget is spent, the deadline passed, or the test was cancelled. The runner
 refuses any other use, and a passed verdict with a code, with
 `MODEL_OUTPUT_INVALID`.
 
-For a model your executor drives itself, `createVerdictTool()` from
-`e2e/agent` is the built-in agent's `complete_step`. Give the model its
-`tool` and `VERDICT_RULES`, then return `verdict()`.
+For a model your executor drives itself, `createVerdictTool(ctx.step.kind)`
+from `e2e/agent` is the built-in agent's `complete_step`. Give the model its
+`tool` and `VERDICT_RULES`, then return `verdict()`. On an `act` step it drops
+`ASSERTION_INCONCLUSIVE` from a failed verdict.
 
 ## Replay cache
 

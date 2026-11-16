@@ -9,8 +9,8 @@ import { Readable } from 'node:stream';
 import { createGunzip } from 'node:zlib';
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { USER_AGENT } from '../../internal/client-identity.ts';
-import { packageVersion } from '../../internal/package-version.ts';
+import { USER_AGENT } from '@e2e-dev/core/lib/internal/client-identity';
+import { packageVersion } from '@e2e-dev/core/lib/internal/package-version';
 import { dependencyRange, recordedSiblingRange } from './versions.ts';
 
 export interface ExamplePreset {
@@ -45,7 +45,7 @@ export function findExample(name: string): ExamplePreset | undefined {
   return EXAMPLES.find((example) => example.id === id);
 }
 
-const REPOSITORY = 'tester-army/e2e';
+const REPOSITORY = 'e2e-inc/e2e';
 /** Entries a directory may hold and still count as empty for an example. */
 const IGNORED_ENTRIES = new Set(['.git', '.DS_Store', 'Thumbs.db']);
 /**

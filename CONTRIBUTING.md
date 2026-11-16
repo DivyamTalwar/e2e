@@ -98,10 +98,10 @@ This project is a pnpm monorepo. `packages/` holds what publishes to npm,
 - `apps/mobile-benchmark`: private Expo app of hard mobile surfaces plus the e2e suites written against them
 - `docs/`: the documentation pages
 - `skills/e2e/`: the agent skill shipped with the package and installed by `e2e init`
-- `skills/create-verification-skill/`: the generator of a project-local `verify-<app>` skill, installed with `npx skills add tester-army/e2e --skill create-verification-skill`
-- `skills/migrate-to-e2e/`: ports an existing Playwright, Cypress, Selenium, Appium, Detox, Maestro, or TesterArmy suite one slice at a time, installed with `npx skills add tester-army/e2e --skill migrate-to-e2e`
-- `plugins/e2e/`: the Claude Code, Codex, and Cursor plugin of the three skills, installed from this repository as a marketplace with `claude plugin marketplace add tester-army/e2e` or `codex plugin marketplace add tester-army/e2e`, or copied into `~/.cursor/plugins/local/` for Cursor
-- `.dev/skills/`: the skills coding agents use to work on this repo, symlinked from `.claude/skills/` so `npx skills add tester-army/e2e` offers only `skills/*`
+- `skills/create-verification-skill/`: the generator of a project-local `verify-<app>` skill, installed with `npx skills add e2e-inc/e2e --skill create-verification-skill`
+- `skills/migrate-to-e2e/`: ports an existing Playwright, Cypress, Selenium, Appium, Detox, Maestro, or TesterArmy suite one slice at a time, installed with `npx skills add e2e-inc/e2e --skill migrate-to-e2e`
+- `plugins/e2e/`: the Claude Code, Codex, and Cursor plugin of the three skills, installed from this repository as a marketplace with `claude plugin marketplace add e2e-inc/e2e` or `codex plugin marketplace add e2e-inc/e2e`, or copied into `~/.cursor/plugins/local/` for Cursor
+- `.dev/skills/`: the skills coding agents use to work on this repo, symlinked from `.claude/skills/` so `npx skills add e2e-inc/e2e` offers only `skills/*`
 
 On Windows, enable Developer Mode and clone with
 `git clone -c core.symlinks=true` so those symlinks check out as links rather
@@ -230,7 +230,7 @@ When adding a new public package:
    before one can be added.
 2. On npmjs.com open the package, then Settings, then Trusted Publisher:
    - Publisher: GitHub Actions
-   - Organization: `tester-army`, Repository: `e2e`
+   - Organization: `e2e-inc`, Repository: `e2e`
    - Workflow filename: `release.yml`
    - Environment name: leave blank
    - Allowed actions: check `Allow npm publish`. Changesets publishes
@@ -289,8 +289,9 @@ committed.
 The following are the public contract. A change that breaks any of them is a
 breaking change and follows the rules below:
 
-- Public types exported from `e2e` and `e2e/engine`, as
-  emitted in `dist/index.d.ts` and `dist/engine/index.d.ts`. Removing an
+- Public types exported from `e2e`, `e2e/engine`, and `@e2e-dev/core/engine`,
+  as emitted in `dist/index.d.ts` and `dist/engine/index.d.ts` of `e2e`,
+  and `dist/engine/index.d.ts` of `@e2e-dev/core`. Removing an
   export, narrowing an accepted input, widening a returned type, or changing a
   fixture's runtime behavior all count.
 - Config keys in `e2e.config.ts`, their types, and their defaults.
@@ -300,7 +301,8 @@ breaking change and follows the rules below:
   Adding an optional field is compatible; renaming, removing, or changing the
   meaning of one is not.
 
-Not covered: anything under `internal`, the testbed, the exact text of error
+Not covered: anything under `internal`, `@e2e-dev/core/lib/*` (the modules `e2e`
+reaches at the exact `@e2e-dev/core` version it depends on), the testbed, the exact text of error
 messages and reporter output (error *codes* are covered), and the agent's
 prompts and tool descriptions.
 
@@ -326,10 +328,33 @@ prompts and tool descriptions.
 
 ### Engine contract
 
-`e2e/engine` is what `@e2e-dev/web` and `@e2e-dev/mobile`
-build against, and what a third-party engine builds against too. A change to
-that contract bumps all three packages together in one release, with a
-changeset for each, so an engine and a runner from the same release always
-match. Engines declare a peer range on `e2e` that points one way only
-(engine to runner, `>=x <1`), and each integration (`@e2e-dev/kernel`, `@e2e-dev/lightpanda`, `@e2e-dev/eas`, `@e2e-dev/smol`, `@e2e-dev/testmu`, `@e2e-dev/browserstack`, `@e2e-dev/e2b`) does
+`@e2e-dev/core/engine` (re-exported as `e2e/engine`) is what `@e2e-dev/web` and
+`@e2e-dev/mobile` build against, and what a third-party engine builds against
+too. A change to that contract bumps `@e2e-dev/core`, `e2e`, and both engines
+together in one release, with a changeset for each, so an engine and a runner
+from the same release always match. `e2e` and `@e2e-dev/core` are a changesets
+`fixed` group: they always share a version, and `e2e` depends on that exact
+`@e2e-dev/core`. Engines declare a peer range on `@e2e-dev/core` that points one way
+only (engine to core, `>=x <1`), plus one on `e2e` for the main entry that
+adds the engine's fixture to `test`, and each integration (`@e2e-dev/kernel`, `@e2e-dev/lightpanda`, `@e2e-dev/eas`, `@e2e-dev/smol`, `@e2e-dev/testmu`, `@e2e-dev/browserstack`, `@e2e-dev/e2b`) does
 the same on the engines it plugs into; do not make it mutual or narrow it.
+
+### Driver nightly compatibility
+
+`nightly-agent-device.yml` runs daily at 08:17 UTC, after agent-device's
+usual 01:30–07:30 UTC publishing window. A manual dispatch accepts an npm
+tag or version, defaulting to `nightly`. It resolves the version once, then
+uses temporary overrides and checks the installed dependency graphs. No
+lockfile update is committed.
+
+The run calls the existing spec, web benchmark, mobile benchmark, examples,
+and agent workflows with that version. This includes `pnpm check`, unit and
+integration tests across the Node matrix, Bun and fresh-install checks,
+testbed, both mobile suites on Android and iOS, every example/platform,
+and the live agent and dogfood suites. It inherits the existing model key.
+Hand-run OAuth and cloud-provider live checks are not CI suites and remain
+manual; they need provider accounts, stored logins, or provisioned devices.
+
+The run summary records the version, workflow results, and failed jobs.
+This compatibility run sends no Slack messages or PR comments. Normal
+workflow triggers keep their existing reporting behavior.

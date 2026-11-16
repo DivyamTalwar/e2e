@@ -65,7 +65,7 @@ grammar verb (`tap`, `screenshot`) or a tool the harness adds:
 | Annotation | Meaning |
 | --- | --- |
 | `mutates: true` | Changes state. The call takes a slot of the step's action budget before it runs, failed or not, and runs in order with the other actions. The [replay cache](/cache) can't replay it, so the agent runs that part of the step live. |
-| `mutates: false` | Read-only. Runs without an action slot and may observe the screen. |
+| `mutates: false` | Read-only. Runs without an action slot and may observe the screen or read node properties. |
 | `platforms: ['ios', 'android']` | Offers the tool only on those platforms. Omit it to offer the tool on every target. |
 
 ## Observe from a tool
@@ -107,6 +107,42 @@ const captureEvidence = defineTool(
 - `attachScreenshot(pixels, label)` adds the image to the step's artifacts
   and returns its artifact id. A reused label overwrites the earlier image.
 
+## Read a node's computed style
+
+In a read-only tool, use `context.read` to measure a listed node's rendered
+style on the web engine:
+
+```ts
+const context = getToolContext(executionOptions);
+await context.observe();
+const result = await context.read({ id: nodeId }, {
+  style: ['color', 'font-weight', 'visibility', 'opacity'],
+});
+return result.style;
+```
+
+Pass the node's ID from the newest observation. The result contains only
+requested properties, with secret values redacted as in the tree.
+Values use the browser's computed CSS format, such as `rgb(255, 0, 0)` for red.
+
+Request properties from the [computed-style allow-list](/reference/engine#rendered-node-properties).
+Custom properties, generated content, selectors, and page code are rejected.
+
+Reads use the step's deadline and run in order with observations and actions,
+without taking an action slot. They measure the current value on the original
+element, and do not refresh the observation or wait for a value to change.
+Computed `visibility` and `opacity` describe the element's CSS, not whether
+another element covers it or an ancestor makes it invisible.
+
+| Error | When |
+| --- | --- |
+| `POLICY_DENIED` | A `mutates: true` tool calls `read`, or the engine has no `readStyle` method, as with the mobile engine. |
+| `INVALID_ARGUMENT` | The options or property names are invalid. |
+| `LOCATOR_NOT_FOUND` | No semantic observation exists, the latest one does not list the ID, or the element detached. Observe again before reading. |
+| `STEP_TIMEOUT` | The read exhausted the step's remaining time, including an engine timeout at the deadline. Catching the read error cannot make the step pass. |
+
+Use `requires: ['computed-style']` on a test to skip targets without style reads.
+
 ## Device toolkits
 
 `@e2e-dev/mobile` has a ready tool pack, `mobileTools`, with `open_app`,
@@ -116,7 +152,9 @@ const captureEvidence = defineTool(
 tools: { ...mobileTools(iphone, pixel), seedCart },
 ```
 
-See [Agent tools](/mobile#agent-tools) for the setup.
+See [Agent tools](/mobile#agent-tools) for the setup. A tool of your own
+that needs a raw driver session gets the running device's client from
+[`unstable_deviceSession`](/reference/mobile#unstable_devicesession).
 
 ## Next
 

@@ -8,13 +8,13 @@ TypeScript 7.
 There is no separate spec. The code is the contract, pinned in three places:
 
 - The emitted `packages/e2e/dist/index.d.ts` (and `dist/engine/index.d.ts`,
-  `dist/runner.d.ts`, `dist/oauth/*.d.ts`)
-  is the public API. `packages/e2e/tests/types/sdk-types.ts` holds compile-time
+  `dist/runner.d.ts`, `dist/oauth/*.d.ts`), and `@e2e-dev/core`'s
+  `packages/core/dist/engine/index.d.ts`, are the public API. `packages/e2e/tests/types/sdk-types.ts` holds compile-time
   assertions (`@ts-expect-error` lines) for the parts that are easy to loosen
   by accident; it runs under the package `typecheck`, never under vitest.
 - Wire formats live in `packages/e2e/schema/*.schema.json` (report-1,
   session-1, agent-judgment-2, the engine protocol's engine-manifest-1,
-  `e2e doctor`'s doctor-1, and the deprecated agent-judgment-1) with a valid and an invalid fixture
+  `e2e doctor`'s doctor-1, the scheduler's advisory timings-1, and the deprecated agent-judgment-1) with a valid and an invalid fixture
   each. Integration tests validate every generated report and session envelope
   against them; `tests/unit/schema-fixtures.test.ts` checks the fixtures. A
   wire change edits the schema, both fixtures, and the producer in one review.
@@ -34,8 +34,28 @@ descriptions and commit bodies; `git log` and `gh pr view` are the archive.
 `packages/` holds what publishes to npm; `apps/` holds the private apps and
 suites that consume the built packages the way a user would.
 
+- `packages/core` — the published `@e2e-dev/core` package, which `e2e` is built
+  on and depends on at its exact version (a changesets `fixed` group keeps
+  the two versions equal): the engine contract (`@e2e-dev/core/engine`, and
+  `src/engine/protocol/`), locators (`src/locator/`), the agent
+  (`src/agent/`, the `act` executor socket plus the judgment methods),
+  the replay cache (`src/cache/`), secrets, and the session half of a
+  worker: `run/engine-sessions.ts` (engine init and dispose, each attempt's
+  session from launch to close, which the runner's `TargetExecutor`
+  extends), `run/standalone.ts` (the worker a runner host or MCP keeps
+  alive, with a `WorkerPolicy` per kind), and `run/standalone-attempt.ts`
+  (one attempt: reservation, launch, fixtures, deadline, close). Its one
+  public entry is `@e2e-dev/core/engine`. It imports nothing of `e2e`:
+  `tests/unit/package-imports.test.ts` in `packages/e2e` fails on a
+  dependency `@e2e-dev/core`'s manifest does not declare. `e2e` reaches its
+  modules as `@e2e-dev/core/lib/<path>` (`./lib/*` in its exports), which is
+  not public API; `@e2e-dev/core`'s behavior is tested by `packages/e2e`'s
+  suites, through those paths and through the runner.
 - `packages/e2e` — the published `e2e` package: SDK surface, runner, CLI,
-  `e2e/engine` contract. Core knows the contract and never an engine's
+  and `e2e/engine` and `e2e/agent`, which re-export `@e2e-dev/core`'s. A
+  config's reporters and test filters resolve in `config/resolve-run.ts`
+  over `@e2e-dev/core`'s `resolveProjectConfig`, and their types live in
+  `src/run-types.ts`. Core knows the contract and never an engine's
   internals: no engine package is imported from `src/` (grep for
   `from '@e2e-dev/` and `import('@e2e-dev/`; the presets below are the only
   hits). Engine words still appear as platform labels, capability names, and in
@@ -48,20 +68,21 @@ suites that consume the built packages the way a user would.
   example, and run command; interactive choices derive from this list. These
   presets never import engine implementations.
   - `src/run/` runner core (scheduler, units, workers, retries, sessions;
-    `standalone.ts` is the worker a host or MCP's one-shot attempt keeps
-    alive, `standalone-attempt.ts` one attempt on it: reservation, launch,
-    fixtures, deadline, close, `host-trace.ts` its `trace.md`, and
+    `standalone-kinds.ts` the hosted and one-shot kinds of `@e2e-dev/core`'s
+    standalone worker, `host-trace.ts` a hosted attempt's `trace.md`, and
     `select-target.ts` the target a session names, shared with MCP;
     `open-session.ts` exposes `openHost` on `e2e/runner` for another test
     runner: worker-lifetime provisioning, app processes, and engine init,
     then `host.openSession({ name })` for each test's fixtures, deadline,
     steps, artifacts, and trace at close. Only one hosted attempt may be
     opening, live, or closing per process; close it before opening another),
-    `src/collect/` registration+selection, `src/locator/` locator AST/engine,
-    `src/agent/` the agent (the `act` executor socket plus the judgment
-    methods), `src/mcp/` the `e2e mcp` server (a live session that rides
+    `src/collect/` registration+selection, `src/mcp/` the `e2e mcp` server (a live session that rides
     the `act` socket with a queue executor so every MCP call is a harness
-    action), `src/oauth/` subscription sign-in (the `e2e login`, `logout`,
+    action; in a directory with no config, `open_session {engine}` names the
+    engine as a package, whose default export is called, or as a factory
+    call, a package with an export and options that may hold further such
+    calls, which `mcp/default-engine.ts` resolves in the project, beside e2e,
+    or in `~/.e2e/engines`, never by a specifier written in core), `src/oauth/` subscription sign-in (the `e2e login`, `logout`,
     and `models` commands and the `e2e/oauth/*` model constructors; each
     constructor subpath is the place its `@ai-sdk/*` optional peers are
     imported, and the Copilot constructor loads `@ai-sdk/openai` lazily, only
@@ -72,25 +93,30 @@ suites that consume the built packages the way a user would.
     checks that need a stored login and are never part of `pnpm test`.
 - `packages/web` — the published `@e2e-dev/web` package: the
   browser engine, built with the public `defineEngine`, contributing the
-  `browser` fixture and `expect(browser)`. It depends on `e2e` (peer), never the
-  reverse; a target names it explicitly as `engine: web()`. There is
-  no default engine and no well-known id registry in core. It imports from
-  `e2e/engine` only: the semantics every engine must reproduce
-  (error taxonomy, text and URL matching, assertion polling, JSON-value rules)
-  are exported there, and there is no `e2e/internal` subpath.
+  `browser` fixture and `expect(browser)`. It depends on `@e2e-dev/core` and
+  `e2e` (peers), never the reverse; a target names it explicitly as
+  `engine: web()`. There is no default engine and no well-known id registry
+  in core. It imports from `@e2e-dev/core/engine` only: the semantics every
+  engine must reproduce (error taxonomy, text and URL matching, assertion
+  polling, JSON-value rules) are exported there, and an engine never imports
+  `@e2e-dev/core/lib/*`.
 - `packages/mobile` — the published `@e2e-dev/mobile` package: the
   iOS/Android engine on agent-device, built with the same public
   `defineEngine`, contributing the `device` fixture. Like the web engine it
-  depends on `e2e` (peer), never the reverse; the engine implementation
-  imports from `e2e/engine` only, and a target names it as `engine: mobile()`.
+  depends on `@e2e-dev/core` and `e2e` (peers), never the reverse; the
+  engine implementation imports from `@e2e-dev/core/engine` only, and a target
+  names it as `engine: mobile()`.
   The `@e2e-dev/mobile/tools` subpath holds the agent-side `open_app`, `swipe`,
   and `alert` tools; focused-field typing uses the engine's keyboard grammar.
   The main entry never loads the AI SDK.
+  `unstable_deviceSession()` on `./tools` gives custom tools the running
+  attempt's raw driver session, like `device.unstable_raw`. The client is typed as
+  `DeviceSessionClient`, exported from the main entry.
   The `@e2e-dev/mobile/lease` subpath holds the agent-device lease plumbing
   device-cloud providers (`testmu`, `browserstack`) share: one daemon per
   slot, heartbeat, and a release that fails unless the session end is
   confirmed.
-- `packages/e2e/src/engine/protocol/` - the engine protocol: the engine
+- `packages/core/src/engine/protocol/` - the engine protocol: the engine
   contract as LSP-style JSON-RPC (`connectEngine` client, `serveEngine`
   server, spawn/socket/loopback transports), so an engine can run in
   another process, machine, or language. The harness holds only protocol
@@ -144,10 +170,14 @@ suites that consume the built packages the way a user would.
   can affect each test, packing test files into calls under the model's
   size limit, 8 calls at a time, and leaves out the unlikely ones. It runs
   every test on an `e2e.config` or lockfile change, and asks nothing about a
-  test whose test file, setup file, or stored screenshots changed. A failed
+  test whose test file, setup file, or stored screenshots changed. It scores
+  each test it keeps through `relevance` (1 for a touched test, the model's
+  probability for a judged one, 0.5 for one it did not judge), and the
+  runner starts each target's likeliest files first. A failed
   call leaves its tests in and the rest are still judged; after 3 failed
   calls it stops asking. When every call fails, or git or a file read
-  fails, it throws, and the run warns and runs every test.
+  fails, it throws, and the run warns and runs every test, the touched
+  ones first, since the error carries their scores in `relevance`.
 - `packages/acp` — the published `@e2e-dev/acp` package: a `StepExecutor`
   (`acp()`, with `claudeCode()` and `codex()` presets) that runs
   `agent.act` and `agent.assert` on a coding agent over the Agent Client
@@ -160,6 +190,14 @@ suites that consume the built packages the way a user would.
   keeps it current on reruns, writing the same text to the job summary. It
   reads the token, event, and repository when the run finishes, never at
   config load, and renders the page with `renderMarkdownReport` from `e2e`.
+- `packages/html-reporter` — the published `@e2e-dev/html-reporter`
+  package: `htmlReporter()` writes the run as one self-contained page,
+  `<output>/report.html`. The page is a React app (`app/`) that Vite builds
+  into one HTML file with everything inlined; the reporter embeds the
+  report-1 document in it and links artifacts from `results/` by relative
+  path, so it opens from `file://`. Its styles are a copy of the e2e-site
+  design system's tokens, with OFL fonts in place of Cassette, which the
+  site's license does not let us ship.
 - `packages/testmu` — the published `@e2e-dev/testmu` package: TestMu AI
   (formerly LambdaTest) hosted Android emulators, iOS simulators, and real
   devices for the mobile engine (`DeviceProvider`), through agent-device's
@@ -194,7 +232,7 @@ suites that consume the built packages the way a user would.
   benchmarks, not here.
 - `apps/web-benchmark` (`@e2e-dev/web-benchmark`, private) — a Next.js app of
   self-contained hard-surface scenarios (shadow DOM, canvas, iframes, native
-  dialogs, planted bugs) at `/e/<slug>`, copied from the tester-army web
+  dialogs, planted bugs) at `/e/<slug>`, copied from the e2e-inc web
   benchmark, plus the e2e suites written against them (`tests/` and
   `tests-agent/` both gate PRs; the agentic one runs from its committed
   recordings, see "Committed recordings" under Gotchas). Scenario files are
@@ -206,7 +244,7 @@ suites that consume the built packages the way a user would.
 - `apps/mobile-benchmark` (`@e2e-dev/mobile-benchmark`, private) — an Expo
   app of hard mobile surfaces (merged or hidden accessibility trees, native
   alerts over modals, keyboard-covered submits, virtualized lists, a WebView,
-  OS permission and payment sheets), copied from the tester-army mobile
+  OS permission and payment sheets), copied from the e2e-inc mobile
   benchmark, plus the e2e suites on the `@e2e-dev/mobile` engine
   (`tests/` locators only, `tests-agent/` one `agent.act` per scenario).
   Both suites run in CI on an iOS simulator and an Android emulator
@@ -247,9 +285,13 @@ suites that consume the built packages the way a user would.
   pages to `packages/e2e/docs/` (gitignored,
   `packages/e2e/scripts/prepare-build.ts`) so the published package ships
   them for agents to read offline.
+  e2e.com builds the docs from the newest `e2e@X.Y.Z` tag, not `main`: a docs
+  change goes live when the next e2e release publishes (`release.yml` calls
+  `site.yml`), and there is no docs versioning. The examples registry still
+  goes live from `main`.
 - `skills/e2e/` — the agent skill for consumers: `SKILL.md` plus
   `references/<topic>.md`, one per `e2e guide` topic. It lives at the repo
-  root because `npx skills add tester-army/e2e` only looks in well-known
+  root because `npx skills add e2e-inc/e2e` only looks in well-known
   directories. The `e2e` build copies it to `packages/e2e/skills/`
   (gitignored) so the published package ships it; `src/cli/skill.ts` reads
   that copy first and the repo source as the fallback, and `e2e init` writes
@@ -260,7 +302,7 @@ suites that consume the built packages the way a user would.
 - `skills/create-verification-skill/`: a generator skill for consumers;
   it writes a project-local `verify-<app>` skill and feature map on top of
   e2e, with the bug bash wired to the map. Installed with `npx skills add
-  tester-army/e2e --skill create-verification-skill`; not shipped in the
+  e2e-inc/e2e --skill create-verification-skill`; not shipped in the
   package and not read by `e2e guide`. `references/example/` is the skill
   it generated and ran for `apps/testbed`: regenerate it when a playground
   route, label, or test it names changes.
@@ -269,10 +311,10 @@ suites that consume the built packages the way a user would.
   suite running beside the new one, with a `MIGRATION.md` progress file the next
   session resumes from. It routes to `docs/migrate/<runner>.mdx` for the
   API mapping, so a mapping change edits the guide, not the skill. Installed
-  with `npx skills add tester-army/e2e --skill migrate-to-e2e`; not shipped
+  with `npx skills add e2e-inc/e2e --skill migrate-to-e2e`; not shipped
   in the package and not read by `e2e guide`.
 - `.dev/skills/` — the skills we use to work on this repo (`authoring-docs`,
-  `babysit`, `ship-pr`, `verify`, `writing-pr`). `npx skills add tester-army/e2e`
+  `babysit`, `ship-pr`, `verify`, `writing-pr`). `npx skills add e2e-inc/e2e`
   offers only `skills/*`: its default scan never looks in `.dev/`, and it skips
   `.claude/skills/<name>`, the relative symlink to each that agents load
   them through, because it does not follow symlinked directories. Its
@@ -282,18 +324,20 @@ suites that consume the built packages the way a user would.
   `core.symlinks=true` (CONTRIBUTING.md). The vendored third-party skills in `.claude/skills/` (`unbox-ai`,
   `unslop`, tracked by `skills-lock.json`) stay where they are: the CLI
   skips them as installed project skills.
-- `plugins/e2e/` — one skills-only package for Codex, Claude Code, and
-  Cursor; Grok Build reads the Claude files. The root
+- `plugins/e2e/` — one package of skills and the e2e MCP server
+  (`.mcp.json`, `npx -y e2e@<version> mcp`) for Codex, Claude Code, and Cursor; Grok
+  Build reads the Claude files. The root
   `.agents/plugins/marketplace.json`, `.claude-plugin/marketplace.json`, and
   `.cursor-plugin/marketplace.json` all point here. Edit skill Markdown in
   `skills/`, then run `pnpm plugins:sync`; `pnpm plugins:check` checks the
   generated copies, license, the Claude and Cursor manifests (generated from
-  Codex's), and every manifest's `version`, which is the
+  Codex's), every manifest's `version`, and the version `.mcp.json` pins, which is the
   runner's (`version-packages` syncs it, so plugin
   installs update once per release; it does the same for
-  `packages/e2e/server.json`, the MCP Registry entry). The Codex manifest's other fields,
-  assets, README, and per-skill `agents/openai.yaml` are maintained in the
-  plugin. Keep the
+  `packages/e2e/server.json`, the MCP Registry entry). The Codex manifest's other fields
+  (its `mcpServers` path reaches the Claude and Cursor manifests too; Cursor
+  discovers only `mcp.json` without it), assets, README, and
+  per-skill `agents/openai.yaml` are maintained in the plugin. Keep the
   package self-contained and leave the repository's development MCP
   configuration outside it. Example skills use `SKILL.example.md` so clients
   do not discover them as additional skills.
@@ -312,8 +356,8 @@ pnpm test:web-benchmark   # builds, then runs the real CLI against the benchmark
 Focused work:
 
 ```bash
-pnpm --filter e2e run build
-pnpm --filter e2e run test:unit                       # unit only, no build
+pnpm --filter @e2e-dev/core run build && pnpm --filter e2e run build
+pnpm --filter e2e run test:unit                       # unit only; needs @e2e-dev/core built
 pnpm --filter e2e exec vitest run tests/unit/scheduler.test.ts
 pnpm --filter e2e exec vitest run -t 'name fragment'
 pnpm --filter @e2e-dev/web run test
@@ -323,8 +367,9 @@ pnpm --filter @e2e-dev/testbed run test:headed
 - Package `test` scripts do **not** build. Root `build` and `test` order the
   packages explicitly rather than relying on topological sort, because `e2e`
   devDepends on the web engine for its browser-backed integration tests
-  while the engine peer-depends on `e2e` — pnpm reports that cycle on every
-  install.
+  while the engine peer-depends on `e2e` — pnpm reports that cycle
+  on every install. `@e2e-dev/core` builds first: `e2e` and every engine compile
+  against its `dist`.
 - `pnpm typecheck` runs `build` first, then per-package `typecheck`. The
   package `typecheck` covers `tests/**`, which is what makes
   `tests/types/sdk-types.ts` a test.
@@ -410,10 +455,10 @@ latency, and provider metadata. Recorder: `src/internal/ai-trace.ts` (an AI SDK
 `registerTelemetry` integration, attributed through an async-local scope set
 in `run/execute.ts` and `run/steps.ts`; workers drain on `unit-done`).
 
-Use [unbox-ai](https://github.com/tester-army/unbox-ai) to read it — never
+Use [unbox-ai](https://github.com/e2e-inc/unbox-ai) to read it — never
 `cat` or Read the file, it is megabytes of resent context. The skill in
 `.claude/skills/unbox-ai/SKILL.md` has the full workflow and recipes (other
-agents: `npx skills add tester-army/unbox-ai`). Start wide, then drill:
+agents: `npx skills add e2e-inc/unbox-ai`). Start wide, then drill:
 
 ```bash
 AI_GATEWAY_API_KEY=... pnpm --filter @e2e-dev/testbed test:agent -- --ai-trace --no-cache
@@ -652,7 +697,7 @@ trees, on both platforms, without a device.
   request restores. A new build input or benchmark dependency goes into
   `filters.yml` in the same change. Every workflow
   pins actions by SHA; keep new actions SHA-pinned. Every job runs on
-  Blacksmith, like the tester-army repos. Linux jobs use
+  Blacksmith, like the e2e-inc repos. Linux jobs use
   `blacksmith-4vcpu-ubuntu-2404` and macOS jobs `blacksmith-6vcpu-macos-26`;
   keep new jobs on those labels. The one exception is the `release` job:
   npm Trusted Publishing rejects OIDC tokens from self-hosted runners, and
@@ -668,7 +713,7 @@ trees, on both platforms, without a device.
   entry. On `0.x` the bump is `patch` for a feature or fix; never
   pick `minor` on your own. A breaking change is a `minor` with the summary
   opening `**Breaking:**`; a `minor` or `major` for a release the maintainer
-  calls opens `**Release:**` (`scripts/check-changeset-bumps.ts`, `pnpm check`). Peer ranges point one way only (engine -> `e2e`, integration ->
+  calls opens `**Release:**` (`scripts/check-changeset-bumps.ts`, `pnpm check`). Peer ranges point one way only (engine -> `@e2e-dev/core` and `e2e`, integration ->
   engine) and read `>=<major.minor.patch> <major+1>`, the floor the oldest
   sibling the package works with. Raise it when a package starts relying on a
   newer sibling's export or contract field;

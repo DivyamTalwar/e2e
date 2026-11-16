@@ -12,7 +12,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from 'agent-device';
 import { decodePng, encodePng } from '../helpers/png.ts';
-import type { EngineFixtureContext, EngineSnapshot, FixtureOperations, LocatorExpression, OperationContext, SemanticNode } from 'e2e/engine';
+import type { EngineFixtureContext, EngineSnapshot, FixtureOperations, LocatorExpression, OperationContext, SemanticNode } from '@e2e-dev/core/engine';
 import type { Device } from '../../src/device.ts';
 import type { RawNode } from '../../src/nodes.ts';
 import { mobile } from '../../src/engine.ts';
@@ -99,10 +99,19 @@ describe('manifest', () => {
     expect(pinned.state).toBeUndefined();
   });
 
+  it('default-exports the factory, which is what an MCP session that names the package calls', async () => {
+    const entry = await import('../../src/index.ts');
+    expect(entry.default).toBe(entry.mobile);
+  });
+
   it('rejects an option it does not know, naming the nearest', () => {
     expect(() => harness({ sesion: 'e2e-ios' } as never)).toThrow(
       expect.objectContaining({ code: 'INVALID_CONFIG', message: 'mobile() has unknown key "sesion"; did you mean "session"?' }),
     );
+    // What `e2e mcp` passes when an agent names the package alone, or leaves the platform out.
+    for (const options of [undefined, {}, { platform: 'tvos' }, { platform: 'iOS' }, { platform: 'Android' }]) {
+      expect(() => mobile(options as never)).toThrowError(expect.objectContaining({ code: 'INVALID_CONFIG', message: expect.stringContaining("mobile() needs platform: 'ios' or 'android'") }));
+    }
     expect(() => mobile({ platform: 'ios', app: 'x' } as never)).toThrowError(
       expect.objectContaining({ code: 'INVALID_CONFIG', message: expect.stringMatching(/^mobile\(\) has unknown key "app"/) }),
     );
@@ -151,7 +160,7 @@ describe('lifecycle', () => {
     await openAttempt(h);
     expect(h.sessions).toEqual(['e2e-ios-simulator-0']);
     expect(h.fake.methods()).toEqual(['devices.boot', 'apps.open']);
-    expect(h.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios' });
+    expect(h.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios', pick: 'newest' });
     expect(h.fake.lastArgs('apps.open')).toEqual({ app: 'Settings', platform: 'ios', relaunch: true });
 
     await h.engine.endAttempt!(cleanup());
@@ -329,6 +338,8 @@ describe('lifecycle', () => {
       { platform: 'ios', id: '2BBF3F07-AF66-4F95-82AB-BF442506FC89', name: 'iPhone 16e', booted: true },
       { platform: 'ios', id: '8A2DC8D6-7B20-44FA-ADBB-47D3EAE6E8F3', name: 'iPhone 17', booted: true },
       { platform: 'ios', id: 'CAB49ABB-4A25-48B3-99C9-949153F95902', name: 'iPhone 17 Pro Max', booted: false },
+      // A paired phone whose CoreDevice tunnel is unavailable, as agent-device 0.21.37 lists it (#1528).
+      { platform: 'ios', id: '00008110-001A2B3C4D5E6F70', name: 'iPhone 15', kind: 'device', booted: false },
     ];
     const h = harness({ device: undefined });
     h.fake.respond('devices.list', () => inventory);
@@ -347,7 +358,7 @@ describe('lifecycle', () => {
     });
     expect(result).toMatchObject({ workers: 2 });
     expect(h.fake.lastArgs('devices.list')).toEqual({ platform: 'ios' });
-    // Both booted iPhones, by UDID, under slot sessions; the Android device and the shut-down iPhone are not the pool's.
+    // Both booted iPhones, by UDID, under slot sessions; the Android device, the shut-down iPhone, and the unreachable phone are not the pool's.
     expect(h.fake.calls.filter((call) => call.method === 'devices.boot').map((call) => call.args)).toEqual([
       { platform: 'ios', udid: '2BBF3F07-AF66-4F95-82AB-BF442506FC89' },
       { platform: 'ios', udid: '8A2DC8D6-7B20-44FA-ADBB-47D3EAE6E8F3' },
@@ -372,7 +383,7 @@ describe('lifecycle', () => {
     expect(worker.sessions).toEqual(['e2e-ios-1']);
   });
 
-  it('with fewer slots than booted devices drives only that many; with none booted, one slot boots what agent-device picks', async () => {
+  it('with fewer slots than booted devices drives only that many; with none booted, one slot boots a shut-down device agent-device picks', async () => {
     const h = harness({ device: undefined });
     h.fake.respond('devices.list', () => [
       { platform: 'ios', id: 'A', name: 'A', booted: true },
@@ -401,9 +412,10 @@ describe('lifecycle', () => {
     const coldEnv: NodeJS.ProcessEnv = {};
     const coldResult = await cold.prepare({ ...info, env: coldEnv });
     expect(coldResult).toMatchObject({ workers: 1 });
-    expect(cold.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios' });
+    // Several shut-down simulators tie on a stock Xcode install; `pick` breaks the tie instead of failing with AMBIGUOUS_MATCH.
+    expect(cold.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios', pick: 'newest' });
     const coldHanded = coldResult?.env ?? {};
-    // One slot bound to no device in particular: the daemon picks.
+    // One slot bound to no device in particular: agent-device picks.
     expect(coldHanded[poolVariableIn(coldHanded, 'IOS')]).toBe(JSON.stringify([{}]));
     expect(coldEnv).toEqual({});
   });
@@ -498,7 +510,7 @@ describe('lifecycle', () => {
     const step: OperationContext = { ...operation(), origin: 'test' };
     const slowScreen = await screenRootOf(slow);
     await slow.engine.perform!(slowScreen.ref, { kind: 'swipe', direction: 'up', momentum: 'slow' }, step);
-    expect(slow.fake.lastArgs('interactions.scroll')).toEqual({ direction: 'up' });
+    expect(slow.fake.lastArgs('interactions.scroll')).toEqual({ direction: 'up', postGestureStabilization: false });
 
     expect(() => harness({ settle: -1 })).toThrow(/non-negative integer/);
     expect(() => harness({ settle: 1.5 })).toThrow(/non-negative integer/);
@@ -509,6 +521,23 @@ describe('lifecycle', () => {
   it('rejects a blank device name at config time', () => {
     expect(() => harness({ device: '' })).toThrow(/must not be blank/);
     expect(() => harness({ device: ['iPhone 17', ' '] })).toThrow(/must not be blank/);
+  });
+
+  it('refuses a snapshot or videoTouches value it would read as the default, and keeps the valid ones', () => {
+    for (const [snapshot, shown] of [['Interactive', '"Interactive"'], ['interactiv', '"interactiv"'], ['none', '"none"'], [true, 'true']] as const) {
+      expect(() => harness({ snapshot } as never)).toThrowError(
+        expect.objectContaining({ code: 'INVALID_CONFIG', message: `mobile: \`snapshot\` must be 'full' or 'interactive', got ${shown}` }),
+      );
+    }
+    for (const [videoTouches, shown] of [['false', '"false"'], [0, '0'], [1, '1'], [null, 'null']] as const) {
+      expect(() => harness({ videoTouches } as never)).toThrowError(
+        expect.objectContaining({ code: 'INVALID_CONFIG', message: `mobile: \`videoTouches\` must be true or false, got ${shown}` }),
+      );
+    }
+    for (const options of [{ snapshot: 'full' }, { snapshot: 'interactive' }, { snapshot: undefined }, { videoTouches: true }, { videoTouches: false }, { videoTouches: undefined }] as const) {
+      expect(() => harness(options)).not.toThrow();
+    }
+    expect(() => harness({ snapshot: 'Full' } as never)).toThrow('got "Full"');
   });
 
   it('rejects an empty pool at config time', () => {
@@ -539,7 +568,7 @@ describe('lifecycle', () => {
     await openAttempt(h);
     expect(h.sessions).toEqual(['e2e-ios-simulator-0']);
     expect(h.fake.methods()).toEqual(['devices.boot']);
-    expect(h.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios' });
+    expect(h.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios', pick: 'newest' });
   });
 
   it('installs nothing on its own; device.installApp() with no path installs the engine build and pins what it installed', async () => {
@@ -1333,6 +1362,9 @@ describe('perform', () => {
       ['interactions.scroll', { direction: 'up', settle: true, settleQuietMs: 150 }],
       ['interactions.drag', { source: '@e4', destination: '@e3' }],
     ]);
+    const presses = h.fake.calls.filter((call) => call.method === 'interactions.press');
+    expect(presses).not.toHaveLength(0);
+    expect(presses.every((call) => call.signal instanceof AbortSignal)).toBe(true);
   });
 
   it.each(['Enter', 'a'])('sends %s to a focused field without tapping it first', async (key) => {
@@ -1683,6 +1715,49 @@ describe('device fixture', () => {
       h.fake.respond('capture.snapshot', () => snapshots[Math.min(taken++, snapshots.length - 1)]);
     };
 
+    it('reports a field under the measured keyboard as hidden, and the same field as visible once the keyboard is gone', async () => {
+      const h = harness();
+      await openAttempt(h);
+      const below = [...FORM_NODES, { ref: '@e5', index: 4, parentIndex: 1, depth: 2, type: 'text-field', label: 'Brand', rect: { x: 20, y: 650, width: 350, height: 44 } }];
+      const brand = { kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'textbox', exact: true }, name: { kind: 'string', value: 'Brand', exact: true } } } as const;
+      const brandByText = { kind: 'query', query: { kind: 'text', value: { kind: 'string', value: 'Brand', exact: true } } } as const;
+      h.fake.respond('capture.snapshot', () => ({ ...KEYBOARD_UP, nodes: below }));
+      // A role query never matches a hidden node; a text query still finds it, hidden.
+      expect(await h.engine.locate!(brand, operation())).toEqual([]);
+      expect((await h.engine.locate!(brandByText, operation()))[0]?.states).toEqual({ hidden: true });
+      h.fake.respond('capture.snapshot', () => ({ ...KEYBOARD_GONE, nodes: below }));
+      expect((await h.engine.locate!(brand, operation()))[0]?.states).toBeUndefined();
+    });
+
+    it('reads the keyboard band off the keyboard element when the capture measured no frame, and not once the producer saw it gone', async () => {
+      const h = harness();
+      await openAttempt(h);
+      const keyboard = { ref: '@e9', index: 8, parentIndex: 0, depth: 1, type: 'Keyboard', rect: { x: 0, y: 600, width: 390, height: 216 } };
+      const below = [...FORM_NODES, { ref: '@e5', index: 4, parentIndex: 1, depth: 2, type: 'text-field', label: 'Brand', rect: { x: 20, y: 820, width: 350, height: 20 } }, keyboard];
+      const brand = { kind: 'query', query: { kind: 'text', value: { kind: 'string', value: 'Brand', exact: true } } } as const;
+      // Brand's centre is under the dock below the keys, which the band reaches down to the bottom of the screen.
+      h.fake.respond('capture.snapshot', () => ({ ...SETTINGS_SNAPSHOT, viewport: { width: 390, height: 844 }, nodes: below }));
+      expect((await h.engine.locate!(brand, operation()))[0]?.states).toEqual({ hidden: true });
+      h.fake.respond('capture.snapshot', () => ({ ...KEYBOARD_GONE, viewport: { width: 390, height: 844 }, nodes: below }));
+      expect((await h.engine.locate!(brand, operation()))[0]?.states).toBeUndefined();
+    });
+
+    it('counts the suggestion strip XCTest lists beside the keyboard as the keyboard, and keeps its own buttons', async () => {
+      const h = harness();
+      await openAttempt(h);
+      const nodes = [
+        ...FORM_NODES,
+        { ref: '@e5', index: 4, parentIndex: 1, depth: 2, type: 'text-field', label: 'Phone', rect: { x: 20, y: 560, width: 350, height: 30 } },
+        { ref: '@e6', index: 5, parentIndex: 0, depth: 1, type: 'other', identifier: 'SystemInputAssistantView', rect: { x: 0, y: 546, width: 390, height: 44 } },
+        { ref: '@e7', index: 6, parentIndex: 5, depth: 2, type: 'button', label: 'Suggestion', rect: { x: 0, y: 546, width: 130, height: 44 } },
+        { ref: '@e8', index: 7, parentIndex: 0, depth: 1, type: 'Keyboard', rect: { x: 0, y: 590, width: 390, height: 216 } },
+      ];
+      const byText = (value: string) => ({ kind: 'query', query: { kind: 'text', value: { kind: 'string', value, exact: true } } }) as const;
+      h.fake.respond('capture.snapshot', () => ({ ...SETTINGS_SNAPSHOT, viewport: { width: 390, height: 844 }, nodes }));
+      expect((await h.engine.locate!(byText('Phone'), operation()))[0]?.states).toEqual({ hidden: true });
+      expect((await h.engine.locate!(byText('Suggestion'), operation()))[0]?.states).toBeUndefined();
+    });
+
     it('drags from the point nearest the centre that no control covers, and stops once the keyboard is gone', async () => {
       const h = harness();
       await openAttempt(h);
@@ -1912,6 +1987,9 @@ describe('device fixture', () => {
       await device.dismissKeyboard();
       expect(h.fake.methods().slice(before)).toEqual(['command.keyboard', 'capture.snapshot', 'interactions.press', 'capture.snapshot']);
       expect(h.fake.lastArgs('interactions.press')).toEqual({ x: 195, y: 722 });
+      const presses = h.fake.calls.filter((call) => call.method === 'interactions.press');
+      expect(presses).not.toHaveLength(0);
+      expect(presses.every((call) => call.signal instanceof AbortSignal)).toBe(true);
     });
 
     it('leaves any other refusal to the caller', async () => {
@@ -1941,7 +2019,7 @@ describe('device fixture', () => {
     await h.engine.perform!(screen.ref, { kind: 'swipe', direction: 'down' }, { ...operation(), origin: 'test' });
 
     expect(Date.now() - dismissedAt).toBe(120);
-    expect(h.fake.lastArgs('interactions.scroll')).toEqual({ direction: 'down' });
+    expect(h.fake.lastArgs('interactions.scroll')).toEqual({ direction: 'down', postGestureStabilization: false });
   });
 
   it('counts a back, home, alert, keyboard, rotation, or fold as an action, so a control that arrives with it waits out the transition budget', async () => {
@@ -2439,10 +2517,11 @@ describe('device fixture', () => {
 
   it('labels openApp and openLink steps without the link query and setClipboard by length, so a token never enters the report', () => {
     fixture(harness());
-    expect(declared?.openApp?.label?.('https://app.example.com/magic?token=s3cret#frag')).toBe('https://app.example.com/magic');
+    expect(declared?.openApp?.label?.('https://user:pw@app.example.com/magic?token=s3cret#frag')).toBe('<link>');
     expect(declared?.openApp?.label?.('com.apple.Preferences')).toBe('com.apple.Preferences');
     expect(declared?.openLink?.label?.('myapp://orders/42?ref=mail')).toBe('myapp://orders/42');
-    expect(declared?.openLink?.label?.('verify?token=s3cret')).toBe('verify');
+    expect(declared?.openLink?.label?.('https://user:pw@app.example.com/magic?token=s3cret#frag')).toBe('https://app.example.com/magic');
+    expect(declared?.openLink?.label?.('verify?token=s3cret')).toBe('<link>');
     // Clipboard text is often a code or token the test copied, never a configured secret the ledger would redact.
     expect(declared?.setClipboard?.label?.('482913')).toBe('6 chars');
   });
@@ -3344,7 +3423,7 @@ describe('deterministic actions', () => {
     const search = await observed(h, 'Search');
     if (action === 'Enter') await h.engine.perform!(search.ref, { kind: 'press', key: 'Enter' }, test());
     else if (action === 'focused Enter') await h.engine.keyboard!.press('Enter', test());
-    else await h.surface.dismissKeyboard(test().signal, h.surface.inputBudget('keyboard dismiss', test().timeoutMs));
+    else await h.surface.dismissKeyboard(test().signal, h.surface.inputBudget('keyboard dismiss', test()));
     h.fake.respond('capture.snapshot', () => ({ ...SETTINGS_SNAPSHOT, keyboard: { kind: 'absent' } }));
     const stale = await observed(h, 'About');
     h.fake.respond('capture.snapshot', () => ({
@@ -3424,7 +3503,7 @@ describe('deterministic actions', () => {
     await h.engine.performAt!({ x: 10, y: 20 }, { kind: 'longPress' }, test());
     expect(h.fake.lastArgs('interactions.longPress')).toEqual({ x: 10, y: 20, durationMs: 1000 });
     await h.engine.performAt!({ x: 10, y: 20 }, { kind: 'swipeTo', target: { x: 10, y: 300 } }, test());
-    expect(h.fake.lastArgs('interactions.swipe')).toEqual({ from: { x: 10, y: 20 }, to: { x: 10, y: 300 } });
+    expect(h.fake.lastArgs('interactions.swipe')).toEqual({ from: { x: 10, y: 20 }, to: { x: 10, y: 300 }, postGestureStabilization: false });
     await h.engine.performAt!({ x: 10, y: 20 }, { kind: 'swipeTo', target: { x: 10, y: 300 }, durationMs: 400 }, test());
     expect(h.fake.lastArgs('interactions.pan')).toEqual({ x: 10, y: 20, dx: 0, dy: 280, durationMs: 400 });
     expect(h.engine.pointerActions).toEqual(['tap', 'doubleTap', 'longPress', 'swipeTo']);
@@ -3432,6 +3511,131 @@ describe('deterministic actions', () => {
     const about = await observed(h, 'About');
     await h.engine.perform!(about.ref, { kind: 'tap' }, { ...operation(), origin: 'agent' });
     expect(h.fake.lastArgs('interactions.press')).toEqual({ ref: '@e4', settle: true, settleQuietMs: 150 });
+    const presses = h.fake.calls.filter((call) => call.method === 'interactions.press');
+    expect(presses).not.toHaveLength(0);
+    expect(presses.every((call) => call.signal instanceof AbortSignal)).toBe(true);
+  });
+
+  it('skips the post-gesture stabilization wait for a test swipe and scroll, and keeps it for the agent', async () => {
+    const h = harness({ settle: false });
+    await openAttempt(h);
+    await sleep(0);
+    const root = await screenRootOf(h);
+    const scroller = await observed(h, 'Scroller');
+    const step = test();
+    const agent: OperationContext = { ...operation(), origin: 'agent' };
+
+    await h.engine.perform!(root.ref, { kind: 'swipe', direction: 'down' }, step);
+    expect(h.fake.lastArgs('interactions.scroll')).toEqual({ direction: 'down', postGestureStabilization: false });
+    await h.engine.perform!(scroller.ref, { kind: 'swipe', direction: 'down' }, step);
+    expect(h.fake.lastArgs('interactions.swipe')).toEqual({
+      from: expect.any(Object),
+      to: expect.any(Object),
+      postGestureStabilization: false,
+    });
+
+    await h.engine.perform!(root.ref, { kind: 'swipe', direction: 'down' }, agent);
+    expect(h.fake.lastArgs('interactions.scroll')).toEqual({ direction: 'down' });
+    await h.engine.perform!(scroller.ref, { kind: 'swipe', direction: 'down' }, agent);
+    expect(h.fake.lastArgs('interactions.swipe')).toEqual({ from: expect.any(Object), to: expect.any(Object) });
+  });
+
+  it('re-reads a control until it rests before a test acts on it after a gesture that skipped the stabilization wait', async () => {
+    autoAdvanceTimers();
+    const h = harness({ settle: false, transition: 0 });
+    await openAttempt(h);
+    await sleep(0);
+    const root = await screenRootOf(h);
+    const about = await observed(h, 'About');
+    let reads = 0;
+    h.fake.respond('capture.snapshot', () => {
+      reads += 1;
+      const y = reads === 1 ? 150 : 180;
+      return { ...SETTINGS_SNAPSHOT, nodes: SETTINGS_NODES.map((node) => (node.ref === '@e4' ? { ...node, rect: { ...node.rect!, y } } : node)) };
+    });
+
+    await h.engine.perform!(root.ref, { kind: 'swipe', direction: 'down' }, test());
+    await h.engine.perform!(about.ref, { kind: 'tap' }, test());
+    // Two reads while the control still moved, one more to see it rest.
+    expect(reads).toBe(3);
+    expect(h.fake.methods().slice(-2)).toEqual(['capture.snapshot', 'interactions.press']);
+
+    reads = 10;
+    await h.engine.perform!(about.ref, { kind: 'tap' }, test());
+    expect(reads).toBe(10);
+  });
+
+  it('keeps the input checks on every re-read, so a field that turned disabled after a gesture is never filled', async () => {
+    autoAdvanceTimers();
+    const h = harness({ settle: false, transition: 0 });
+    await openAttempt(h);
+    await sleep(0);
+    const root = await screenRootOf(h);
+    const search = await observed(h, 'Search');
+    let reads = 0;
+    h.fake.respond('capture.snapshot', () => {
+      reads += 1;
+      const field = reads === 1 ? {} : { enabled: false };
+      return { ...SETTINGS_SNAPSHOT, nodes: SETTINGS_NODES.map((node) => (node.ref === '@e7' ? { ...node, ...field, rect: { ...node.rect!, y: 220 + reads * 10 } } : node)) };
+    });
+
+    await h.engine.perform!(root.ref, { kind: 'swipe', direction: 'down' }, test());
+    await expect(h.engine.perform!(search.ref, { kind: 'fill', value: 'blue', sensitive: false }, test())).rejects.toMatchObject({
+      code: 'NODE_STALE',
+      retryable: true,
+    });
+    expect(h.fake.methods()).not.toContain('interactions.fill');
+  });
+
+  it('stops re-reading a moving control once the action budget cannot fit another poll, and sends nothing', async () => {
+    autoAdvanceTimers();
+    const h = harness({ settle: false, transition: 0 });
+    await openAttempt(h);
+    await sleep(0);
+    const root = await screenRootOf(h);
+    const about = await observed(h, 'About');
+    let reads = 0;
+    h.fake.respond('capture.snapshot', () => {
+      reads += 1;
+      return { ...SETTINGS_SNAPSHOT, nodes: SETTINGS_NODES.map((node) => (node.ref === '@e4' ? { ...node, rect: { ...node.rect!, y: 120 + reads * 10 } } : node)) };
+    });
+
+    await h.engine.perform!(root.ref, { kind: 'swipe', direction: 'down' }, test());
+    await expect(h.engine.perform!(about.ref, { kind: 'tap' }, { ...test(), timeoutMs: 150 })).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+    expect(h.fake.methods()).not.toContain('interactions.press');
+  });
+
+  it('re-reads a control before a node swipe too, so the swipe starts from where the control rests', async () => {
+    autoAdvanceTimers();
+    const h = harness({ settle: false, transition: 0 });
+    await openAttempt(h);
+    await sleep(0);
+    const root = await screenRootOf(h);
+    const scroller = await observed(h, 'Scroller');
+    let reads = 0;
+    h.fake.respond('capture.snapshot', () => {
+      reads += 1;
+      return { ...SETTINGS_SNAPSHOT, nodes: SETTINGS_NODES.map((node) => (node.ref === '@e10' ? { ...node, rect: { ...node.rect!, y: 350 } } : node)) };
+    });
+
+    await h.engine.perform!(root.ref, { kind: 'swipe', direction: 'down' }, test());
+    await h.engine.perform!(scroller.ref, { kind: 'swipe', direction: 'down' }, test());
+    // The control moved from y 320 to 350 after the gesture, then rested.
+    expect(reads).toBe(2);
+    expect(h.fake.lastArgs('interactions.swipe')).toMatchObject({ from: { y: expect.any(Number) } });
+  });
+
+  it('does not re-read a control after a gesture when the agent made it', async () => {
+    const h = harness({ settle: false, transition: 0 });
+    await openAttempt(h);
+    await sleep(0);
+    const root = await screenRootOf(h);
+    const about = await observed(h, 'About');
+    const agent: OperationContext = { ...operation(), origin: 'agent' };
+    const before = h.fake.methods().filter((m) => m === 'capture.snapshot').length;
+    await h.engine.perform!(root.ref, { kind: 'swipe', direction: 'down' }, agent);
+    await h.engine.perform!(about.ref, { kind: 'tap' }, agent);
+    expect(h.fake.methods().filter((m) => m === 'capture.snapshot')).toHaveLength(before);
   });
 
   it('does not dispatch an action whose transition wait was cancelled', async () => {

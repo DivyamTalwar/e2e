@@ -18,10 +18,10 @@
  * command prints a prefilled issue link and sends nothing.
  */
 
-import { uuidv7, timestamp } from '../internal/ids.ts';
-import { createRedactor } from '../internal/redact.ts';
+import { uuidv7, timestamp } from '@e2e-dev/core/lib/internal/ids';
+import { createRedactor } from '@e2e-dev/core/lib/internal/redact';
 import { latestRelease, olderThan } from '../internal/release.ts';
-import { MIN_SECRET_LENGTH, secretLength } from '../config/secrets.ts';
+import { MIN_SECRET_LENGTH, secretLength } from '@e2e-dev/core/lib/config/secrets';
 import { collectEnvironment, type TelemetryEnvironment } from '../telemetry/environment.ts';
 import { postBatch, type PostHogEvent } from '../telemetry/posthog.ts';
 import type { Telemetry, TelemetryDisabledBy } from '../telemetry/telemetry.ts';
@@ -68,7 +68,7 @@ export interface FeedbackOptions {
 const EVENT = 'e2e_feedback';
 /** A person waits on this request, so it gets longer than the telemetry flush, but never hangs. */
 const SEND_TIMEOUT_MS = 10_000;
-const ISSUES_URL = 'https://github.com/tester-army/e2e/issues';
+const ISSUES_URL = 'https://github.com/e2e-inc/e2e/issues';
 const NEW_BUG_URL = `${ISSUES_URL}/new`;
 /** The registry check never holds the report up for long; a slow or failed one is skipped. */
 const LATEST_TIMEOUT_MS = 3000;

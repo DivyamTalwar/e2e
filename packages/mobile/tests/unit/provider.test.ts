@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { OperationContext, ProviderRecordContext, ProviderRecording, ProviderRecordingResult, ProviderRecordingStopContext } from 'e2e/engine';
+import type { OperationContext, ProviderRecordContext, ProviderRecording, ProviderRecordingResult, ProviderRecordingStopContext } from '@e2e-dev/core/engine';
 import type { DeviceLease, DeviceProvider, DeviceRequest } from '../../src/provider.ts';
 import { boot, harness, poolVariableIn, PROJECT_ROOT, type Harness } from '../helpers/harness.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
@@ -456,10 +456,10 @@ describe('device provider', () => {
     const h = harness({ device: cloud.impl });
     await boot(h, 'ios', 0);
     expect(h.connections).toEqual([undefined]);
-    expect(h.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios' });
+    expect(h.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios', pick: 'newest' });
     await h.engine.dispose!({ signal: new AbortController().signal, timeoutMs: 5_000 });
     expect(h.fake.calls).toEqual([
-      { method: 'devices.boot', args: { platform: 'ios' } },
+      { method: 'devices.boot', args: { platform: 'ios', pick: 'newest' } },
       { method: 'sessions.close', args: undefined },
     ]);
     await h.engine.finish!(finishInfo());

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { assignPorts, resolveConfig, type PortAssignments } from '../../src/config/resolve.ts';
-import { defineEngine } from '../../src/engine/index.ts';
-import type { TargetApp } from '../../src/types.ts';
+import { engineAppInfo } from '@e2e-dev/core/lib/config/app';
+import { assignPorts, type PortAssignments } from '@e2e-dev/core/lib/config/resolve';
+import { resolveConfig } from '../../src/config/resolve-run.ts';
+import { defineEngine } from '@e2e-dev/core/lib/engine/index';
+import type { TargetApp } from '@e2e-dev/core/lib/types';
 import { allocateAppPorts, allocateTargetPorts } from '../../src/run/app-ports.ts';
 import { snapshot } from '../helpers/snapshot.ts';
 
@@ -49,6 +51,9 @@ describe('an app URL on a free port', () => {
     expect(app.base).toEqual({ href: 'http://127.0.0.1:4321/shop/', origin: 'http://127.0.0.1:4321', basePath: '/shop/' });
     expect(app.portRequest).toEqual({ host: '127.0.0.1', port: 4321 });
     expect(app.readyUrl).toBe('http://127.0.0.1:4321/shop/');
+    // Engines scope injected credentials to the origin on the assigned port, never the declared :0.
+    expect(engineAppInfo(app).origin).toBe('http://127.0.0.1:4321');
+    expect(engineAppInfo(pending.targets[0]!.app).origin).toBeUndefined();
     expect(app.identity).toBe(pending.targets[0]!.app.identity);
     expect(app.identity).toBe('http://127.0.0.1:0/shop/');
     expect(assigned.configDigest).toBe(pending.configDigest);

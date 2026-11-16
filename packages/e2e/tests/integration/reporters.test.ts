@@ -14,8 +14,8 @@ import { createProject, runExisting, type FixtureProject } from '../helpers/run-
 import type { FinishedRun, Reporter, RunEvent } from '../../src/index.ts';
 
 // The built runner's flag. It stays set for the rest of the process, so only the first reporter given up on can show it.
-const abandonedModule = new URL('../../dist/internal/abandoned.js', import.meta.url).href;
-const { leftWorkBehind } = (await import(abandonedModule)) as typeof import('../../src/internal/abandoned.ts');
+const abandonedModule = '@e2e-dev/core/lib/internal/abandoned';
+const { leftWorkBehind } = (await import(abandonedModule)) as typeof import('@e2e-dev/core/lib/internal/abandoned');
 
 const SUITE = `import { test, expect } from 'e2e';
 
@@ -87,6 +87,25 @@ describe('reporter objects', () => {
       expect(artifact.path).toBeDefined();
       expect(existsSync(path.join(run.artifactsRoot, artifact.path!))).toBe(true);
     }
+  }, 120_000);
+
+  it('redacts the configured secrets, and fragments of them, in text a reporter brings from elsewhere', async () => {
+    const token = 'reporter-redact-token-42';
+    let redacted: string | undefined;
+    const outcome = await runExisting(project, {
+      config: {
+        ...engineConfig(createFakeEngine().engine),
+        tests: 'tests/**/*.e2e.ts',
+        secrets: { apiToken: token },
+        reporters: [{ name: 'reading', onRunFinished: async (run) => void (redacted = run.redact(`fill('${token}') then '${token.slice(3, 15)}'`)) }],
+        cache: 'off' as const,
+      },
+    });
+
+    expect(outcome.exitCode).toBe(0);
+    expect(redacted).toBeDefined();
+    expect(redacted).not.toContain(token.slice(3, 15));
+    expect(redacted).toContain('apiToken');
   }, 120_000);
 
   it('never calls a reporter when the run was forced to stop before reporting, so it leaves no work behind', async () => {

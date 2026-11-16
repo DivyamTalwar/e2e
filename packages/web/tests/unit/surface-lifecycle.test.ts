@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Browser, Dialog, Route } from 'playwright-core';
 import { secrets } from 'e2e';
-import type { EngineFixtureContext, OperationContext } from 'e2e/engine';
+import type { EngineFixtureContext, OperationContext } from '@e2e-dev/core/engine';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { PlaywrightSurface } from '../../src/surface.ts';
 import { createBrowserFixture } from '../../src/browser.ts';
@@ -33,6 +33,9 @@ beforeEach(async () => {
   press = vi.fn(async (_key: string) => undefined);
   type = vi.fn(async (_text: string) => undefined);
   const page = {
+    // The tab listeners the session installs on every page it shows.
+    on: () => undefined,
+    once: () => undefined,
     isClosed: () => false,
     close: async () => undefined,
     goto: async () => undefined,
@@ -156,9 +159,18 @@ it('rejects a focus read from a context replaced before typing dispatches', asyn
   expect(type).not.toHaveBeenCalled();
 });
 
+it('refuses headers or basicAuth from a runner that passes no app origin', async () => {
+  for (const options of [{ headers: { 'x-gate': 'on' } }, { basicAuth: { username: 'ada', password: 'pw' } }]) {
+    const unscoped = new PlaywrightSurface(options);
+    await expect(
+      unscoped.init({ runId: 'run', targetName: 'web', projectRoot: process.cwd(), app: {}, env: {}, headed: false, workerSlot: 0, signal: new AbortController().signal, log: () => undefined }),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIG' });
+  }
+});
+
 it('opens no session for an attempt the runner gave up on while its basic-auth password resolved', async () => {
   const protectedSurface = new PlaywrightSurface({ basicAuth: { username: 'ada', password: secrets.get('stagingPassword') } });
-  await protectedSurface.init({ runId: 'run', targetName: 'web', projectRoot: process.cwd(), app: {}, env: {}, headed: false, workerSlot: 0, signal: new AbortController().signal, log: () => undefined });
+  await protectedSurface.init({ runId: 'run', targetName: 'web', projectRoot: process.cwd(), app: { origin: 'http://127.0.0.1:3000' }, env: {}, headed: false, workerSlot: 0, signal: new AbortController().signal, log: () => undefined });
   try {
     let resolvePassword!: (value: string) => void;
     const slow = new Promise<string>((resolve) => { resolvePassword = resolve; });
@@ -170,7 +182,7 @@ it('opens no session for an attempt the runner gave up on while its basic-auth p
     resolvePassword('late-password');
     await new Promise<void>((resolve) => setImmediate(resolve));
     await protectedSurface.startAttempt({ attemptId: 'next', artifactsDir, signal: new AbortController().signal, resolveSecret: async () => 'next-password', ...ignoreTrace });
-    expect(vi.mocked(browser.newContext).mock.lastCall?.[0]).toMatchObject({ httpCredentials: { username: 'ada', password: 'next-password' } });
+    expect(vi.mocked(browser.newContext).mock.lastCall?.[0]).toMatchObject({ httpCredentials: [{ username: 'ada', password: 'next-password', origin: 'http://127.0.0.1:3000' }] });
   } finally {
     await protectedSurface.dispose(cleanup());
   }

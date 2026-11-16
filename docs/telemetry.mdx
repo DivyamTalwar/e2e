@@ -179,7 +179,7 @@ On `e2e explore` and `explore()` only, counts of what the exploration was given 
 
 | Property | Value |
 | --- | --- |
-| `explore_ended` | Why it stopped: `finished`, `step-limit`, `time`, `stuck`, or `aborted` |
+| `explore_ended` | Why it stopped: `finished`, `skipped`, `step-limit`, `time`, `stuck`, or `aborted` |
 | `explore_max_steps`, `explore_timeout_ms` | The budgets it ran with |
 | `explore_steps`, `explore_steps_passed`, `explore_steps_failed`, `explore_steps_blocked`, `explore_steps_exhausted` | Exploration steps, by how each ended |
 | `explore_assessed` | Whether the agent gave a closing assessment |
@@ -237,7 +237,7 @@ maintainers operate. PostHog keeps no person profile, stores no request
 address, and skips GeoIP for each event. The data is read in aggregate.
 
 Telemetry falls under the
-[security policy](https://github.com/tester-army/e2e/blob/main/SECURITY.md).
+[security policy](https://github.com/e2e-inc/e2e/blob/main/SECURITY.md).
 [Outbound connections](/reference/security#outbound-connections) lists every
 other connection a run can make.
 

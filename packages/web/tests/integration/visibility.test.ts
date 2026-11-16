@@ -10,7 +10,7 @@
 
 import { chromium, type Browser, type Page } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { SemanticNode } from 'e2e/engine';
+import type { SemanticNode } from '@e2e-dev/core/engine';
 import { captureDocument } from '../../src/observation.ts';
 import { readSemanticsFunction } from '../../src/in-page/read-semantics.ts';
 import { SECURE_FIELD_SELECTOR } from '../../src/read-node.ts';
@@ -59,6 +59,7 @@ const PAGE = `
   <div id="skipping" style="content-visibility:hidden;width:50px;height:50px"><button id="skipped">Skipped</button></div>
   <skip-host id="skipping-host" style="content-visibility:hidden;display:block;width:50px;height:50px"><button id="skipped-slotted">Slotted</button></skip-host>
   <div id="vis-parent" style="visibility:hidden"><button id="vis-child" style="visibility:visible">Shown child</button></div>
+  <label><input id="shrunk-checkbox" type="checkbox" style="opacity:0;width:0;height:0;margin:0;position:absolute">Agree</label>
   <script>
     customElements.define('skip-host', class extends HTMLElement {
       connectedCallback() { this.attachShadow({ mode: 'open' }).innerHTML = '<div><slot></slot></div>'; }
@@ -96,6 +97,7 @@ describe('visibility agrees with Playwright', () => {
     ['a button slotted under a content-visibility: hidden host', '#skipped-slotted', true],
     ['a visibility: hidden parent', '#vis-parent', true],
     ['a child that sets visibility: visible under a hidden parent', '#vis-child', false],
+    ['a checkbox its label draws over no box, which the observation still lists', '#shrunk-checkbox', true],
   ])('%s', async (_case, selector, hidden) => {
     expect(await hiddenOf(selector)).toEqual({ reader: hidden, playwright: hidden });
   });

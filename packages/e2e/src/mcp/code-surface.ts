@@ -10,7 +10,7 @@
  * members.
  */
 
-import type { App, AsyncExpectation, Locator, Screen } from '../types.ts';
+import type { App, AsyncExpectation, Locator, Screen } from '@e2e-dev/core/lib/types';
 
 /** Something a statement can call members on. */
 export type Receiver = 'screen' | 'locator' | 'app' | 'locator-expectation';
@@ -63,6 +63,7 @@ const QUERIES = {
 
 const SCREEN_ACTIONS = {
   tapAt: action(1, 2),
+  doubleTapAt: action(1, 2),
   swipe: action(1, 1),
   scrollUntilVisible: action(1, 2),
 } as const satisfies { readonly [K in keyof Screen]?: Member };

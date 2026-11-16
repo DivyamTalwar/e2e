@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -6,9 +6,11 @@ import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { assertValidReport } from '../helpers/report-schema.ts';
 import {
   resultByTitle,
+  runExistingWithConfigFile,
   runProjectWithConfigFile,
   workerConfigSource,
   workerFakeConfigSource,
+  type RunOutcome,
 } from '../helpers/run-project.ts';
 
 describe('parallel worker execution', () => {
@@ -174,6 +176,71 @@ test('parallel neighbor', async ({ app }) => {
       const groups = run['serialGroups'] as Record<string, unknown>[];
       expect(groups).toHaveLength(1);
       expect(groups[0]!['status']).toBe('passed');
+      project.cleanup();
+    },
+    120_000,
+  );
+
+  it(
+    'runs two serial groups each on one worker in order beside a parallel neighbor',
+    async () => {
+      const pidDir = mkdtempSync(path.join(tmpdir(), 'e2e-two-groups-'));
+      const groupFile = (group: string, other: string) => `import { existsSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { test } from 'e2e';
+
+test.describe('${group}', { serial: true }, () => {
+  let shared = 0;
+
+  test('${group} first', async ({ app }) => {
+    await app.open();
+    shared += 1;
+    writeFileSync(path.join(${JSON.stringify(pidDir)}, '${group}-first-' + process.pid), 'ok');
+    // Each group starts only while the other also runs: a scheduler that queues the groups one after the other deadlocks here instead of passing.
+    writeFileSync(path.join(${JSON.stringify(pidDir)}, 'started-${group}'), 'ok');
+    const otherStarted = path.join(${JSON.stringify(pidDir)}, 'started-${other}');
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(otherStarted)) {
+      if (Date.now() > deadline) throw new Error('${group} waited 10s for ${other} to start; the two serial groups never ran at the same time');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  });
+
+  test('${group} second shares state', async ({ app }) => {
+    if (shared !== 1) throw new Error('${group} module state was not preserved: ' + shared);
+    await app.open();
+    writeFileSync(path.join(${JSON.stringify(pidDir)}, '${group}-second-' + process.pid), 'ok');
+  });
+});
+`;
+      const neighborFile = `import { test } from 'e2e';
+
+test('parallel neighbor', async ({ app }) => {
+  await app.open();
+});
+`;
+      const { outcome, project } = await runProjectWithConfigFile(
+        { 'tests/alpha.e2e.ts': groupFile('alpha', 'beta'), 'tests/beta.e2e.ts': groupFile('beta', 'alpha'), 'tests/other.e2e.ts': neighborFile },
+        { configSource: workerFakeConfigSource(2) },
+      );
+      for (const title of ['alpha first', 'alpha second shares state', 'beta first', 'beta second shares state', 'parallel neighbor']) {
+        expect(resultByTitle(outcome, title).status, title).toBe('passed');
+      }
+      expect(outcome.exitCode).toBe(0);
+
+      assertValidReport(outcome.report);
+      const run = outcome.report['run'] as unknown as Record<string, unknown>;
+      const groups = run['serialGroups'] as Record<string, unknown>[];
+      expect(groups).toHaveLength(2);
+      expect(groups.map((group) => group['status'])).toEqual(['passed', 'passed']);
+
+      // Each group's two steps ran on one worker, in order: the module counter above only holds when they did, and the pid files say which. The started markers above are what proves the two groups overlapped in time.
+      const written = readdirSync(pidDir);
+      for (const group of ['alpha', 'beta']) {
+        const pids = new Set(written.filter((entry) => entry.startsWith(`${group}-`)).map((entry) => entry.slice(entry.lastIndexOf('-') + 1)));
+        expect(pids.size, `${group} ran on ${pids.size} workers`).toBe(1);
+      }
+      rmSync(pidDir, { recursive: true, force: true });
       project.cleanup();
     },
     120_000,
@@ -1053,6 +1120,57 @@ test('runs on the next worker', async ({ app }) => {
       expect(skipped.skip?.cause).toBe('infrastructure-unavailable');
       expect(resultByTitle(outcome, 'runs on the next worker').status).toBe('passed');
       expect(outcome.exitCode).toBe(3);
+      project.cleanup();
+    },
+    120_000,
+  );
+
+  it(
+    'starts the file the timings history holds longest first with more than one worker, and in collection order with one',
+    async () => {
+      const sleeping = (title: string, ms: number) => `import { test } from 'e2e';
+
+test('${title}', async () => {
+  await new Promise((resolve) => setTimeout(resolve, ${ms}));
+});
+`;
+      /** Like `sleeping`, but once `ORDER_BARRIER` names a directory, it waits there until `other` has started too. */
+      const gated = (title: string, other: string, ms: number) => `import { existsSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { test } from 'e2e';
+
+test('${title}', async () => {
+  const barrier = process.env['ORDER_BARRIER'];
+  if (barrier !== undefined) {
+    writeFileSync(path.join(barrier, '${title}'), '');
+    while (!existsSync(path.join(barrier, '${other}'))) await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  await new Promise((resolve) => setTimeout(resolve, ${ms}));
+});
+`;
+      /** The titles of the tests that ran, in the order their first attempts started. */
+      const startOrder = (outcome: RunOutcome) =>
+        outcome.report.run.results
+          .filter((result) => result.attempts.length > 0)
+          .toSorted((a, b) => Date.parse(a.attempts[0]!.startedAt) - Date.parse(b.attempts[0]!.startedAt))
+          .map((result) => result.titlePath.at(-1));
+      const { outcome: first, project } = await runProjectWithConfigFile(
+        { 'tests/alpha.e2e.ts': sleeping('alpha', 0), 'tests/beta.e2e.ts': gated('beta', 'gamma', 900), 'tests/gamma.e2e.ts': gated('gamma', 'beta', 700) },
+        { configSource: workerFakeConfigSource(1) },
+      );
+      // No history to learn from yet.
+      expect(startOrder(first)).toEqual(['alpha', 'beta', 'gamma']);
+
+      // Two workers take beta and gamma, the files the history holds longest. Neither sleeps before both have started, so alpha waits for one of them however slowly the second worker boots.
+      const barrier = mkdtempSync(path.join(tmpdir(), 'e2e-order-'));
+      const parallel = await runExistingWithConfigFile(project, { runOptions: { workers: 2, env: { ...process.env, CI: '', APP_URL: undefined, ORDER_BARRIER: barrier } } });
+      rmSync(barrier, { recursive: true, force: true });
+      expect(parallel.exitCode).toBe(0);
+      expect(startOrder(parallel).at(-1)).toBe('alpha');
+
+      // One worker reads no timings, though the history holds them.
+      const serial = await runExistingWithConfigFile(project, { runOptions: { workers: 1 } });
+      expect(startOrder(serial)).toEqual(['alpha', 'beta', 'gamma']);
       project.cleanup();
     },
     120_000,

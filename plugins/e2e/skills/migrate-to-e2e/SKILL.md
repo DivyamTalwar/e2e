@@ -21,14 +21,16 @@ agent's, starts from it instead of from scratch. The user decides when an old te
 Two references do most of the work. Read them; do not restate them.
 
 - The e2e skill for everything the runner does: `.agents/skills/e2e/SKILL.md`
-  once `npx e2e init` or `npx skills add tester-army/e2e` ran, or
+  once `npx e2e init` or `npx skills add e2e-inc/e2e` ran, or
   `npx e2e guide <topic>` from the installed package. Topics named below
   (`setup`, `writing-tests`, `agent`, `mcp`, `running`, `debugging`) are its
   reference files.
 - The migration guide for the source runner, and the engine page it ports
   to. The guide maps the runner's config, commands, and API to e2e, and
-  says what e2e does not have yet (marked "Not yet", "No equivalent", or
-  `missing`) with today's workaround. Both ship in the installed package under
+  lists what e2e does not have yet under "What e2e doesn't have yet"
+  (Planned, Not yet, or Not planned), with today's workaround where there
+  is one. Both
+  ship in the installed package under
   `node_modules/e2e/docs/` with the same paths as `.mdx` files.
 
 Detect the source runner, then read both docs in its row in full, before
@@ -153,13 +155,20 @@ once and the progress file says so; later sessions skip this step.
      an env file (`dotenv.config()`), load it the same way in the e2e
      config, so tests and helpers see the same values. `app.command` does
      not see them; pass the ones the server needs in `command.env`.
-4. Port the simplest source test, often the sign-in or the launch, as the
+4. Install the packages (with the repo's package manager), then run
+   `npx e2e doctor` (e2e 0.23.0 or newer) and fix every check it fails. It
+   loads the config and checks each target's engine without starting the
+   app: the browser on a web target; agent-device, the toolchain, the
+   devices, and the build at `appPath` on a local-device mobile target (a
+   device-provider target skips these). When step 3.2 configured a model,
+   add `--check-model` to call each model once.
+5. Port the simplest source test, often the sign-in or the launch, as the
    smoke test. It must pass on every target before any other port. When it
    cannot, the harness is wrong, not the test: fix the harness.
-5. `init` adds a `test:e2e` script (`e2e run`) unless a script already has
+6. `init` adds a `test:e2e` script (`e2e run`) unless a script already has
    that name. When the name was taken, or `init` did not run, add one under
    a free name. Keep the old suite's scripts as they were.
-6. Mark the harness done in the progress file, with the commands that start the
+7. Mark the harness done in the progress file, with the commands that start the
    dependencies, run the old suite, and run the new one.
 
 ## 4. Pick the slice
@@ -171,8 +180,8 @@ When they leave it to you, suggest in this order:
 1. Tests whose shared helpers are already ported.
 2. Tests that break often in the old runner: retries, flaky history in CI,
    comments explaining a workaround for the runner. They gain the most.
-3. Tests that need a capability the guide marks "Not yet", "No
-   equivalent", or `missing`, last.
+3. Tests that need a capability the guide lists under "What e2e doesn't
+   have yet", last.
 
 Write the slice into the progress file's `Next` section before starting, so an
 interrupted session leaves a trail.
@@ -187,13 +196,33 @@ fixture (topic `writing-tests`). Record each in the progress file.
 
 Then each test, one at a time:
 
-- Keep its title, and open the file with a comment naming the source
+- Open the file with a comment naming the source
   (`// Ported from __e2e__/flows/login.yml`), so reports and reviewers map
   one to the other.
 - Translate literally first with the guide's tables, one awaited call per
   source step. Each source assertion maps to its own e2e assertion. A wait
   that fails on timeout (`waitForFunction`) becomes one more, so the e2e
   count is at least the inventory's.
+- Then, before the first run, arrange the translated lines in the shape the
+  e2e skill's `writing-tests` topic gives ("Structure"). Lines move, split
+  tests copy the steps they need, and closing waits are added; no source
+  step or assertion is dropped:
+  - One top-level `describe` per source file or feature, named after it.
+    Setup tests stay top-level.
+  - A source test that checks one behavior keeps its title. A source test
+    that checks several (a check, more steps, another check) splits into
+    one test per behavior, each titled with its outcome; the file comment
+    names the source test each came from. Each split test repeats the
+    steps before its behavior in its own arrange block, or reaches that
+    state through a `beforeEach`, a fixture, or the app's API.
+  - Each test runs arrange, act, assert: the steps that reach the starting
+    state, the steps of the one behavior, then its assertions, last.
+  - A source assertion that only guarded a precondition (the dashboard
+    showed before the real steps began) becomes the wait that closes the
+    arrange block (`locator.waitFor()`, `agent.waitFor`). It still counts
+    toward the assertion count, since it fails on timeout.
+  - Splitting adds tests, never removes a check: the e2e count across the
+    split tests is still at least the source's.
 - A test the source skips is ported in full and stays skipped, with the
   source's reason, so it can be turned back on in either suite. Its row
   says so; when the reason allows, run it unskipped once and note the
@@ -217,8 +246,8 @@ Then each test, one at a time:
   coordinate tap, a retry loop around a picker) is a workaround for the old
   runner. Try the plain step first; keep a workaround only when e2e needs it
   too, with its own comment saying why.
-- Where the guide marks a step "Not yet", "No equivalent", or `missing`,
-  use its workaround. When there is none, the test stays in the old
+- Where the guide lists a step under "What e2e doesn't have yet", use its
+  workaround. When there is none, the test stays in the old
   runner: mark it `stays` with the reason and offer to send
   `npx e2e feedback --type feature -m "<the gap>"` once: preview it with
   `--dry-run` and send it only when the user agrees (the e2e skill,
@@ -231,7 +260,9 @@ Then each test, one at a time:
 `agent.act` comes after the literal port passes, never instead of it, and
 only with a model configured. Propose it for a stretch the source kept
 patching: coordinate taps, picker spins, long tap sequences through a
-wizard. Pin the outcome right after with a locator assertion (topic `agent`).
+wizard. Keep the test's shape: an `agent.act` in the arrange block ends it
+with a wait for the state it reached, and one under test is checked by the
+locator assertions at the end (topic `agent`).
 
 ## 6. Prove each port
 
@@ -318,7 +349,8 @@ Defect check: on
 
 ## Gaps
 
-- `addMedia` has no e2e equivalent (guide: Not yet); feedback sent.
+- `addMedia` has no e2e equivalent (guide: Planned). iOS: the test adds the
+  photo with `xcrun simctl addmedia`. Android: unchecked, stays in Maestro.
 
 ## Next
 

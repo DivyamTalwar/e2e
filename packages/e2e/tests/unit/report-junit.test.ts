@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { FinishedRun } from '../../src/types.ts';
+import type { FinishedRun } from '../../src/run-types.ts';
 import type { Report1Document, ReportSerialGroup } from '../../src/report/build.ts';
 import { junitReporter, renderJunitReport, type JunitReportOptions } from '../../src/report/junit.ts';
 import { REPORT_AT as AT, reportAttempt, reportDocument, reportError, reportResult } from '../helpers/report.ts';
@@ -706,6 +706,7 @@ describe('junitReporter', () => {
       aiTracePath: undefined,
       report: failedWithShot(),
       traces: new Map(),
+      redact: (text) => text,
     };
     await junitReporter.onRunFinished!(run, new AbortController().signal);
     const xml = fs.readFileSync(path.join(artifactsRoot, 'junit.xml'), 'utf8');

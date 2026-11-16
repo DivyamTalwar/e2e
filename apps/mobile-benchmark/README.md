@@ -8,7 +8,7 @@ button, virtualized lists whose off-screen rows are not in the tree, a
 WebView, an OS permission dialog, out-of-process payment sheets. A test
 either handles that surface or fails for exactly that reason.
 
-The app is copied from `apps/mobile-benchmark` in the tester-army monorepo,
+The app is copied from `apps/mobile-benchmark` in the e2e-inc monorepo,
 where the same scenarios gate the autonomous QA agent. Keep diffs against
 that source minimal so scenarios port both ways. Scenarios distilled from
 real production apps name no company: describe the surface, never the
@@ -24,7 +24,8 @@ from the directory it runs in.
   `description`, and optional `platform` / `screenOptions`. One component
   per scenario in `src/Examples/`; the home list renders one row per
   scenario, its test id the scenario name, and pushes each as its own stack
-  screen.
+  screen. The deep link `e2e-benchmark://<name lowercased, spaces replaced by hyphens>`
+  (`e2e-benchmark://login-form`) opens a scenario directly.
 - `modules/apple-pay-lab`: the local Expo module (PassKit, iOS only) behind
   the two Apple Pay scenarios.
 - `e2e.config.ts` + `tests/`: the deterministic suite, locators only.
