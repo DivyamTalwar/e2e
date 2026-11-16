@@ -58,13 +58,8 @@ class InputState {
   }
 }
 
-/** Input sends and page mutations: those read back (`counted`) and suppressible sends whose verdict is still out (`undecided`), which count until it says otherwise. */
-interface DispatchCount {
-  counted: number;
-  undecided: number;
-}
-
-const operationDispatches = new AsyncLocalStorage<DispatchCount>();
+/** How the operation running now takes a change to its dispatch count (`DispatchScope`). */
+const operationDispatches = new AsyncLocalStorage<(delta: number) => void>();
 
 /**
  * One operation's own dispatch count, so whether it sent input that may have
@@ -72,30 +67,30 @@ const operationDispatches = new AsyncLocalStorage<DispatchCount>();
  * operation runs meanwhile does not count.
  */
 export class DispatchScope {
-  private readonly count: DispatchCount = { counted: 0, undecided: 0 };
+  private count = 0;
 
   /** Runs `work` with every input send and page mutation it makes counted here too. */
   run<T>(work: () => Promise<T>): Promise<T> {
-    return operationDispatches.run(this.count, work);
+    return operationDispatches.run((delta) => { this.count += delta; }, work);
   }
 
   /** Whether `run`'s work sent input or changed the page, or has a send whose verdict is still out. */
   get dispatched(): boolean {
-    return this.count.counted + this.count.undecided > 0;
+    return this.count > 0;
   }
 }
 
 /** The keyboard and mouse of one attempt's tab. */
 export class BidiInput {
   private state = new InputState();
-  private readonly total: DispatchCount = { counted: 0, undecided: 0 };
+  private total = 0;
   private cdpSession: { readonly context: string; readonly cdp: Promise<ChromiumCdp> } | undefined;
 
   constructor(private readonly target: InputTarget) {}
 
-  /** Input sends and page mutations so far: an action that fails after this moved may have reached the app. */
+  /** Input sends and page mutations so far, a suppressible send counting until its verdict takes it back: an action that fails after this moved may have reached the app. */
   get dispatches(): number {
-    return this.total.counted + this.total.undecided;
+    return this.total;
   }
 
   /** Where the mouse last moved, which a viewport swipe wheels at. */
@@ -105,14 +100,13 @@ export class BidiInput {
 
   /** Counts a change the driver or the test's code made in the page (a fill, a select, an evaluate), which may have reached the app. */
   mutated(): void {
-    this.count('counted', 1);
+    this.count(1);
   }
 
-  /** Adds `delta` to the attempt's count and to the count of the operation running it (`dispatchScope`). */
-  private count(kind: keyof DispatchCount, delta: number): void {
-    this.total[kind] += delta;
-    const scope = operationDispatches.getStore();
-    if (scope !== undefined) scope[kind] += delta;
+  /** Adds `delta` to the attempt's count and to the count of the operation running it (`DispatchScope`). */
+  private count(delta: number): void {
+    this.total += delta;
+    operationDispatches.getStore()?.(delta);
   }
 
   /** Forgets everything held and where the mouse was, with the tab that held them. */
@@ -131,7 +125,7 @@ export class BidiInput {
    */
   async send(actions: readonly Input.SourceActions[], signal?: AbortSignal): Promise<void> {
     const { sent, after } = await this.prepare(actions, signal);
-    this.count('counted', 1);
+    this.count(1);
     await this.perform(sent);
     this.state = after;
   }
@@ -147,7 +141,7 @@ export class BidiInput {
    */
   async sendSuppressible<V>(actions: readonly Input.SourceActions[], signal: AbortSignal, verdict: () => Promise<V>, suppressed: (verdict: V) => boolean): Promise<V> {
     const { sent, after } = await this.prepare(actions, signal);
-    this.count('undecided', 1);
+    this.count(1);
     let swallowed = false;
     try {
       let failure: { cause: unknown } | undefined;
@@ -168,8 +162,7 @@ export class BidiInput {
       swallowed = suppressed(read);
       return read;
     } finally {
-      this.count('undecided', -1);
-      if (!swallowed) this.count('counted', 1);
+      if (swallowed) this.count(-1);
     }
   }
 
@@ -209,7 +202,7 @@ export class BidiInput {
     signal.throwIfAborted();
     await this.checkInViewport([point]);
     const cdp = await this.cdp();
-    this.count('counted', 1);
+    this.count(1);
     await cdp.send('Input.dispatchDragEvent', { type, x: point.x, y: point.y, data });
     this.state.pointer = { x: point.x, y: point.y };
   }
@@ -223,7 +216,7 @@ export class BidiInput {
     signal?.throwIfAborted();
     const cdp = await this.cdp();
     signal?.throwIfAborted();
-    this.count('counted', 1);
+    this.count(1);
     for (const command of commands) {
       await cdp.send(command.method, command.params);
       const held = holdsAfter(command);
