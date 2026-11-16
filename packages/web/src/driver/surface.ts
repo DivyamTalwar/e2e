@@ -201,12 +201,7 @@ export class BidiSurface {
       ? undefined
       : await raceAbort(() => httpCredentials(basicAuth, context.resolveSecret), context.signal, 'resolving the basic-auth password');
     const signal = AbortSignal.any([context.signal, this.disposal.signal]);
-    let handle: BrowserHandle;
-    try {
-      handle = await this.browserFor(signal, source.scope === 'attempt' ? { ...context, signal } : undefined);
-    } catch (cause) {
-      throw source.scope === 'attempt' ? classify(cause, 'attaching to the leased browser') : cause;
-    }
+    const handle = await this.browserFor(signal, source.scope === 'attempt' ? { ...context, signal } : undefined);
     const session = new BidiSession(
       handle.browser,
       settings,
