@@ -333,6 +333,16 @@ describe('BidiSession.close', () => {
     expect(fake.commands('script.addPreloadScript')).toEqual([]);
   });
 
+  it('sets up no user context for a reset that starts after the attempt closed', async () => {
+    const fake = new FakeBidi().on('browser.createUserContext', { result: { userContext: 'mine' } }).on('network.addDataCollector', { result: { collector: 'c' } });
+    const closed = unopened(fake);
+    await closed.openUserContext(new AbortController().signal);
+    await closed.close();
+    await expect(closed.replaceUserContext(new AbortController().signal)).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(fake.commands('browser.createUserContext')).toHaveLength(1);
+    expect(closed.userContext.id).toBe('');
+  });
+
   it('ends the attempt’s lifetime, so work it started that nothing awaits stops', async () => {
     const fake = new FakeBidi();
     const closing = unopened(fake);

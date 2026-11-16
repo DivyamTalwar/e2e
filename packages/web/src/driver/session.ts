@@ -129,6 +129,7 @@ export class BidiSession {
       settings,
       protectedApp: attempt.protectedApp,
       downloads: this.downloads,
+      lifetime: this.lifetime,
     });
     this.video = attempt.recorder === undefined
       ? new BidiVideo(browser.connection, browser.traits, attempt.artifactsDir, settings.screencast, settings.env, { shown: () => this.context, viewport: () => this.viewportSize() })
@@ -400,7 +401,6 @@ export class BidiSession {
    * replacement user context still opening removes itself when it lands.
    */
   async close(): Promise<void> {
-    this.userContext.overtake();
     this.ended.abort();
     const gone = this.connection.isClosed;
     const step = (label: string, work: () => unknown): (() => Promise<unknown>) => () =>

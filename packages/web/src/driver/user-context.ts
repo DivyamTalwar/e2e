@@ -59,6 +59,8 @@ export interface UserContextHost {
   readonly protectedApp: ProtectedApp;
   /** The attempt's downloads, whose directory each user context saves into. */
   readonly downloads: AttemptDownloads;
+  /** Aborts when the attempt closes: no user context is set up after that, and one still being set up removes itself when it lands. */
+  readonly lifetime: AbortSignal;
 }
 
 /** A user context the attempt set up, with the preload scripts scoped to it. */
@@ -76,10 +78,9 @@ export class AttemptUserContext {
   /** User contexts this attempt created and has not yet seen removed, tried again by every later removal and by the attempt's close. */
   private readonly unremoved = new Set<string>();
   /**
-   * Bumped by every user context the attempt starts to set up and by
-   * `overtake`: one that lands for an earlier generation (a reset given up
-   * on, superseded, or outlived by the attempt) removes itself instead of
-   * replacing the one in use.
+   * Bumped by every user context the attempt starts to set up: one that
+   * lands for an earlier generation (a reset a later one superseded)
+   * removes itself instead of replacing the one in use.
    */
   private generation = 0;
   private readonly addedScripts: string[] = [];
@@ -96,7 +97,7 @@ export class AttemptUserContext {
     return this.current;
   }
 
-  /** Sets up the attempt's first user context. `signal` aborting, or `overtake`, before it lands removes it. */
+  /** Sets up the attempt's first user context. `signal` aborting, or the attempt closing, before it lands removes it. */
   async open(signal: AbortSignal): Promise<void> {
     await this.install(signal);
   }
@@ -109,8 +110,8 @@ export class AttemptUserContext {
    * the old one removed, so no step ever runs between the two. A `moved`
    * that fails still has the old one removed, and its own failure is the
    * one thrown. One whose `signal` aborted, or that a later replacement or
-   * `overtake` overtook, removes itself and leaves the user context in use
-   * as it was.
+   * the attempt's close overtook, removes itself and leaves the user
+   * context in use as it was.
    */
   async replace(signal: AbortSignal, moved: () => Promise<void>): Promise<void> {
     const previous = await this.install(signal);
@@ -129,11 +130,6 @@ export class AttemptUserContext {
     this.current = '';
     this.preloads = [];
     await this.drop(current);
-  }
-
-  /** The attempt is closing: a user context still being set up removes itself when it lands. */
-  overtake(): void {
-    this.generation += 1;
   }
 
   /** Removes every user context still owed removal; one that fails stays owed, and the first failure is thrown. */
@@ -202,16 +198,18 @@ export class AttemptUserContext {
    * downloads, the emulated user agent, locale (and the `accept-language`
    * Playwright's locale sends), time zone, and media. Every step settles
    * before a failure is thrown, and a failed or overtaken setup removes what
-   * it made. Once set up, it is published in place of the attempt's user
-   * context, whose scope is returned.
+   * it made. None is created once the attempt closed. Once set up, it is
+   * published in place of the attempt's user context, whose scope is
+   * returned.
    */
   private async install(signal: AbortSignal): Promise<ScopedUserContext> {
     const generation = ++this.generation;
-    const { connection, settings } = this.host;
+    const { connection, settings, lifetime } = this.host;
     signal.throwIfAborted();
+    if (lifetime.aborted) throw cancelled('the attempt closed before its user context opened');
     const { userContext } = settings.userContext === 'fresh' ? await connection.send('browser.createUserContext', {}) : { userContext: DEFAULT_USER_CONTEXT };
     const preloads: string[] = [];
-    const overtaken = (): boolean => signal.aborted || generation !== this.generation;
+    const overtaken = (): boolean => signal.aborted || lifetime.aborted || generation !== this.generation;
     try {
       if (overtaken()) throw cancelled('the attempt closed or gave up while its user context opened');
       const scoped = { userContexts: [userContext] as [string] };
