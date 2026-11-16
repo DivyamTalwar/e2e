@@ -1,8 +1,10 @@
 /**
  * The `browser` fixture's public types: the browser-shaped deterministic
- * surface this engine contributes, its routes, responses, cookies, and the
- * `expect(browser)` matchers. They live here, not in core, because the
- * harness knows the engine contract and never a platform's fixture shape.
+ * surface this engine contributes, its routes, responses, and the
+ * `expect(browser)` matchers, beside the cookie types, re-exported from the
+ * driver's cookie jar (`driver/cookies.ts`). They live in this package, not
+ * in core, because the harness knows the engine contract and never a
+ * platform's fixture shape.
  */
 
 import type { ActionOptions, Expectable, JsonValue, Locator, Screen, TextMatch } from '@e2e-dev/core';
