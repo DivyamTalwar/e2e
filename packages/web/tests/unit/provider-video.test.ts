@@ -52,6 +52,19 @@ describe('ProviderVideo', () => {
     expect((await video.stop(new AbortController().signal)).map((segment) => ('path' in segment ? segment.path : segment.url))).toEqual(['video/second.mp4']);
   });
 
+  it('stops a recording that started once the attempt had ended, and never keeps it', async () => {
+    const stopped: string[] = [];
+    let land!: (started: LeaseRecording) => void;
+    const ended = new AbortController();
+    const video = new ProviderVideo(() => new Promise<LeaseRecording>((resolve) => { land = resolve; }), artifactsDir(), ended.signal);
+    const starting = video.start(new AbortController().signal);
+    ended.abort();
+    land(recording('late', stopped));
+    await expect(starting).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(stopped).toEqual(['late']);
+    expect(await video.stop(new AbortController().signal)).toEqual([]);
+  });
+
   it('keeps the handle of a recording whose stop failed at the attempt’s close, so a later stop still ends it', async () => {
     const stopped: string[] = [];
     const video = new ProviderVideo(async () => recording('clip', stopped, 1), artifactsDir(), new AbortController().signal);
