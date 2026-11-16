@@ -8,6 +8,7 @@ import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
 import type { UserContextMode } from '../../src/driver/user-context.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
+import { BidiError } from '../../src/errors.ts';
 import type { NodeRef } from '@e2e-dev/core/engine';
 import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
 import type { ElementRef } from '../../src/driver/script.ts';
@@ -152,29 +153,57 @@ describe('BidiInput.send', () => {
     let fail = false;
     const fake = new FakeBidi().on('input.performActions', () => (fail ? { error: 'unknown error', message: 'gone' } : { result: {} }));
     const held = await session(fake);
-    const suppressed = (verdict: string | null): boolean => verdict === 'covered';
-    await held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), async () => 'covered', suppressed);
+    const watch = (verdict: string | null) => ({ arm: async () => undefined, verdict: async () => verdict, suppressed: (seen: string | null): boolean => seen === 'covered' });
+    await held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), watch('covered'));
     expect(held.input.dispatches).toBe(0);
-    await held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), async () => null, suppressed);
+    await held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), watch(null));
     expect(held.input.dispatches).toBe(1);
     fail = true;
-    await expect(held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), async () => 'covered', suppressed)).rejects.toThrow('gone');
+    await expect(held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), watch('covered'))).rejects.toThrow('gone');
     expect(held.input.dispatches).toBe(2);
   });
 
   it('takes input whose tab closed under it (a click that closes its own tab) as dispatched, not failed', async () => {
     const fake = new FakeBidi().on('input.performActions', { error: 'no such frame', message: 'Browsing context is gone' });
     const held = await session(fake);
-    await expect(held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), async () => null, (verdict) => verdict !== null)).resolves.toBeNull();
+    await expect(held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), { arm: async () => undefined, verdict: async () => null, suppressed: (verdict) => verdict !== null })).resolves.toBeNull();
     expect(held.input.dispatches).toBe(1);
   });
 
   it('counts input whose verdict never comes as dispatched, so an operation timing out on it may have committed', async () => {
     const fake = new FakeBidi().on('input.performActions', { result: {} });
     const held = await session(fake);
-    void held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), () => new Promise<never>(() => undefined), () => true);
+    void held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), { arm: async () => undefined, verdict: () => new Promise<never>(() => undefined), suppressed: () => true });
     await vi.waitFor(() => expect(fake.commands('input.performActions')).toHaveLength(1));
     expect(held.input.dispatches).toBe(1);
+  });
+
+  it('arms a watch only for input ready to go out, and ends one it armed whatever stopped the input', async () => {
+    const fake = new FakeBidi().on('input.performActions', { result: {} });
+    const held = await session(fake);
+    const calls: string[] = [];
+    const watch = (arm: () => Promise<void>) => ({
+      arm: async () => {
+        calls.push('arm');
+        await arm();
+      },
+      verdict: async () => {
+        calls.push('verdict');
+        return null;
+      },
+      suppressed: () => false,
+    });
+    await expect(held.input.sendSuppressible(clickSources(500, 5), AbortSignal.timeout(500), watch(async () => undefined))).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+    await expect(held.input.sendSuppressible(clickSources(5, 5), AbortSignal.abort(new Error('cancelled')), watch(async () => undefined))).rejects.toThrow('cancelled');
+    expect(calls).toEqual([]);
+    const cancelling = new AbortController();
+    await expect(held.input.sendSuppressible(clickSources(5, 5), cancelling.signal, watch(async () => cancelling.abort(new Error('cancelled while arming'))))).rejects.toThrow('cancelled while arming');
+    await expect(held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), watch(async () => {
+      throw new BidiError('script.callFunction', 'no such frame', 'the frame is gone');
+    }))).rejects.toThrow('no such frame');
+    expect(calls).toEqual(['arm', 'verdict', 'arm', 'verdict']);
+    expect(fake.commands('input.performActions')).toEqual([]);
+    expect(held.input.dispatches).toBe(0);
   });
 
   it('sends a key WebDriver has no value for as CDP key events that carry the modifiers BiDi holds', async () => {

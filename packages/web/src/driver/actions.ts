@@ -228,13 +228,11 @@ async function click(session: BidiSession, target: NodeTarget, deadline: Deadlin
   await settle(deadline, signal, async () => {
     const point = await aim();
     if (point.kind !== 'ok') return point;
-    await session.page.run(armHitInterceptor, [target.element], target.context);
-    const verdict = await session.input.sendSuppressible(
-      clickSources(point.x, point.y, options),
-      signal,
-      () => unlessStale(session.page.run(hitInterceptorResult, [], target.context), { kind: 'ok' }),
-      (seen) => seen.kind === 'not-yet',
-    );
+    const verdict = await session.input.sendSuppressible(clickSources(point.x, point.y, options), signal, {
+      arm: () => session.page.run(armHitInterceptor, [target.element], target.context),
+      verdict: () => unlessStale(session.page.run(hitInterceptorResult, [], target.context), { kind: 'ok' }),
+      suppressed: (seen) => seen.kind === 'not-yet',
+    });
     if (verdict.kind === 'unseen') {
       throw new EngineError('ACTION_MAY_HAVE_COMMITTED', 'the click reached no event in the element\'s document, so another document (an overlay in a parent frame) may have taken it', { retryable: false });
     }

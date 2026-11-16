@@ -3,8 +3,9 @@
  * Shift change gets its keyup, Shift shifts a key named by its character,
  * a swipe leaves the mouse on what it scrolled, a drag carries pressure and
  * reaches a target in a rotated frame, a pointer target outside the
- * viewport is refused as never sent, and a ref reused after input checks
- * its locator again.
+ * viewport is refused as never sent, a tap cancelled while it aims leaves
+ * no click watch behind, and a ref reused after input checks its locator
+ * again.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -112,6 +113,35 @@ describe('input', () => {
     expect(await page.browser.evaluate('window.left ?? false')).toBe(false);
     await page.engine.performAt!({ x: 1280, y: 720 }, { kind: 'hover' }, page.op());
     expect(await page.browser.evaluate('window.left ?? false')).toBe(true);
+  });
+
+  it('arms no click watch for a tap cancelled while it aims, so the pointer input after it reaches the page', async () => {
+    const controller = new AbortController();
+    const cancel = page.serve('/cancel-tap', (_request, response) => {
+      controller.abort(new Error('cancelled'));
+      response.end();
+    });
+    // The tap scrolls the button into view, and the page cancels it there, in the middle of its aim. The aim ends with a hit test.
+    await page.setContent(`<div style="height:2000px"></div><button id=far>far</button><script>
+      window.log = [];
+      addEventListener('scroll', () => {
+        const request = new XMLHttpRequest();
+        request.open('GET', ${JSON.stringify(cancel)}, false);
+        request.send();
+        window.cancelled = true;
+      }, { once: true });
+      const hitTest = document.elementFromPoint.bind(document);
+      document.elementFromPoint = (x, y) => {
+        window.aimed = window.cancelled === true;
+        return hitTest(x, y);
+      };
+      for (const type of ['mousedown', 'mouseup', 'click']) addEventListener(type, () => log.push(type), true);
+    </script>`);
+    const [far] = await page.locate(bySelector('#far'));
+    await expect(page.engine.perform!(far!.ref, { kind: 'tap' }, { ...page.op(), signal: controller.signal })).rejects.toMatchObject({ code: 'CANCELLED' });
+    await expect.poll(() => page.browser.evaluate('window.aimed === true'), { timeout: 10_000 }).toBe(true);
+    await page.engine.performAt!({ x: 5, y: 5 }, { kind: 'tap' }, page.op());
+    expect(await log()).toEqual(['mousedown', 'mouseup', 'click']);
   });
 
   it('checks a ref reused after input still names its locator\'s only match', async () => {

@@ -80,6 +80,16 @@ export class DispatchScope {
   }
 }
 
+/** A watch the page keeps on input it may suppress before any listener of the app sees it. */
+interface InputWatch<V> {
+  /** Starts the watch in the page. */
+  readonly arm: () => Promise<void>;
+  /** Ends the watch and reads what it saw. */
+  readonly verdict: () => Promise<V>;
+  /** Whether `verdict` says the page swallowed the input. */
+  readonly suppressed: (verdict: V) => boolean;
+}
+
 /** The keyboard and mouse of one attempt's tab. */
 export class BidiInput {
   private state = new InputState();
@@ -132,20 +142,27 @@ export class BidiInput {
 
   /**
    * Runs input sources the page may suppress before any listener of the app
-   * sees them (the hit interceptor of a click), then reads `verdict`. The
-   * input counts as dispatched from the moment it goes out until the
-   * verdict, if `suppressed` says the page swallowed it, takes that back; a
-   * send or verdict that fails, or never settles, leaves it counted. A failed
-   * send throws once the verdict is read, unless the browsing context went
-   * away under it (an input that closes its own tab): that input was taken.
+   * sees them (the hit interceptor of a click). The watch is armed only once
+   * the sources are ready to go out, so input refused or cancelled before
+   * that leaves none armed, and its verdict is read whatever came after, which
+   * ends it. Nothing is sent once the arm failed or `signal` aborted. The
+   * input counts as dispatched from the moment it goes out until the verdict
+   * takes that back; a send or verdict that fails, or never settles, leaves
+   * it counted. A failure throws once the verdict is read, unless the
+   * browsing context went away under input that went out (one that closes its
+   * own tab): that input was taken.
    */
-  async sendSuppressible<V>(actions: readonly Input.SourceActions[], signal: AbortSignal, verdict: () => Promise<V>, suppressed: (verdict: V) => boolean): Promise<V> {
+  async sendSuppressible<V>(actions: readonly Input.SourceActions[], signal: AbortSignal, watch: InputWatch<V>): Promise<V> {
     const { sent, after } = await this.prepare(actions, signal);
-    this.count(1);
+    let dispatched = false;
     let swallowed = false;
     try {
       let failure: { cause: unknown } | undefined;
       try {
+        await watch.arm();
+        signal.throwIfAborted();
+        dispatched = true;
+        this.count(1);
         await this.perform(sent);
         this.state = after;
       } catch (cause) {
@@ -153,13 +170,15 @@ export class BidiInput {
       }
       let read: V;
       try {
-        read = await verdict();
+        read = await watch.verdict();
       } catch (cause) {
         throw failure === undefined ? cause : failure.cause;
       }
-      if (failure !== undefined && !(failure.cause instanceof BidiError && failure.cause.error === 'no such frame')) throw failure.cause;
-      if (failure !== undefined) this.state = after;
-      swallowed = suppressed(read);
+      if (failure !== undefined) {
+        if (!dispatched || !(failure.cause instanceof BidiError && failure.cause.error === 'no such frame')) throw failure.cause;
+        this.state = after;
+      }
+      swallowed = watch.suppressed(read);
       return read;
     } finally {
       if (swallowed) this.count(-1);
