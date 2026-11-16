@@ -1,8 +1,8 @@
 /** Navigation: open, history, reload, and the attempt's restart and reset. */
 
 import { setTimeout as sleep } from 'node:timers/promises';
-import { Deadline, EngineError, raceAbort, TestError } from '@e2e-dev/core/engine';
-import { isClassified, isStale, message } from '../errors.ts';
+import { Deadline, EngineError, raceAbort } from '@e2e-dev/core/engine';
+import { isStale } from '../errors.ts';
 import { historyEntry, readyState } from '../in-page/document.ts';
 import type { BidiSession } from './session.ts';
 
@@ -19,7 +19,7 @@ const POLL_MS = 50;
  * once `signal` aborted, nor in `reload` and `traverse`.
  */
 export function goto(session: BidiSession, url: string, waitUntil: WaitUntil, signal: AbortSignal): Promise<void> {
-  return own(session, async () => {
+  return session.navigations.own(async () => {
     const context = await session.ensureContext();
     await session.visit(url);
     if (waitUntil === 'networkidle') await session.network.track();
@@ -122,7 +122,7 @@ async function documentReady(session: BidiSession, context: string, wait: 'compl
 
 /** Reloads the tab and waits for its load event. */
 export function reload(session: BidiSession, signal: AbortSignal): Promise<void> {
-  return own(session, async () => {
+  return session.navigations.own(async () => {
     signal.throwIfAborted();
     await session.connection.send('browsingContext.reload', { context: session.requireContext(), wait: 'complete' });
   });
@@ -135,7 +135,7 @@ export function reload(session: BidiSession, signal: AbortSignal): Promise<void>
  * entry the app pushed, whose URL may not differ.
  */
 export function traverse(session: BidiSession, delta: number, timeoutMs: number, signal: AbortSignal): Promise<void> {
-  return own(session, async () => {
+  return session.navigations.own(async () => {
     const context = session.requireContext();
     const deadline = new Deadline(timeoutMs);
     const before = await landedEntry(session);
@@ -148,27 +148,6 @@ export function traverse(session: BidiSession, delta: number, timeoutMs: number,
       await sleep(POLL_MS, undefined, { signal });
     }
   });
-}
-
-/**
- * Runs a navigation the driver makes itself, which the trace leaves to the
- * step that asked for it. A navigation that fails after a test route aborted
- * the tab's document request failed because the test aborted it: an action
- * failure, not an engine fault.
- */
-async function own<T>(session: BidiSession, work: () => Promise<T>): Promise<T> {
-  session.ownNavigations += 1;
-  const watch: { url?: string } = {};
-  session.navigationAborts.add(watch);
-  try {
-    return await work();
-  } catch (cause) {
-    if (watch.url === undefined || isClassified(cause)) throw cause;
-    throw new TestError('ACTION_FAILED', `navigation failed: a route aborted the request for ${watch.url}: ${message(cause)}`, { cause });
-  } finally {
-    session.navigationAborts.delete(watch);
-    session.ownNavigations -= 1;
-  }
 }
 
 /** The tab's history entry once its document reads complete; undefined while it loads or is being replaced. */

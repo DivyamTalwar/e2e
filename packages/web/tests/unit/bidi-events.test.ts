@@ -25,7 +25,7 @@ function attempt(owners: ContextTree, userContext: string) {
     context: 'tab' as string | undefined,
     tabs: undefined as unknown as AttemptTabs,
     contextClosed: (context: string) => void session.tabs.destroyed(context),
-    ownNavigations: 0,
+    navigations: { inFlight: false },
     lifetime: new AbortController().signal,
     latch,
     dialogs: new DialogRouter(latch),
@@ -124,9 +124,9 @@ describe('routeEvents', () => {
     created('tab');
     created('scratch');
     fake.emit('browsingContext.contextCreated', { context: 'frame', parent: 'tab', url: 'about:blank', children: null, clientWindow: 'w' });
-    state.ownNavigations = 1;
+    state.navigations.inFlight = true;
     fake.emit('browsingContext.navigationCommitted', nav('tab', 'http://app.test/'));
-    state.ownNavigations = 0;
+    state.navigations.inFlight = false;
     fake.emit('browsingContext.navigationStarted', nav('tab', 'http://app.test/checkout'));
     fake.emit('browsingContext.navigationCommitted', nav('tab', 'http://app.test/checkout'));
     fake.emit('browsingContext.historyUpdated', { context: 'tab', url: 'http://app.test/checkout?step=2', timestamp: 0 });

@@ -20,6 +20,7 @@ import { BidiError, cancelled, ErrorLatch, invalidState, releaseQuietly, ScriptE
 import { FrameRegistry, type NodeTarget } from './frames.ts';
 import type { BidiBrowser } from './launch.ts';
 import { AttemptNetwork } from './network.ts';
+import { OwnNavigations } from './own-navigations.ts';
 import { AttemptTabs, type AttemptTab } from './tabs.ts';
 import { viewportSize } from '../in-page/document.ts';
 import { HIT_INTERCEPTOR_INIT_SCRIPT } from '../in-page/hit-interceptor.ts';
@@ -196,10 +197,8 @@ export class BidiSession {
   video: BidiVideo | undefined;
   /** The browser provider's own recording, which takes the place of `video` when the provider records. */
   providerVideo: ProviderVideo | undefined;
-  /** Navigations the driver itself has in flight, which the trace leaves to the step that started them. */
-  ownNavigations = 0;
-  /** One entry per navigation the driver has in flight, given the URL of the tab's document request a test route aborted. */
-  readonly navigationAborts = new Set<{ url?: string }>();
+  /** The navigations the driver itself has in flight in the tab. */
+  readonly navigations = new OwnNavigations();
   /** The viewport `browser.setViewport` set for the rest of the attempt; the configured one until then. */
   private viewport: ViewportSize | null;
   private creating: Promise<string> | undefined;
@@ -242,8 +241,7 @@ export class BidiSession {
       traits: browser.traits,
       onFailure: (error) => this.latch.latch(error),
       onNavigationAbort: (context, url) => {
-        if (context !== this.context) return;
-        for (const watch of this.navigationAborts) watch.url ??= url;
+        if (context === this.context) this.navigations.aborted(url);
       },
       lifetime: this.lifetime,
     });

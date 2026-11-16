@@ -104,7 +104,7 @@ export function routeEvents(connection: BidiConnection, contexts: ContextTree, c
     if (session.tabs.find(event.context) === undefined) return;
     if (event.navigation != null && joinedBy.get(event.context) === event.navigation) return;
     if (event.context !== session.context) went(session, `a background tab navigated to ${event.url}`);
-    else if (session.ownNavigations === 0) went(session, `navigated to ${event.url}`);
+    else if (!session.navigations.inFlight) went(session, `navigated to ${event.url}`);
   };
   const offs = [
     connection.on('browsingContext.contextCreated', (info) => {
