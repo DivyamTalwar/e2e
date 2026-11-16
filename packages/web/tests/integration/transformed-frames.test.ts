@@ -1,7 +1,8 @@
 /**
  * A tap inside a frame a 3D transform turns lands on its target: the point
  * is carried through the quad the browser lays each turned frame out on,
- * nested turned frames composing, and inside a cross-origin frame.
+ * nested turned frames composing, and inside a cross-origin frame. A frame
+ * no point maps through yet is waited for.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -48,6 +49,22 @@ describe('taps in turned frames', () => {
     const inner = `<style>body { margin: 0 }</style><iframe id="inner" style="${FRAME_STYLE}" srcdoc="${attribute(TARGET)}"></iframe>`;
     await page.setContent(`<iframe id="outer" style="${FRAME_STYLE}; width: 400px; height: 360px" srcdoc="${attribute(inner)}"></iframe>`);
     await tapThrough(['#outer', '#inner']);
+  });
+
+  it('waits for a frame scaled to nothing to grow, as it waits for the element in it', async () => {
+    await page.setContent(`<iframe id="outer" style="${FRAME_STYLE}; transform: scale(0)" srcdoc="${attribute(TARGET)}"></iframe>`);
+    await page.waitForFrames();
+    const [target] = await page.locate({ kind: 'frame', selector: '#outer', source: { kind: 'selector', selector: 'button' } });
+    await expect(page.engine.perform!(target!.ref, { kind: 'tap' }, page.op(1_500))).rejects.toMatchObject({
+      code: 'NOT_ACTIONABLE',
+      message: 'element did not become actionable in time: element is in a frame that lays out no box, or whose transform the browser maps no point through',
+    });
+    await page.browser.evaluate(() => {
+      setTimeout(() => { document.getElementById('outer')!.style.transform = 'none'; }, 300);
+      return null;
+    });
+    await page.engine.perform!(target!.ref, { kind: 'tap' }, page.op());
+    expect(await page.locate(button('Clicked', ['#outer']))).toHaveLength(1);
   });
 
   it('taps through a turned frame inside a cross-origin frame', async () => {

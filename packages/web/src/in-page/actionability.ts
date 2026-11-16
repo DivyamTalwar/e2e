@@ -4,12 +4,10 @@
  * scrolling into view, and where a wheel lands.
  */
 
-import { withDom, type Outcome } from './dom.ts';
+import { withDom, type Area, type Outcome } from './dom.ts';
 
 /** What `actionPoint` checks beside the element itself. */
 export interface ActionPointOptions {
-  /** False to skip waiting for the element to hold still, for a frame scrolled into view on the way to the element inside it. */
-  readonly stable?: boolean;
   /** How to scroll the element into view, for a retry after an overlay covered it; unset, only when its point is clipped. */
   readonly align?: { readonly block: ScrollLogicalPosition; readonly inline: ScrollLogicalPosition };
   /** True for a label clicked in place of its control (`labelStandIn`): the point is the control's centre when the control lays out a box. */
@@ -21,65 +19,18 @@ export interface ActionPointOptions {
  * before a pointer action, but the hit test and the enabled check (the
  * `disabled` reader): attached, visible, scrolled into view when its point is
  * clipped by the viewport or a scrolling ancestor (or as `align` says), and
- * holding still for a frame (unless `stable` is false). Not yet while one of
- * them fails. The point is the centre of the element's first client rect
- * that shows at least a pixel, as Playwright's clickable point, in whole
- * pixels inside that rect: pointer input takes whole pixels, and a rounded
- * centre can miss a small element.
+ * holding still for a frame. Not yet while one of them fails. The point is
+ * the centre of the element's first client rect that shows at least a pixel,
+ * as Playwright's clickable point, in whole pixels inside that rect: pointer
+ * input takes whole pixels, and a rounded centre can miss a small element.
  */
 export const actionPoint = withDom(async function actionPoint(dom, element: Element, options: ActionPointOptions): Promise<Outcome<{ x: number; y: number }>> {
   const shown = dom.shown(element);
   if (shown.kind !== 'ok') return shown;
-  type Area = { left: number; top: number; right: number; bottom: number };
-  const clipped = (rect: DOMRect): Area | null => {
-    const { width, height } = dom.viewport();
-    let left = Math.max(rect.left, 0);
-    let top = Math.max(rect.top, 0);
-    let right = Math.min(rect.right, width);
-    let bottom = Math.min(rect.bottom, height);
-    let at: Element | null = element;
-    let position = getComputedStyle(element).position;
-    while (at !== null) {
-      const parent: Node | null = at.parentNode;
-      at = parent instanceof ShadowRoot ? parent.host : parent instanceof Element ? parent : null;
-      if (at === null || at === document.documentElement) break;
-      const clip = getComputedStyle(at);
-      const transformed = clip.transform !== 'none' || clip.filter !== 'none' || clip.perspective !== 'none' || clip.contain.includes('paint') || clip.contain.includes('layout');
-      if (position === 'fixed' && !transformed) continue;
-      if (position === 'absolute' && !transformed && clip.position === 'static') continue;
-      position = clip.position;
-      const bounds = at.getBoundingClientRect();
-      if (clip.overflowX !== 'visible') {
-        left = Math.max(left, bounds.left);
-        right = Math.min(right, bounds.right);
-      }
-      if (clip.overflowY !== 'visible') {
-        top = Math.max(top, bounds.top);
-        bottom = Math.min(bottom, bounds.bottom);
-      }
-    }
-    return (right - left) * (bottom - top) > 0.99 && right > left && bottom > top ? { left, top, right, bottom } : null;
-  };
-  const visible = (): Area | null => {
-    for (const rect of dom.rectsOf(element)) {
-      const area = clipped(rect);
-      if (area !== null) return area;
-    }
-    return null;
-  };
-  const centred = (area: Area | null): boolean => {
-    const rect = dom.boxOf(element);
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    return area !== null && x >= area.left && x <= area.right && y >= area.top && y <= area.bottom;
-  };
-  const scrolled = dom.scrollTarget(element) ?? element;
-  if (options.align !== undefined) scrolled.scrollIntoView({ ...options.align, behavior: 'instant' });
-  else if (!centred(visible())) scrolled.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
-  if (options.stable !== false) {
-    const held = await dom.still(() => dom.boxOf(element));
-    if (held.kind !== 'ok') return held;
-  }
+  if (options.align === undefined) dom.scrollIfClipped(element);
+  else (dom.scrollTarget(element) ?? element).scrollIntoView({ ...options.align, behavior: 'instant' });
+  const held = await dom.still(() => dom.boxOf(element));
+  if (held.kind !== 'ok') return held;
   const pixelIn = (area: Area): Outcome<{ x: number; y: number }> => {
     const x = (area.left + area.right) / 2;
     const y = (area.top + area.bottom) / 2;
@@ -93,7 +44,7 @@ export const actionPoint = withDom(async function actionPoint(dom, element: Elem
   const control = options.atControl === true ? (element as HTMLLabelElement).control?.getBoundingClientRect() : undefined;
   if (control !== undefined && control.width > 0 && control.height > 0) {
     const [cx, cy] = [control.left + control.width / 2, control.top + control.height / 2];
-    const over = dom.rectsOf(element).map(clipped).find((rect): rect is Area => rect !== null && cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom);
+    const over = dom.rectsOf(element).map((rect) => dom.clipped(element, rect)).find((rect): rect is Area => rect !== null && cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom);
     if (over === undefined) return outside;
     return pixelIn({
       left: Math.max(over.left, control.left),
@@ -102,8 +53,18 @@ export const actionPoint = withDom(async function actionPoint(dom, element: Elem
       bottom: Math.min(over.bottom, control.bottom),
     });
   }
-  const area = visible();
+  const area = dom.visibleArea(element);
   return area === null ? outside : pixelIn(area);
+});
+
+/**
+ * Scrolls a frame into view on the way to an element inside it, as
+ * `actionPoint` scrolls an element: when the frame shows and the centre of
+ * its box is clipped. It waits for nothing: the element's own check waits
+ * for the page to hold still, and the hit test at its point sees every frame.
+ */
+export const scrollFrameIntoView = withDom((dom, frame: Element): void => {
+  if (dom.shown(frame).kind === 'ok') dom.scrollIfClipped(frame);
 });
 
 /**

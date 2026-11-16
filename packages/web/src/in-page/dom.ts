@@ -23,6 +23,14 @@ export type Outcome<T extends object = object> =
   | { readonly kind: 'not-yet'; readonly reason: string }
   | { readonly kind: 'refused'; readonly reason: string };
 
+/** The sides of a box in its document's viewport. */
+export interface Area {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
 /**
  * Builds the helpers over the closed shadow roots recorded under `key`,
  * read when a helper runs, so roots recorded after the helpers were built
@@ -90,6 +98,60 @@ export function createDom(key: string) {
   /** What to scroll to bring the element into view: itself when it lays out a box, else the first element inside it that does, else its parent. */
   const scrollTarget = (element: Element): Element | null =>
     element.getClientRects().length > 0 ? element : ([...element.querySelectorAll('*')].find((child) => child.getClientRects().length > 0) ?? element.parentElement);
+
+  /**
+   * What shows of `rect`, a box of `element`: what the viewport and every
+   * ancestor that clips its overflow leave of it, as Playwright clips a
+   * clickable point; null when under a pixel does.
+   */
+  const clipped = (element: Element, rect: DOMRect): Area | null => {
+    const { width, height } = viewport();
+    let left = Math.max(rect.left, 0);
+    let top = Math.max(rect.top, 0);
+    let right = Math.min(rect.right, width);
+    let bottom = Math.min(rect.bottom, height);
+    let at: Element | null = element;
+    let position = getComputedStyle(element).position;
+    while (at !== null) {
+      const parent: Node | null = at.parentNode;
+      at = parent instanceof ShadowRoot ? parent.host : parent instanceof Element ? parent : null;
+      if (at === null || at === document.documentElement) break;
+      const clip = getComputedStyle(at);
+      const transformed = clip.transform !== 'none' || clip.filter !== 'none' || clip.perspective !== 'none' || clip.contain.includes('paint') || clip.contain.includes('layout');
+      if (position === 'fixed' && !transformed) continue;
+      if (position === 'absolute' && !transformed && clip.position === 'static') continue;
+      position = clip.position;
+      const bounds = at.getBoundingClientRect();
+      if (clip.overflowX !== 'visible') {
+        left = Math.max(left, bounds.left);
+        right = Math.min(right, bounds.right);
+      }
+      if (clip.overflowY !== 'visible') {
+        top = Math.max(top, bounds.top);
+        bottom = Math.min(bottom, bounds.bottom);
+      }
+    }
+    return (right - left) * (bottom - top) > 0.99 && right > left && bottom > top ? { left, top, right, bottom } : null;
+  };
+
+  /** What shows (`clipped`) of the first of the element's boxes that shows at all; null when none does. */
+  const visibleArea = (element: Element): Area | null => {
+    for (const rect of rectsOf(element)) {
+      const area = clipped(element, rect);
+      if (area !== null) return area;
+    }
+    return null;
+  };
+
+  /** Scrolls the element to the centre of the view unless the centre of its box already shows (`visibleArea`). */
+  const scrollIfClipped = (element: Element): void => {
+    const area = visibleArea(element);
+    const rect = boxOf(element);
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    if (area !== null && x >= area.left && x <= area.right && y >= area.top && y <= area.bottom) return;
+    (scrollTarget(element) ?? element).scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+  };
 
   /** Not yet, for an element with no box a person could see. */
   const hidden: Outcome<never> = { kind: 'not-yet', reason: 'element is not visible' };
@@ -170,7 +232,7 @@ export function createDom(key: string) {
     target.dispatchEvent(new EventClass('change', { bubbles: true }));
   };
 
-  return { shadowOf, roots, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, fireEdit };
+  return { shadowOf, roots, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, fireEdit };
 }
 
 /**

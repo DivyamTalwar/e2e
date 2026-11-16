@@ -17,7 +17,7 @@ import {
   type ViewportPoint,
   type ViewportSize,
 } from '@e2e-dev/core/engine';
-import { actionPoint, boxSize, elementShown, hitBlocker, labelStandIn, scrollIntoViewIfNeeded, wheelAim } from '../in-page/actionability.ts';
+import { actionPoint, boxSize, elementShown, hitBlocker, labelStandIn, scrollFrameIntoView, scrollIntoViewIfNeeded, wheelAim } from '../in-page/actionability.ts';
 import { nextFrame } from '../in-page/document.ts';
 import type { Outcome } from '../in-page/dom.ts';
 import { checkState, fileInput, fileInputTakes, fill as fillElement, focus, focusTakesKeys, insertFocusedText, selectOption, setFileBytes, type FileBytes } from '../in-page/edits.ts';
@@ -264,14 +264,10 @@ async function focusOn(session: BidiSession, target: NodeTarget, signal: AbortSi
   await session.page.run(focus, [target.element], target.context);
 }
 
-/**
- * Scrolls each frame holding the element into view, outermost first,
- * without waiting for any to hold still: the element's own check waits
- * for that, and the hit test at its point sees every frame.
- */
+/** Scrolls each frame holding the element into view (`scrollFrameIntoView`), outermost first. */
 async function scrollFrames(session: BidiSession, target: NodeTarget): Promise<void> {
   for (const frame of session.frames.chain(target.context)) {
-    await session.page.run(actionPoint, [frame.element, { stable: false }], frame.context);
+    await session.page.run(scrollFrameIntoView, [frame.element], frame.context);
   }
 }
 
@@ -318,8 +314,10 @@ async function pointerPoint(session: BidiSession, target: NodeTarget, deadline: 
  * document, every iframe at it in its parent's. Each check after one that
  * found the element covered scrolls it into view another way
  * (`SCROLL_ALIGNMENTS`), as Playwright does to get an element out from
- * under a sticky header. `atControl` aims a label standing in for its
- * control at the control's point (`labelStandIn`).
+ * under a sticky header. Not yet, like any state of the element itself,
+ * while a frame holding it lays out no box or maps no point through (one
+ * scaled to nothing as it animates in). `atControl` aims a label standing
+ * in for its control at the control's point (`labelStandIn`).
  */
 function pointerAim(session: BidiSession, target: NodeTarget, enabled: boolean, atControl = false): () => Promise<Outcome<{ x: number; y: number }>> {
   let covered = 0;
@@ -330,7 +328,7 @@ function pointerAim(session: BidiSession, target: NodeTarget, enabled: boolean, 
     const maps = await session.frames.frameMaps(session.connection, target.context, session.browser.traits);
     const inverses = maps?.map(invert);
     if (maps === null || inverses === undefined || inverses.includes(undefined)) {
-      throw new EngineError('NOT_ACTIONABLE', 'element is in a frame that lays out no box, or whose transform the browser maps no point through', { retryable: false });
+      return { kind: 'not-yet', reason: 'element is in a frame that lays out no box, or whose transform the browser maps no point through' };
     }
     const point = maps.reduceRight((at, map) => project(map, at), { x: local.x, y: local.y });
     const top = { x: Math.round(point.x), y: Math.round(point.y) };
