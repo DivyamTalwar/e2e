@@ -262,6 +262,20 @@ describe('AttemptNetwork', () => {
     await expect(response.body()).rejects.toThrow('net::ERR_CONTENT_LENGTH_MISMATCH');
   });
 
+  it('tells a wait how its load ended after its tab closed', async () => {
+    const fake = new FakeBidi();
+    const { net, open, close } = network(fake);
+    await net.bind('user-1');
+    await open('tab');
+    const waiting = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
+    await settle();
+    fake.emit('network.responseStarted', { ...request('gone', `${SITE}/gone`, []), response: { url: `${SITE}/gone`, status: 200, headers: [] } });
+    const response = await waiting;
+    await close('tab');
+    fake.emit('network.fetchError', { ...request('gone', `${SITE}/gone`, []), errorText: 'net::ERR_ABORTED' });
+    await expect(response.body()).rejects.toThrow('net::ERR_ABORTED');
+  });
+
   it('adds one response collector for concurrent waits', async () => {
     const fake = new FakeBidi();
     const { net } = network(fake);

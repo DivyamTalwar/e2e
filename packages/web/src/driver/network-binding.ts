@@ -70,6 +70,8 @@ interface RequestRecord {
   authAnswered?: boolean;
   /** Response waits that matched it and have not finished reading its body. */
   waits: number;
+  /** Told how its hop in flight ends, with what failed the load if anything did: one for each response wait that matched the hop. */
+  loads: ((failure: Error | null) => void)[];
   /** Its response body as the collector kept it, read once for every wait that matched it. */
   body?: Promise<Buffer>;
 }
@@ -121,8 +123,8 @@ export class NetworkBinding {
   private collector: Promise<string> | undefined;
   private listeners: (() => void)[] = [];
   private readonly offSettle: (() => void)[];
-  /** Settles each response wait still pending, with the failure that ended it. */
-  private readonly waits = new Set<(failure: Error | null) => void>();
+  /** Fails each response wait that has matched no response yet. */
+  private readonly waits = new Set<(failure: Error) => void>();
   private closed = false;
 
   constructor(
@@ -131,8 +133,8 @@ export class NetworkBinding {
     private readonly options: NetworkBindingOptions,
   ) {
     this.offSettle = [
-      connection.on('network.responseCompleted', (event) => this.settle(event)),
-      connection.on('network.fetchError', (event) => this.settle(event)),
+      connection.on('network.responseCompleted', (event) => this.settle(event, null)),
+      connection.on('network.fetchError', (event) => this.settle(event, new Error(event.errorText))),
     ];
   }
 
@@ -268,7 +270,7 @@ export class NetworkBinding {
   /** The record of `request`, made on first sight, from `context`. */
   private record(request: string, context: string): RequestRecord {
     let record = this.requests.get(request);
-    if (record === undefined) this.requests.set(request, (record = { context, counted: false, settled: false, waits: 0 }));
+    if (record === undefined) this.requests.set(request, (record = { context, counted: false, settled: false, waits: 0, loads: [] }));
     return record;
   }
 
@@ -329,16 +331,20 @@ export class NetworkBinding {
   }
 
   /**
-   * A request's hop finished. A redirect hop (`mayRedirect`) stops counting
-   * and its record stays for the next hop; a last hop's record goes, unless
-   * a response wait still reads its body. The collectors let go of the
-   * bodies no one reads: the request body routes read while it was held, and
-   * a response body no wait matched.
+   * A request's hop finished, with the `failure` that ended its load if one
+   * did; the response waits that matched the hop are told. A redirect hop
+   * (`mayRedirect`) stops counting and its record stays for the next hop; a
+   * last hop's record goes, unless a response wait still reads its body. The
+   * collectors let go of the bodies no one reads: the request body routes
+   * read while it was held, and a response body no wait matched.
    */
-  private settle(event: { readonly context: string | null; readonly request: Network.RequestData; readonly response?: Network.ResponseData }): void {
+  private settle(event: { readonly context: string | null; readonly request: Network.RequestData; readonly response?: Network.ResponseData }, failure: Error | null): void {
     const id = event.request.request;
     const record = this.requests.get(id);
-    if (record !== undefined) this.stopCounting(record);
+    if (record !== undefined) {
+      this.stopCounting(record);
+      for (const ended of record.loads.splice(0)) ended(failure);
+    }
     if (event.response !== undefined && mayRedirect(event.response)) return;
     const read = record !== undefined && record.waits > 0;
     if (record !== undefined) record.settled = true;
@@ -352,12 +358,16 @@ export class NetworkBinding {
     void releaseQuietly(this.collector?.then((collector) => this.connection.send('network.disownData', { dataType: 'response', collector, request: id })));
   }
 
-  /** Retires the requests from any of `contexts`, which closed, whatever events their teardown still sends. */
+  /**
+   * Retires the requests from any of `contexts`, which closed, whatever
+   * events their teardown still sends. One a response wait still reads stays
+   * until the wait is told how its load ended.
+   */
   retire(contexts: ReadonlySet<string>): void {
     for (const [request, record] of this.requests) {
       if (!contexts.has(record.context)) continue;
       this.stopCounting(record);
-      this.requests.delete(request);
+      if (record.waits === 0) this.requests.delete(request);
     }
   }
 
@@ -378,72 +388,33 @@ export class NetworkBinding {
    * Resolves with the first response of the attempt's tab whose URL
    * `matches`, once its headers arrive (`network.responseStarted`, in the
    * session's subscription); start the wait before the action that triggers
-   * the response. Its body comes from the response collector, and reading it
-   * waits for the load to finish, then takes the body from the collector so
-   * the browser keeps it no longer. Loads that finish are tracked from the
-   * call on too, so one that completes in the same burst as its headers is
-   * never missed. The wait settles once, when the load ends or the binding
-   * does.
+   * the response. The wait joins the request's record as the headers arrive,
+   * so the ledger tells it how the load ends, even one that completes in the
+   * same burst as its headers. Its body comes from the response collector,
+   * and reading it waits for the load to finish, then takes the body from
+   * the collector so the browser keeps it no longer.
    */
   async waitForResponse(matches: (url: string) => boolean, onPage: (context: string | null) => boolean, signal: AbortSignal): Promise<ObservedResponse> {
     const connection = this.connection;
     if (this.closed) throw new Error('waitForResponse: the network ended');
-    const wanted = (event: { readonly context: string | null; readonly request: Network.RequestData }): boolean =>
-      onPage(event.context) && matches(stripHash(event.request.url));
-    const finished = new Map<string, string | null>();
-    let matched: string | undefined;
-    let started: (event: BidiEventParams<'network.responseStarted'>) => void = () => undefined;
-    let notStarted: (failure: Error) => void = () => undefined;
-    const first = new Promise<BidiEventParams<'network.responseStarted'>>((resolve, reject) => {
-      started = resolve;
-      notStarted = reject;
-    });
-    let loadedOk: () => void = () => undefined;
-    let loadFailed: (failure: Error) => void = () => undefined;
-    const loaded = new Promise<void>((resolve, reject) => {
-      loadedOk = resolve;
-      loadFailed = reject;
+    let claimed: RequestRecord | undefined;
+    let fail: (failure: Error) => void = () => undefined;
+    let offStart: () => void = () => undefined;
+    const first = new Promise<{ event: BidiEventParams<'network.responseStarted'>; record: RequestRecord; loaded: Promise<void> }>((resolve, reject) => {
+      fail = reject;
+      offStart = connection.on('network.responseStarted', (event) => {
+        if (claimed !== undefined || this.closed || !onPage(event.context) || !matches(stripHash(event.response.url))) return;
+        claimed = this.record(event.request.request, event.context ?? '');
+        claimed.waits += 1;
+        resolve({ event, record: claimed, loaded: hopLoaded(claimed) });
+      });
     });
     first.catch(() => undefined);
-    loaded.catch(() => undefined);
-    const offs: (() => void)[] = [];
-    const finish = (failure: Error | null): void => {
-      if (!this.waits.delete(finish)) return;
-      for (const off of offs.splice(0)) off();
-      if (failure === null) {
-        loadedOk();
-      } else {
-        notStarted(failure);
-        loadFailed(failure);
-      }
-    };
-    const ended = (event: { readonly context: string | null; readonly request: Network.RequestData }, failure: string | null): void => {
-      if (matched === undefined ? !wanted(event) : event.request.request !== matched) return;
-      finished.set(event.request.request, failure);
-      if (matched !== undefined) finish(failure === null ? null : new Error(failure));
-    };
-    this.waits.add(finish);
-    offs.push(
-      connection.on('network.responseCompleted', (event) => ended(event, null)),
-      connection.on('network.fetchError', (event) => ended(event, event.errorText)),
-    );
-    let claimed: RequestRecord | undefined;
-    const offStart = connection.on('network.responseStarted', (event) => {
-      if (claimed !== undefined || this.closed || !onPage(event.context) || !matches(stripHash(event.response.url))) return;
-      claimed = this.record(event.request.request, event.context ?? '');
-      claimed.waits += 1;
-      started(event);
-    });
+    this.waits.add(fail);
     try {
       const collector = await this.collectResponses();
-      const event = await raceAbort(first, signal, 'waitForResponse');
+      const { event, record, loaded } = await raceAbort(first, signal, 'waitForResponse');
       const request = event.request.request;
-      matched = request;
-      if (finished.has(request)) {
-        const failure = finished.get(request);
-        finish(failure == null ? null : new Error(failure));
-      }
-      const record = claimed!;
       let read: Promise<Buffer> | undefined;
       const readOnce = async (): Promise<Buffer> => {
         try {
@@ -465,16 +436,19 @@ export class NetworkBinding {
       };
     } catch (cause) {
       if (claimed !== undefined) claimed.waits -= 1;
-      finish(cause instanceof Error ? cause : new Error(String(cause)));
       throw cause;
     } finally {
       offStart();
+      this.waits.delete(fail);
     }
   }
 
-  /** Ends every response wait still pending with `failure`, as when the connection closes. */
+  /** Ends every response wait still pending with `failure`, as when the connection closes: one that matched no response yet, and one whose response is still loading. */
   endWaits(failure: Error): void {
-    for (const finish of this.waits) finish(failure);
+    for (const fail of this.waits) fail(failure);
+    for (const record of this.requests.values()) {
+      for (const ended of record.loads.splice(0)) ended(failure);
+    }
   }
 
   /**
@@ -506,6 +480,15 @@ export class NetworkBinding {
     this.installed.clear();
     return removals;
   }
+}
+
+/** Resolves when the hop of `record` in flight finishes loading; rejects with what failed the load, or ended the network before it. */
+function hopLoaded(record: RequestRecord): Promise<void> {
+  const loaded = new Promise<void>((resolve, reject) => {
+    record.loads.push((failure) => (failure === null ? resolve() : reject(failure)));
+  });
+  loaded.catch(() => undefined);
+  return loaded;
 }
 
 /** Whether `request` carries a body a collector may have kept. */
