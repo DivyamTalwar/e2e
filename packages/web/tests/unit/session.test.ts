@@ -6,6 +6,7 @@ import { clickSources, moveSources, pressDownSources, swipeSources, typeSource }
 import { fixtureKeyStroke, strokeSource, type KeyPhase } from '../../src/driver/keyboard.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
+import type { UserContextMode } from '../../src/driver/user-context.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
 import type { NodeRef } from '@e2e-dev/core/engine';
 import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
@@ -13,9 +14,9 @@ import type { ElementRef } from '../../src/driver/script.ts';
 
 const SHIFT = '';
 
-/** A session on `fake` that has opened nothing yet, on a 100 by 100 viewport. */
-function unopened(fake: FakeBidi, browser: BrowserName = 'chromium'): BidiSession {
-  const settings = { media: {}, viewport: { width: 100, height: 100 }, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };
+/** A session on `fake` that has opened nothing yet, on a 100 by 100 viewport, in a user context of its own unless `userContext` says otherwise. */
+function unopened(fake: FakeBidi, browser: BrowserName = 'chromium', userContext: UserContextMode = 'fresh'): BidiSession {
+  const settings = { media: {}, viewport: { width: 100, height: 100 }, initScripts: { forAttempt: () => [] }, permissions: [], userContext };
   const attempt = { protectedApp: new ProtectedApp(new Set(), undefined, undefined) };
   return new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS[browser] } as never, settings as never, attempt as never, new ContextTree());
 }
@@ -261,5 +262,34 @@ describe('BidiSession.close', () => {
     expect(fake.commands('browser.removeUserContext').map((command) => command.params['userContext'])).toEqual(['first']);
     await closing.close();
     expect(fake.commands('browser.removeUserContext').map((command) => command.params['userContext'])).toEqual(['first', 'second']);
+  });
+
+  it('closes every tab it opened in a browser it attached to, whichever is shown, and leaves the one it adopted', async () => {
+    const fake = new FakeBidi()
+      .on('network.addDataCollector', { result: { collector: 'c' } })
+      .on('browsingContext.getTree', { result: { contexts: [{ context: 'theirs', userContext: 'default' }] } })
+      .on('browsingContext.create', { result: { context: 'mine' } });
+    const attached = unopened(fake, 'chromium', 'adopt-tab');
+    await attached.openUserContext(new AbortController().signal);
+    await attached.newTab();
+    await attached.tabs.show(attached.tabs.find('theirs')!);
+    await attached.close();
+    expect(fake.commands('browsingContext.close').map((command) => command.params['context'])).toEqual(['mine']);
+    expect(fake.commands('browser.removeUserContext')).toEqual([]);
+  });
+
+  it('closes every tab it opened in the browser’s own user context when a reset replaces it', async () => {
+    const opened = ['first', 'second'];
+    const fake = new FakeBidi()
+      .on('network.addDataCollector', { result: { collector: 'c' } })
+      .on('browsingContext.create', () => ({ result: { context: opened.shift() } }));
+    const kept = unopened(fake, 'chromium', 'default');
+    await kept.openUserContext(new AbortController().signal);
+    await kept.ensureContext();
+    await kept.newTab();
+    await kept.tabs.show(kept.tabs.find('first')!);
+    await kept.replaceUserContext(new AbortController().signal);
+    expect(fake.commands('browsingContext.close').map((command) => command.params['context'])).toEqual(['first', 'second']);
+    expect(kept.tabs.list()).toEqual([]);
   });
 });

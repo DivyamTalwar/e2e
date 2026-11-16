@@ -128,7 +128,6 @@ export class BidiSession {
       settings,
       protectedApp: attempt.protectedApp,
       downloads: this.downloads,
-      ownTab: () => (this.context === this.adopted ? undefined : this.context),
     });
     this.video = attempt.recorder === undefined
       ? new DriverVideo(
@@ -195,29 +194,37 @@ export class BidiSession {
   /**
    * Replaces the user context with a clean one, the test's routes and added
    * init scripts carried over (`AttemptUserContext.replace`). Once the new
-   * one is in use, the tabs of the old one are forgotten, its recording
-   * ends, and the network binds to the new one, before the old one is
-   * removed. One whose `signal` aborted, or that a later replacement or
-   * `close` overtook, leaves all of that as it was.
+   * one is in use, the tabs of the old one are released and the network
+   * binds to the new one, before the old one is removed. One whose `signal`
+   * aborted, or that a later replacement or `close` overtook, leaves all of
+   * that as it was.
    */
   async replaceUserContext(signal: AbortSignal): Promise<void> {
     await this.userContext.replace(signal, async () => {
-      this.tabs.clear();
-      this.retireContext();
-      await this.video.contextClosing();
+      await this.releaseTabs();
       await this.network.bind(this.userContext.id);
     });
   }
 
-  /** Ends the recording of the attempt's tab, forgets its tabs, and removes its user context with its preload scripts. */
+  /** Releases the attempt's tabs and removes its user context with its preload scripts. */
   private async closeUserContext(): Promise<void> {
-    await this.video.contextClosing();
+    await this.releaseTabs();
+    await this.userContext.close();
+  }
+
+  /**
+   * Forgets the attempt's tabs and ends the recording of the shown one. A
+   * user context the attempt removes closes them with it. One that stays
+   * (the browser's own) closes none, so every tab the attempt opened there
+   * is closed here, whichever is shown; the tab it adopted stays open.
+   */
+  private async releaseTabs(): Promise<void> {
+    const opened = this.tabs.list().filter((tab) => tab.context !== this.adopted);
     this.tabs.clear();
-    try {
-      await this.userContext.close();
-    } finally {
-      this.retireContext();
-    }
+    this.retireContext();
+    await this.video.contextClosing();
+    if (this.settings.userContext === 'fresh') return;
+    await Promise.all(opened.map((tab) => releaseQuietly(this.connection.send('browsingContext.close', { context: tab.context }))));
   }
 
   /** The attempt's tab; `INVALID_STATE` before the first open. */

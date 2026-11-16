@@ -60,6 +60,20 @@ describe('attachBrowser', () => {
     expect((await second.browser.cookies()).map(({ name, value }) => ({ name, value }))).toEqual([{ name: 'session', value: 'qa%40example.com' }]);
   });
 
+  it('closes the tabs it opened when it detaches, whichever tab is active, and leaves the open tab', async () => {
+    const before = await pages(endpoint);
+    const attached = await attachBrowser(endpoint);
+    try {
+      const opened = await attached.browser.newTab();
+      expect(await pages(endpoint)).toHaveLength(before.length + 1);
+      await attached.browser.tabs()[0]!.activate();
+      expect(opened.isActive()).toBe(false);
+    } finally {
+      await attached.close();
+    }
+    expect(await pages(endpoint)).toEqual(before);
+  });
+
   it('routes and waits for the requests of a frame the tab loaded before it attached', async () => {
     server.serve('/data', (_request, response) => {
       response.writeHead(200, { 'content-type': 'text/plain' });

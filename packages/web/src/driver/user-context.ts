@@ -59,19 +59,12 @@ export interface UserContextHost {
   readonly protectedApp: ProtectedApp;
   /** The attempt's downloads, whose directory each user context saves into. */
   readonly downloads: AttemptDownloads;
-  /**
-   * The tab the attempt opened in the user context in use, which is closed
-   * with a user context that itself stays (the browser's own); undefined
-   * when it has none, or adopted the one it found open.
-   */
-  readonly ownTab: () => string | undefined;
 }
 
-/** A user context the attempt set up, with the preload scripts scoped to it, and the tab the attempt opened in it. */
+/** A user context the attempt set up, with the preload scripts scoped to it. */
 interface ScopedUserContext {
   readonly userContext: string;
   readonly preloads: readonly string[];
-  readonly ownTab: string | undefined;
 }
 
 /** The user context one attempt runs in, through every replacement, until the attempt's close removes it. */
@@ -132,7 +125,7 @@ export class AttemptUserContext {
 
   /** Forgets the user context in use and removes it with its preload scripts. */
   async close(): Promise<void> {
-    const current = { userContext: this.current, preloads: this.preloads, ownTab: this.host.ownTab() };
+    const current = { userContext: this.current, preloads: this.preloads };
     this.current = '';
     this.preloads = [];
     await this.drop(current);
@@ -247,10 +240,10 @@ export class AttemptUserContext {
       if (failed !== undefined) throw failed.reason;
       if (overtaken()) throw cancelled('the attempt closed or gave up while its user context opened');
     } catch (cause) {
-      await releaseQuietly(this.drop({ userContext, preloads, ownTab: undefined }));
+      await releaseQuietly(this.drop({ userContext, preloads }));
       throw cause;
     }
-    const previous = { userContext: this.current, preloads: this.preloads, ownTab: this.host.ownTab() };
+    const previous = { userContext: this.current, preloads: this.preloads };
     this.current = userContext;
     this.preloads = preloads;
     this.granted.clear();
@@ -262,13 +255,12 @@ export class AttemptUserContext {
    * Removes a user context the attempt no longer uses, which closes its
    * tabs, then its preload scripts: removing a script from a live tab races
    * the tab's close inside the Chromium mapper. The browser's own user
-   * context stays; only the tab the attempt opened there is closed.
+   * context stays, with its tabs: the session closes the ones the attempt
+   * opened there before it drops the scripts.
    */
   private async drop(dropped: ScopedUserContext): Promise<void> {
     const { connection } = this.host;
-    if (dropped.userContext === DEFAULT_USER_CONTEXT) {
-      if (dropped.ownTab !== undefined) await releaseQuietly(connection.send('browsingContext.close', { context: dropped.ownTab }));
-    } else if (dropped.userContext !== '') this.unremoved.add(dropped.userContext);
+    if (dropped.userContext !== DEFAULT_USER_CONTEXT && dropped.userContext !== '') this.unremoved.add(dropped.userContext);
     try {
       await this.removeOwed();
     } finally {
