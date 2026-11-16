@@ -143,8 +143,6 @@ class BidiRefs {
 export class BidiSession {
   /** The user context the attempt runs in, with what is scoped to it. */
   readonly userContext: AttemptUserContext;
-  /** The tab the attempt shows, which every read and action is on. */
-  context: string | undefined;
   /** The attempt's open tabs, in the order they opened. */
   readonly tabs: AttemptTabs;
   /** The tab's keyboard and mouse, the only sender of input. */
@@ -163,6 +161,8 @@ export class BidiSession {
   readonly navigations = new OwnNavigations();
   /** The viewport `browser.setViewport` set for the rest of the attempt; the configured one until then. */
   private viewport: ViewportSize | null;
+  /** The tab the attempt shows: the one its tabs publish (`TabHost.publish`), or its own once that opened. */
+  private shown: string | undefined;
   private creating: Promise<string> | undefined;
   /** The tab the attempt found open and adopted (`existingTab`), which it never closes. */
   private adopted: string | undefined;
@@ -216,7 +216,7 @@ export class BidiSession {
       },
       publish: (context) => {
         this.retireContext();
-        this.context = context;
+        this.shown = context;
       },
       record: async (context, closed) => {
         if (closed) await this.video.contextClosed();
@@ -236,6 +236,11 @@ export class BidiSession {
   /** The browser's BiDi connection. */
   get connection(): BidiConnection {
     return this.browser.connection;
+  }
+
+  /** The tab the attempt shows, which every read and action is on. */
+  get context(): string | undefined {
+    return this.shown;
   }
 
   /** Whether `context` belongs to this attempt's user context. */
@@ -308,28 +313,35 @@ export class BidiSession {
 
   /**
    * Opens the attempt's tab in its user context, or adopts the one already
-   * open there when the settings ask for it, refusing one that opened after
-   * the user context was replaced.
+   * open there when the settings ask for it, at the attempt's viewport.
    */
   private async createContext(): Promise<string> {
-    const connection = this.connection;
     const userContext = this.userContext.id;
     if (userContext === '') throw invalidState('the attempt has no user context to open a tab in');
-    this.adopted = this.settings.userContext === 'adopt-tab' ? await this.openTab(userContext) : undefined;
-    const context = this.adopted ?? (await connection.send('browsingContext.create', {
-      type: this.browser.traits.newContext,
-      userContext,
-    })).context;
-    if (userContext !== this.userContext.id) {
-      if (context !== this.adopted) await releaseQuietly(connection.send('browsingContext.close', { context }));
-      throw new EngineError('NODE_STALE', 'the attempt replaced its user context while a tab opened', { retryable: true });
-    }
-    await this.network.addContext(context);
-    if (this.viewport !== null) await connection.send('browsingContext.setViewport', { context, viewport: this.viewport });
-    this.context = context;
+    this.adopted = this.settings.userContext === 'adopt-tab' ? await this.existingTab(userContext) : undefined;
+    const context = await this.openTab(userContext, this.adopted);
+    if (this.viewport !== null) await this.connection.send('browsingContext.setViewport', { context, viewport: this.viewport });
+    this.shown = context;
     this.tabs.own(context, true);
     this.input.reset();
     await this.video.contextOpened(context);
+    return context;
+  }
+
+  /**
+   * A tab in `userContext` that the network covers: `adopted`, the tab the
+   * attempt found open there, else a new one. One that opened after the
+   * attempt replaced its user context is closed again, unless adopted, and
+   * refused.
+   */
+  private async openTab(userContext: string, adopted: string | undefined): Promise<string> {
+    const connection = this.connection;
+    const context = adopted ?? (await connection.send('browsingContext.create', { type: this.browser.traits.newContext, userContext })).context;
+    if (userContext !== this.userContext.id) {
+      if (context !== adopted) await releaseQuietly(connection.send('browsingContext.close', { context }));
+      throw new EngineError('NODE_STALE', 'the attempt replaced its user context while a tab opened', { retryable: true });
+    }
+    await this.network.addContext(context);
     return context;
   }
 
@@ -343,14 +355,7 @@ export class BidiSession {
       const own = await this.ensureContext();
       return this.tabs.find(own) ?? this.tabs.own(own, true);
     }
-    const userContext = this.userContext.id;
-    const { context } = await this.connection.send('browsingContext.create', { type: this.browser.traits.newContext, userContext });
-    if (userContext !== this.userContext.id) {
-      await releaseQuietly(this.connection.send('browsingContext.close', { context }));
-      throw new EngineError('NODE_STALE', 'the attempt replaced its user context while a tab opened', { retryable: true });
-    }
-    await this.network.addContext(context);
-    const tab = this.tabs.own(context, false);
+    const tab = this.tabs.own(await this.openTab(this.userContext.id, undefined), false);
     try {
       await this.tabs.show(tab);
     } catch (cause) {
@@ -400,7 +405,7 @@ export class BidiSession {
   }
 
   /** The first top-level tab already open in `userContext`, if any. */
-  private async openTab(userContext: string): Promise<string | undefined> {
+  private async existingTab(userContext: string): Promise<string | undefined> {
     const { contexts } = await this.connection.send('browsingContext.getTree', { maxDepth: 0 });
     return contexts.find((info) => info.userContext === userContext)?.context;
   }
@@ -443,8 +448,8 @@ export class BidiSession {
    * its refs, frames, and input state, so the next use opens a fresh one
    * unless another tab is shown.
    */
-  retireContext(): void {
-    this.context = undefined;
+  private retireContext(): void {
+    this.shown = undefined;
     this.refs.clear();
     this.frames.clear();
     this.input.reset();

@@ -11,6 +11,7 @@ import { FrameRegistry, inViewport, pageParts, resolveFrames, splitFrames } from
 import { project, type Projection } from '../../src/driver/projection.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
+import { ProtectedApp } from '../../src/protected-app.ts';
 import type { FrameBox } from '../../src/in-page/readers.ts';
 import { FakeBidi } from '../helpers/bidi-fake.ts';
 import { ElementRef } from '../../src/driver/script.ts';
@@ -40,7 +41,7 @@ interface ScriptedFrame {
  * it is hidden, and a 100 by 100 content box at (10, 20)) and each iframe's
  * `contentWindow`, which it answers in a sandbox realm alone.
  */
-function frames(iframes: Record<string, ScriptedFrame[]>): { fake: FakeBidi; session: BidiSession } {
+async function frames(iframes: Record<string, ScriptedFrame[]>): Promise<{ fake: FakeBidi; session: BidiSession }> {
   const fake = new FakeBidi().on('script.callFunction', (params) => {
     const target = params['target'] as { context: string; sandbox?: string };
     const found = iframes[target.context] ?? [];
@@ -60,14 +61,21 @@ function frames(iframes: Record<string, ScriptedFrame[]>): { fake: FakeBidi; ses
     }
     return { result: { type: 'success', realm: 'r', result: { type: 'object', value } } };
   });
-  const session = new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS.chromium } as never, { configuredHeaders: () => undefined, holdRequests: false, media: {}, viewport: null } as never, { credentials: undefined } as never, new ContextTree());
-  session.context = 'top';
+  fake
+    .on('browser.createUserContext', { result: { userContext: 'mine' } })
+    .on('network.addDataCollector', { result: { collector: 'c' } })
+    .on('browsingContext.create', { result: { context: 'top' } });
+  const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };
+  const attempt = { protectedApp: new ProtectedApp(new Set(), undefined, undefined) };
+  const session = new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS.chromium } as never, settings as never, attempt as never, new ContextTree());
+  await session.openUserContext(new AbortController().signal);
+  await session.ensureContext();
   return { fake, session };
 }
 
 describe('resolveFrames', () => {
   it('walks each selector into the document of the frame before it and records the chain', async () => {
-    const { fake, session } = frames({ top: [{ element: 'outer', window: 'outer-doc' }], 'outer-doc': [{ element: 'inner', window: 'inner-doc' }] });
+    const { fake, session } = await frames({ top: [{ element: 'outer', window: 'outer-doc' }], 'outer-doc': [{ element: 'inner', window: 'inner-doc' }] });
     const step = { content: { x: 10, y: 20, width: 100, height: 100 }, scale: { x: 1, y: 1 } };
     await expect(resolveFrames(session, ['#outer', '#inner'], OPTIONS)).resolves.toEqual({ context: 'inner-doc', hidden: false, boxes: [step, step] });
     expect(session.frames.chain('inner-doc')).toEqual([
@@ -79,15 +87,15 @@ describe('resolveFrames', () => {
   });
 
   it('reads a document as hidden when a frame on the way is', async () => {
-    const { session } = frames({ top: [{ element: 'outer', window: 'outer-doc', hidden: true }], 'outer-doc': [{ element: 'inner', window: 'inner-doc' }] });
+    const { session } = await frames({ top: [{ element: 'outer', window: 'outer-doc', hidden: true }], 'outer-doc': [{ element: 'inner', window: 'inner-doc' }] });
     await expect(resolveFrames(session, ['#outer', '#inner'], OPTIONS)).resolves.toMatchObject({ context: 'inner-doc', hidden: true });
     await expect(resolveFrames(session, [], OPTIONS)).resolves.toEqual({ context: 'top', hidden: false, boxes: [] });
   });
 
   it('is retryable FRAME_NOT_FOUND for no match or no document and FRAME_AMBIGUOUS for two', async () => {
-    await expect(resolveFrames(frames({}).session, ['#editor'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', retryable: true });
-    await expect(resolveFrames(frames({ top: [{ element: 'a' }] }).session, ['#editor'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', retryable: true });
-    await expect(resolveFrames(frames({ top: [{ element: 'a' }, { element: 'b' }] }).session, ['iframe'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_AMBIGUOUS' });
+    await expect(resolveFrames((await frames({})).session, ['#editor'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', retryable: true });
+    await expect(resolveFrames((await frames({ top: [{ element: 'a' }] })).session, ['#editor'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', retryable: true });
+    await expect(resolveFrames((await frames({ top: [{ element: 'a' }, { element: 'b' }] })).session, ['iframe'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_AMBIGUOUS' });
   });
 });
 
