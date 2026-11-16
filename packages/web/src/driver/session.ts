@@ -292,16 +292,6 @@ export class BidiSession {
   }
 
   /**
-   * A top-level browsing context of the attempt closed: a tab leaves the
-   * tabs, and when it was the shown one the tab shown next takes its place
-   * (`AttemptTabs.destroyed`). A shown context that was no tab is forgotten,
-   * so the next use opens a fresh one.
-   */
-  contextClosed(context: string): void {
-    if (!this.tabs.destroyed(context) && context === this.context) this.retireContext();
-  }
-
-  /**
    * Runs a read of the shown tab. A tab that closes under the read makes it
    * stale, as a navigation does: nothing was dispatched, and the read
    * repeats on the tab shown next. `read` is told the tab it reads.

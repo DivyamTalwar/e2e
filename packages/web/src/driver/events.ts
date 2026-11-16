@@ -119,7 +119,7 @@ export function routeEvents(connection: BidiConnection, contexts: ContextTree, c
       if (session !== undefined && contexts.top(info.context) !== info.context) {
         session.network.retire(info.context);
       } else if (session !== undefined) {
-        session.contextClosed(info.context);
+        session.tabs.destroyed(info.context);
         void session.network.removeContext(info.context).catch((cause: unknown) => session.latch.latch(asError(cause)));
       }
       joinedBy.delete(info.context);

@@ -192,7 +192,7 @@ describe('BidiInput.send', () => {
     const fake = new FakeBidi().on('input.performActions', { result: {} });
     const held = await session(fake);
     await held.input.send([keySource('Shift', 'keyDown', false)]);
-    held.contextClosed('tab');
+    held.tabs.destroyed('tab');
     await held.ensureContext();
     await held.input.send([keySource('Shift', 'keyDown', false)]);
     expect(keyActions(fake).at(-1)).toEqual([{ type: 'keyDown', value: SHIFT }]);

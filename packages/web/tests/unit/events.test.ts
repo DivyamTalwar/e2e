@@ -24,7 +24,6 @@ async function attempt(owners: ContextTree, userContext: string) {
   const session = {
     context: undefined as string | undefined,
     tabs: undefined as unknown as AttemptTabs,
-    contextClosed: (context: string) => void session.tabs.destroyed(context),
     navigations: { inFlight: false },
     lifetime: new AbortController().signal,
     latch,
