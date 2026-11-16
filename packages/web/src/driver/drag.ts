@@ -15,7 +15,7 @@ import type { Protocol } from 'devtools-protocol';
 import { EngineError, raceAbort } from '@e2e-dev/core/engine';
 import type { BidiInput } from './input.ts';
 import { releaseQuietly, unlessStale } from '../errors.ts';
-import { dragPath, mouse, moveActions } from './input-sources.ts';
+import { dragPath, mouse, moveActions, pressDownSources, releaseSources } from './input-sources.ts';
 import type { BidiConnection } from './connection.ts';
 import { callFunction } from './script.ts';
 
@@ -81,7 +81,7 @@ export async function chromiumDrag(
     subscription = await connection.subscribeExtension(['goog:cdp.Input.dragIntercepted'], [context]);
     signal.throwIfAborted();
     pressed = true;
-    await input.send([mouse([{ type: 'pointerMove', x: from.x, y: from.y, origin: 'viewport' }, { type: 'pointerDown', button: 0 }])], signal);
+    await input.send(pressDownSources(from.x, from.y), signal);
     const [, first, ...rest] = dragPath(from, await resolveTarget());
     const last = rest.at(-1) ?? first!;
     // Armed after the press: armed before, it latches onto the move to the press point and misses the drag.
@@ -107,7 +107,7 @@ export async function chromiumDrag(
   } finally {
     off();
     if (intercepting) await releaseQuietly(input.interceptDrags(false));
-    if (pressed) await releaseQuietly(input.send([mouse([{ type: 'pointerUp', button: 0 }])]));
+    if (pressed) await releaseQuietly(input.send(releaseSources()));
     if (subscription !== undefined) await releaseQuietly(connection.send('session.unsubscribe', { subscriptions: [subscription] }));
   }
 }
@@ -152,7 +152,7 @@ export async function firefoxDrag(
   stepMs: number,
   signal: AbortSignal,
 ): Promise<void> {
-  await input.send([mouse([{ type: 'pointerMove', x: from.x, y: from.y, origin: 'viewport' }, { type: 'pointerDown', button: 0 }])], signal);
+  await input.send(pressDownSources(from.x, from.y), signal);
   let released = false;
   try {
     const [, ...steps] = dragPath(from, await resolveTarget());
@@ -160,7 +160,7 @@ export async function firefoxDrag(
     await input.send([mouse([...moveActions(steps, stepMs), { type: 'pointerUp', button: 0 }])], signal);
     released = true;
   } finally {
-    if (!released) await releaseQuietly(input.send([mouse([{ type: 'pointerUp', button: 0 }])]));
+    if (!released) await releaseQuietly(input.send(releaseSources()));
   }
   const failed = await Promise.all(documents.map((each) => unlessStale(callFunction(connection, each, undropped), false)));
   if (failed.includes(true)) {
