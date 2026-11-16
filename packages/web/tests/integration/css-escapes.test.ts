@@ -40,18 +40,20 @@ async function escaped(id: string): Promise<string> {
   return (await page.evaluate((value: string) => CSS.escape(value), id)) as string;
 }
 
-/** The light-DOM path of each element `selector` matches on the driver. */
+/** The light-DOM path of each element `selector` matches on the driver, sorted: the matches are a set. */
 async function driverMatches(selector: string): Promise<string[]> {
   const refs = await selectElements(page, selector);
-  return (await page.evaluate((...elements: Element[]) => elements.map((element) => `${element.localName}#${element.id || element.parentElement?.id || (element.getRootNode() as ShadowRoot).host?.id}`), ...refs)) as string[];
+  const paths = (await page.evaluate((...elements: Element[]) => elements.map((element) => `${element.localName}#${element.id || element.parentElement?.id || (element.getRootNode() as ShadowRoot).host?.id}`), ...refs)) as string[];
+  return paths.toSorted();
 }
 
-/** The same paths for what the browser's `querySelectorAll` matches. */
+/** The same paths for what the browser's `querySelectorAll` matches, sorted like `driverMatches`. */
 async function nativeMatches(selector: string): Promise<string[]> {
-  return (await page.evaluate(
+  const paths = (await page.evaluate(
     (value: string) => [...document.querySelectorAll(value)].map((element) => `${element.localName}#${element.id || element.parentElement?.id || (element.getRootNode() as ShadowRoot).host?.id}`),
     selector,
   )) as string[];
+  return paths.toSorted();
 }
 
 describe('CSS escapes on the BiDi driver', () => {

@@ -8,7 +8,7 @@ import { ElementRef } from '../../src/driver/script.ts';
 import { selectChain } from '../../src/in-page/select-chain.ts';
 import type { BidiPage } from './bidi-page.ts';
 
-/** The elements `selector` matches in the page's document, in the chain's order. */
+/** The elements `selector` matches in the page's document, as a set: their order means nothing. */
 export async function selectElements(page: BidiPage, selector: string): Promise<ElementRef[]> {
   const found = await page.evaluate(selectChain, pageParts(selector));
   if (typeof found === 'string') throw unparsedSelector(selector, found);

@@ -18,14 +18,14 @@ afterAll(async () => {
   await page?.close();
 });
 
-/** The tag names of the elements `selector` matches on the driver. */
+/** The tag names of the elements `selector` matches on the driver, sorted: the matches are a set. */
 async function names(selector: string): Promise<string[]> {
-  return localNames(page, await selectElements(page, selector));
+  return (await localNames(page, await selectElements(page, selector))).toSorted();
 }
 
-/** The tag names `querySelectorAll` matches for `selector`. */
+/** The tag names `querySelectorAll` matches for `selector`, sorted like `names`. */
 async function native(selector: string): Promise<string[]> {
-  return (await page.evaluate((value: string) => [...document.querySelectorAll(value)].map((element) => element.localName), selector)) as string[];
+  return ((await page.evaluate((value: string) => [...document.querySelectorAll(value)].map((element) => element.localName), selector)) as string[]).toSorted();
 }
 
 describe('selector chains on the BiDi driver', () => {
@@ -37,7 +37,7 @@ describe('selector chains on the BiDi driver', () => {
   });
 
   it('reads a universal selector inside a chain as CSS', async () => {
-    expect(await names('section >> *')).toEqual(['div', 'button']);
+    expect(await names('section >> *')).toEqual(['button', 'div']);
     expect(await names('* >> button')).toEqual(['button']);
     expect(await names('css=*')).toEqual(await native('*'));
   });
