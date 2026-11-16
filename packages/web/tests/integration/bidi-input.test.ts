@@ -120,4 +120,12 @@ describe('input', () => {
     await page.engine.perform!(twin!.ref, { kind: 'tap' }, page.op());
     await expect(page.engine.perform!(twin!.ref, { kind: 'tap' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', message: expect.stringContaining('now matches 2 elements') });
   });
+
+  it('counts a fill the field took and then refused as input, so a ref reused after it is checked again', async () => {
+    await page.setContent('<input id=n type=number oninput="document.body.append(Object.assign(document.createElement(\'button\'), { className: \'twin\', textContent: \'twin\' }))"><button class=twin>twin</button>');
+    const [twin] = await page.locate(bySelector('.twin'));
+    const [number] = await page.locate(bySelector('#n'));
+    await expect(page.engine.perform!(number!.ref, { kind: 'fill', value: '0x10', sensitive: false }, page.op())).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('Malformed value') });
+    await expect(page.engine.perform!(twin!.ref, { kind: 'tap' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', message: expect.stringContaining('elements') });
+  });
 });

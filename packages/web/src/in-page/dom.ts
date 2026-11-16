@@ -13,8 +13,9 @@ import { CLOSED_SHADOW_ROOTS_KEY } from './closed-shadow.ts';
  * decides what the driver does next (`settle` in `actions.ts`): `ok` is done,
  * with whatever the function read; `detached` is an element out of the
  * document; `not-yet` is a state the app may leave, polled until the
- * deadline; `refused` is one it will not. `reason` is the words a failure
- * carries, written for a person and never matched.
+ * deadline; `refused` is one it will not, and may follow a change the
+ * function already made. `reason` is the words a failure carries, written
+ * for a person and never matched.
  */
 export type Outcome<T extends object = object> =
   | ({ readonly kind: 'ok' } & T)

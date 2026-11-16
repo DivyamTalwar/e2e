@@ -366,8 +366,10 @@ async function fill(session: BidiSession, target: NodeTarget, value: string, dea
 
 /**
  * Runs a page mutation, polling while the page answers not yet: such an
- * answer changed nothing, so it does not count as dispatched; a mutation
- * that ran, or threw midway, does. Nothing runs once `signal` aborted.
+ * answer changed nothing, as one of a detached element did not, so neither
+ * counts as dispatched. A mutation that ran, threw midway, or refused does:
+ * a fill refuses a malformed number only once the field took it. Nothing
+ * runs once `signal` aborted.
  */
 async function mutateWhenReady(session: BidiSession, deadline: Deadline, signal: AbortSignal, prefix: string, mutate: () => Promise<Outcome>): Promise<void> {
   await settle(deadline, signal, async () => {
@@ -378,7 +380,7 @@ async function mutateWhenReady(session: BidiSession, deadline: Deadline, signal:
       session.mutated();
       throw cause;
     }
-    if (outcome.kind === 'ok') session.mutated();
+    if (outcome.kind === 'ok' || outcome.kind === 'refused') session.mutated();
     return outcome;
   }, prefix);
 }
