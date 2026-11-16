@@ -2,13 +2,15 @@
  * The video's segment bookkeeping over a scripted Firefox peer, whose
  * screencast is plain BiDi: one segment per tab, a failed finish that still
  * left a file kept, a lost segment reported once, and every hook a no-op
- * until armed. The real screencasts are covered by the lifecycle
- * integration test on each browser.
+ * until armed. And its policy on Chromium without a real browser: a segment
+ * that cannot start never fails the tab that opened, `stop` reports it once,
+ * and a recorder whose own start failed stays disarmed. The real screencasts
+ * are covered by the lifecycle integration test on each browser.
  */
 
+import path from 'node:path';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EngineError } from '@e2e-dev/core/engine';
 import { BidiVideo, type VideoOptions } from '../../src/driver/video.ts';
@@ -177,5 +179,31 @@ describe('BidiVideo', () => {
     await recorder.contextClosing();
     expect(await recorder.stop()).toEqual([]);
     expect(bidi.sent).toEqual([]);
+  });
+});
+
+/** A Chromium recorder on `fake` whose CDP session never opens, with an ffmpeg that is never reached. */
+function unstartable(fake: FakeBidi): BidiVideo {
+  fake.on('goog:cdp.getSession', { error: 'unknown error', message: 'no CDP session for this tab' });
+  return new BidiVideo(fake.connection, BROWSER_TRAITS.chromium, mkdtempSync(path.join(tmpdir(), 'e2e-video-test-')), {}, { E2E_FFMPEG_PATH: process.execPath });
+}
+
+describe('a segment that cannot start', () => {
+  it('lets a tab open when its segment cannot start, and reports the lost segment from stop once', async () => {
+    const video = unstartable(new FakeBidi());
+    await video.arm(undefined, VIEWPORT);
+    await expect(video.contextOpened('tab', VIEWPORT)).resolves.toBeUndefined();
+    await expect(video.stop()).rejects.toMatchObject({ code: 'ENGINE_FAILURE', message: expect.stringContaining('no CDP session for this tab') });
+    await expect(video.stop()).resolves.toEqual([]);
+  });
+
+  it('stays disarmed after its own start failed, so later tabs start no segment', async () => {
+    const fake = new FakeBidi();
+    const video = unstartable(fake);
+    await expect(video.arm('tab', VIEWPORT)).rejects.toThrow('no CDP session for this tab');
+    const tried = fake.commands('goog:cdp.getSession').length;
+    await video.contextOpened('tab-2', VIEWPORT);
+    expect(fake.commands('goog:cdp.getSession')).toHaveLength(tried);
+    await expect(video.stop()).resolves.toEqual([]);
   });
 });
