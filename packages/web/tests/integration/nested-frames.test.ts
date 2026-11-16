@@ -188,3 +188,36 @@ describe('a frame located through before its document loaded', () => {
     expect(await page.locate(withinFrames(['#late'], buttonNamed('Clicked')))).toHaveLength(1);
   });
 });
+
+describe('a position inside a framed node', () => {
+  let page: WebSession;
+
+  beforeAll(async () => {
+    page = await startWebSession();
+  });
+
+  afterAll(async () => {
+    await page.close();
+  });
+
+  it('clicks at the offset from a bordered node\'s origin, past the frame\'s own offset', async () => {
+    const landed = "addEventListener('click', (event) => { top.document.title = (event.target.id || 'page') + ' ' + event.clientX + ',' + event.clientY; })";
+    const inner = `<style>body { margin: 0 } #target { margin: 20px 0 0 30px; width: 100px; height: 60px; border: 10px solid }</style><div id="target"></div><script>${landed}</script>`;
+    await page.setContent(`<style>body { margin: 0 }</style><iframe id="pad" style="position: absolute; left: 200px; top: 150px; width: 300px; height: 200px; border: 0" srcdoc="${attribute(inner)}"></iframe><script>${landed}</script>`);
+    await page.waitForFrames();
+    await page.browser.frameLocator('#pad').locator('#target').click({ position: { x: 5, y: 7 } });
+    // The padding box starts at (40, 30) of the frame's document, past the 10px border.
+    await expect.poll(() => page.browser.evaluate(() => document.title)).toBe('target 45,37');
+  });
+
+  it('observes and locates a node in a scaled frame at the box the page shows it in', async () => {
+    const inner = '<style>body { margin: 0 } #target { margin: 20px 0 0 30px; width: 100px; height: 60px; border: 10px solid }</style><div id="target" data-testid="target"></div>';
+    await page.setContent(`<style>body { margin: 0 }</style><iframe id="pad" style="position: absolute; left: 200px; top: 150px; width: 300px; height: 200px; border: 0; transform-origin: 0 0; transform: scale(0.5)" srcdoc="${attribute(inner)}"></iframe>`);
+    await page.waitForFrames();
+    const shown = { rect: { x: 215, y: 160, width: 60, height: 40 }, origin: { x: 220, y: 165 } };
+    const [located] = await page.locate(withinFrames(['#pad'], { kind: 'selector', selector: '#target' }));
+    expect({ rect: located!.rect, origin: located!.origin }).toEqual(shown);
+    const observed = (await page.nodes()).find((node) => node.testId === 'target')!;
+    expect({ rect: observed.rect, origin: observed.origin }).toEqual(shown);
+  });
+});

@@ -28,17 +28,8 @@ export interface NodeTarget {
 
 type Rect = NonNullable<SemanticNode['rect']>;
 
-/** A frame's viewport in the top-level one: where its coordinates start, how much they scale, and the part of it its holders show. */
-export interface FrameView {
-  readonly origin: Point;
-  readonly scale: Point;
-  readonly clip: Rect;
-}
-
-/** A rect in a frame's viewport, in the viewport `view` places that frame's in. */
-function toParent(rect: Rect, view: Pick<FrameView, 'origin' | 'scale'>): Rect {
-  return { x: view.origin.x + rect.x * view.scale.x, y: view.origin.y + rect.y * view.scale.y, width: rect.width * view.scale.x, height: rect.height * view.scale.y };
-}
+/** A node's box, and the point an offset into the node is measured from. */
+type Box = Pick<SemanticNode, 'rect' | 'origin'>;
 
 /** `rect` cut to `bounds`; undefined when nothing of it is inside. */
 function clipTo(rect: Rect, bounds: Rect): Rect | undefined {
@@ -50,26 +41,22 @@ function clipTo(rect: Rect, bounds: Rect): Rect | undefined {
 }
 
 /**
- * Where the viewport of the document a frame chain leads to sits in the
- * top-level one (`FrameView`), from how each frame on the way is laid out,
- * outermost first. Undefined for the top level, null when a frame on the
- * way lays out no box, is turned, or shows none of it.
+ * A node box a frame's document measured against its own viewport, in the
+ * viewport of the document that holds the frame: `rect` scaled and shifted
+ * by the frame's content box and clipped to it, and none when nothing of it
+ * is inside the frame, or the frame lays out no box or is turned. `origin`
+ * is scaled and shifted but never clipped, and a clip that moves the box's
+ * corner keeps the unclipped corner as `origin`, so an offset into the node
+ * lands where it would at the top level.
  */
-export function frameView(boxes: readonly FrameBox[]): FrameView | null | undefined {
-  let view: FrameView | undefined;
-  for (const box of boxes) {
-    if (box === null || 'turned' in box) return null;
-    const { content, scale } = box;
-    if (view === undefined) {
-      view = { origin: { x: content.x, y: content.y }, scale, clip: content };
-      continue;
-    }
-    const placed = toParent(content, view);
-    const clip = clipTo(placed, view.clip);
-    if (clip === undefined) return null;
-    view = { origin: { x: placed.x, y: placed.y }, scale: { x: view.scale.x * scale.x, y: view.scale.y * scale.y }, clip };
-  }
-  return view;
+export function placeInFrame(box: Box, frame: FrameBox): Box {
+  if (box.rect === undefined || frame === null || 'turned' in frame) return {};
+  const { content, scale } = frame;
+  const at = (point: Point): Point => ({ x: content.x + point.x * scale.x, y: content.y + point.y * scale.y });
+  const rect = clipTo({ ...at(box.rect), width: box.rect.width * scale.x, height: box.rect.height * scale.y }, content);
+  if (rect === undefined) return {};
+  const origin = at(box.origin ?? box.rect);
+  return origin.x === rect.x && origin.y === rect.y ? { rect } : { rect, origin };
 }
 
 /**
@@ -293,14 +280,12 @@ export function splitFrames(expression: LocatorExpression): { chain: string[]; i
 }
 
 /**
- * A node read inside a frame, in the top-level viewport: its box shifted by
- * the frame's origin and scale and clipped to what the frame shows, dropped when the
- * frame has no box or the node lies outside it, and its frame path set.
+ * A node read inside a frame chain, in the top-level viewport: its box
+ * placed through each frame holding it, innermost first (`placeInFrame`),
+ * and its frame path set. A node of the top-level document is as it is.
  */
-export function inViewport(node: SemanticNode, frame: FrameView | null | undefined, framePath: readonly string[]): SemanticNode {
-  const withPath = framePath.length === 0 ? node : { ...node, framePath };
-  if (frame === undefined || node.rect === undefined) return withPath;
-  const { rect: _rect, ...rest } = withPath;
-  const placed = frame === null ? undefined : clipTo(toParent(node.rect, frame), frame.clip);
-  return placed === undefined ? rest : { ...rest, rect: placed };
+export function inViewport(node: SemanticNode, frames: readonly FrameBox[], framePath: readonly string[]): SemanticNode {
+  if (framePath.length === 0) return node;
+  const { rect: _rect, origin: _origin, ...rest } = node;
+  return { ...rest, ...frames.reduceRight<Box>(placeInFrame, node), framePath };
 }

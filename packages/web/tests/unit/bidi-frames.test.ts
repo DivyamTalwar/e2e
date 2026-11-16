@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LocatorExpression, SemanticNode } from '@e2e-dev/core/engine';
 import { ContextTree } from '../../src/driver/context-tree.ts';
-import { FrameRegistry, frameView, inViewport, pageParts, resolveFrames, splitFrames } from '../../src/driver/frames.ts';
+import { FrameRegistry, inViewport, pageParts, resolveFrames, splitFrames } from '../../src/driver/frames.ts';
 import { project, type Projection } from '../../src/driver/projection.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
@@ -99,28 +99,6 @@ function nested(boxes: Record<string, FrameBox>, ids: { outer: string; inner: st
   return registry;
 }
 
-describe('frameView', () => {
-  const box = (x: number, y: number, width: number, height: number, scale = 1): FrameBox => ({ content: { x, y, width, height }, scale: { x: scale, y: scale } });
-
-  it('nests each holding frame’s content box into the top-level viewport', () => {
-    expect(frameView([box(102, 52, 396, 296), box(10, 20, 100, 100)])).toEqual({ origin: { x: 112, y: 72 }, scale: { x: 1, y: 1 }, clip: { x: 112, y: 72, width: 100, height: 100 } });
-    expect(frameView([])).toBeUndefined();
-  });
-
-  it('keeps an inner frame’s origin where it lies when its parent clips it', () => {
-    expect(frameView([box(100, 0, 400, 300), box(-50, 10, 200, 100)])).toEqual({ origin: { x: 50, y: 10 }, scale: { x: 1, y: 1 }, clip: { x: 100, y: 10, width: 150, height: 100 } });
-  });
-
-  it('scales an inner frame’s coordinates by the outer frame’s transform', () => {
-    expect(frameView([box(0, 0, 200, 200, 0.5), box(100, 40, 100, 100)])).toEqual({ origin: { x: 50, y: 20 }, scale: { x: 0.5, y: 0.5 }, clip: { x: 50, y: 20, width: 50, height: 50 } });
-  });
-
-  it('is null through a frame that lays out no box or is turned', () => {
-    expect(frameView([box(0, 0, 200, 200), null])).toBeNull();
-    expect(frameView([{ turned: { width: 100, height: 100, inset: { x: 0, y: 0, width: 100, height: 100 }, quad: null } }])).toBeNull();
-  });
-});
-
 /** The corners of the axis-aligned quad at `x`, `y` sized `width` by `height`, flattened as CDP's `DOM.getContentQuads` reports them. */
 function flatQuad(x: number, y: number, width: number, height: number): number[] {
   return [x, y, x + width, y, x + width, y + height, x, y + height];
@@ -206,18 +184,46 @@ describe('splitFrames', () => {
 
 describe('inViewport', () => {
   const node: SemanticNode = { ref: { id: 'n1', revision: '' }, states: {}, attributes: {}, inputPurpose: 'none', rect: { x: 10, y: 10, width: 50, height: 20 } };
+  /** A node filling a 200 by 100 viewport. */
+  const whole: SemanticNode = { ...node, rect: { x: 0, y: 0, width: 200, height: 100 } };
+  const frame = (x: number, y: number, width: number, height: number, scale = 1): FrameBox => ({ content: { x, y, width, height }, scale: { x: scale, y: scale } });
 
   it('shifts a box into the frame, clips it, and sets the frame path', () => {
-    expect(inViewport(node, { origin: { x: 100, y: 200 }, scale: { x: 1, y: 1 }, clip: { x: 100, y: 200, width: 40, height: 400 } }, ['#editor'])).toMatchObject({
+    expect(inViewport(node, [frame(100, 200, 40, 400)], ['#editor'])).toMatchObject({
       rect: { x: 110, y: 210, width: 30, height: 20 },
       framePath: ['#editor'],
     });
   });
 
-  it('drops the box of a node outside its frame or in a frame with no box', () => {
-    expect(inViewport(node, { origin: { x: 0, y: 0 }, scale: { x: 1, y: 1 }, clip: { x: 0, y: 0, width: 5, height: 5 } }, ['#f']).rect).toBeUndefined();
-    expect(inViewport(node, null, ['#f']).rect).toBeUndefined();
-    expect(inViewport(node, undefined, [])).toBe(node);
+  it('shifts a bordered node’s origin with its box', () => {
+    expect(inViewport({ ...node, origin: { x: 14, y: 13 } }, [frame(100, 200, 400, 400)], ['#editor'])).toMatchObject({
+      rect: { x: 110, y: 210, width: 50, height: 20 },
+      origin: { x: 114, y: 213 },
+    });
+  });
+
+  it('nests each holding frame’s content box into the top-level viewport', () => {
+    const placed = inViewport(whole, [frame(102, 52, 396, 296), frame(10, 20, 100, 100)], ['#outer', '#inner']);
+    expect(placed.rect).toEqual({ x: 112, y: 72, width: 100, height: 100 });
+    expect(placed.origin).toBeUndefined();
+  });
+
+  it('keeps an inner frame’s origin where it lies when its parent clips it', () => {
+    const placed = inViewport(whole, [frame(100, 0, 400, 300), frame(-50, 10, 200, 100)], ['#outer', '#inner']);
+    expect(placed).toMatchObject({ rect: { x: 100, y: 10, width: 150, height: 100 }, origin: { x: 50, y: 10 } });
+  });
+
+  it('scales an inner frame’s coordinates by the outer frame’s transform', () => {
+    const placed = inViewport(whole, [frame(0, 0, 200, 200, 0.5), frame(100, 40, 100, 100)], ['#outer', '#inner']);
+    expect(placed.rect).toEqual({ x: 50, y: 20, width: 50, height: 50 });
+  });
+
+  it('drops the box of a node outside its frame, in a frame with no box, or in a turned frame', () => {
+    expect(inViewport(node, [frame(0, 0, 5, 5)], ['#f']).rect).toBeUndefined();
+    expect(inViewport(node, [null], ['#f']).rect).toBeUndefined();
+    expect(inViewport(node, [TURNED], ['#f']).rect).toBeUndefined();
+    expect(inViewport(node, [frame(0, 0, 400, 400), null], ['#outer', '#f']).rect).toBeUndefined();
+    expect(inViewport(node, [], [])).toBe(node);
   });
 });
 

@@ -19,16 +19,15 @@ import {
   type NodeRef,
   type ObservationPixels,
   type SemanticNode,
-  type ViewportPoint,
   type ViewportSize,
   withTimeout,
 } from '@e2e-dev/core/engine';
-import { CLOSED_SHADOW_ROOTS_KEY } from '../in-page/closed-shadow.ts';
 import { SECURE_FIELD_SELECTOR, type RawNodeData, type RawObservedNode } from '../in-page/read-node.ts';
 import { cancelled, isStale, releaseQuietly, unlessStale } from '../errors.ts';
-import { contentContext, frameView, inViewport, pageParts, resolveFrames, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
-import { computedStyle, domReady, frameContentInset } from '../in-page/document.ts';
+import { contentContext, inViewport, pageParts, placeInFrame, resolveFrames, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
+import { computedStyle, domReady } from '../in-page/document.ts';
 import { maskSecureFields, unmaskSecureFields } from '../in-page/mask.ts';
+import type { FrameBox } from '../in-page/readers.ts';
 import type { PagePart } from '../in-page/select-chain.ts';
 import type { BidiSession } from './session.ts';
 import type { ElementRef } from './script.ts';
@@ -39,8 +38,6 @@ const MAX_OBSERVED_NODES = 3_000;
 const MAX_FRAME_DEPTH = 4;
 /** Settling is best-effort and spends from the observation's budget. */
 const SETTLE_TIMEOUT_MS = 5_000;
-
-type Rect = NonNullable<SemanticNode['rect']>;
 
 /** One read document's tree with the element behind each of its ids. */
 interface CapturedTree {
@@ -161,13 +158,12 @@ export async function readStyle(session: BidiSession, ref: NodeRef, properties: 
  */
 export async function locate(session: BidiSession, expression: LocatorExpression): Promise<SemanticNode[]> {
   const { chain, frame, matches } = await resolveLocator(session, expression);
-  const view = frameView(frame.boxes);
   // A sole match keeps its expression, so a ref that turns ambiguous before an action is stale instead of acting on one of them.
   const locator = matches.length === 1 ? { locator: expression } : {};
   return matches.map(({ node, element }) => {
     session.refs.storeLocated(node.ref.id, { element, context: frame.context, ...locator });
     const { children: _children, ...rest } = node;
-    return inViewport(rest, view, chain);
+    return inViewport(rest, frame.boxes, chain);
   });
 }
 
@@ -252,7 +248,7 @@ async function captureTree(session: BidiSession, context: string, framePath: rea
   elements.forEach((element, index) => generation.set(ids[index] as string, { element, context }));
   let nodeCount = nodes.length;
   let truncated = decoded.truncated;
-  const frameChildren = new Map<number, { tree: SemanticNode; inset: Rect }>();
+  const frameChildren = new Map<number, FrameChild>();
   for (let index = 0; index < nodes.length; index += 1) {
     const selector = nodes[index]!.frameSelector;
     if (selector === undefined) continue;
@@ -270,14 +266,14 @@ async function captureTree(session: BidiSession, context: string, framePath: rea
     const read = await unlessStale(readFrame(session, frame, child, [...framePath, selector], remaining, deadline), undefined);
     if (read === undefined) continue;
     for (const [id, target] of read.captured.generation) generation.set(id, target);
-    frameChildren.set(index, { tree: read.captured.tree, inset: read.inset });
+    frameChildren.set(index, { tree: read.captured.tree, box: read.box });
     nodeCount += read.captured.nodeCount;
     truncated ||= read.captured.truncated;
   }
   return { tree: assembleTree(nodes, ids, framePath, frameChildren), generation, nodeCount, truncated };
 }
 
-/** One child document's tree, and where its viewport sits inside the iframe's border box. */
+/** One child document's tree, and how the document around it lays out the frame that shows it. */
 async function readFrame(
   session: BidiSession,
   frame: NodeTarget,
@@ -285,9 +281,9 @@ async function readFrame(
   framePath: readonly string[],
   budget: number,
   deadline: number,
-): Promise<{ inset: Rect; captured: CapturedTree }> {
-  const inset = await session.run(frameContentInset, [frame.element], frame.context);
-  return { inset, captured: await captureTree(session, child, framePath, budget, deadline) };
+): Promise<{ box: FrameBox; captured: CapturedTree }> {
+  const box = await session.reader('frameBox', [frame.element], frame.context);
+  return { box, captured: await captureTree(session, child, framePath, budget, deadline) };
 }
 
 /**
@@ -449,15 +445,11 @@ export function assembleTree(
     const raw = nodes[index]!;
     const embedded = frameChildren.get(index);
     // A child document measured its nodes against its own viewport, which
-    // starts at the frame element's content box. Shifted by that box and
+    // starts at the frame element's content box. Placed in that box and
     // clipped to it, every box in the tree is in the top-level viewport's CSS
     // pixels, the space the screenshot and a point tap share, and a child that
-    // overflows its frame cannot claim a point over the page around it. A
-    // frame under a CSS transform is not unwound: its boxes are where the
-    // untransformed frame would put them.
-    if (embedded !== undefined && raw.rect !== null) {
-      childLists[index]!.unshift(placeInFrame(embedded.tree, contentBox(raw.rect, embedded.inset)));
-    }
+    // overflows its frame cannot claim a point over the page around it.
+    if (embedded !== undefined) childLists[index]!.unshift(placeTree(embedded.tree, embedded.box));
     const node = toSemanticNode({ id: ids[index]!, revision: '' }, raw, childLists[index]!, framePath);
     built[index] = node;
     if (raw.parent >= 0) childLists[raw.parent]!.unshift(node);
@@ -465,53 +457,20 @@ export function assembleTree(
   return built[0]!;
 }
 
-/** A child document's tree, and where its viewport sits inside the frame element's border box. */
+/** A child document's tree, and how the document around it lays out the frame that shows it. */
 interface FrameChild {
   readonly tree: SemanticNode;
-  readonly inset: Rect;
+  readonly box: FrameBox;
 }
 
-/** A frame element's content box, from its border box and `frameContentInset` (`in-page/document.ts`). */
-function contentBox(border: Rect, inset: Rect): Rect {
-  return { x: border.x + inset.x, y: border.y + inset.y, width: inset.width, height: inset.height };
-}
-
-/** The tree with every box translated into the frame's space and clipped to its box; a box left empty by the clip is dropped. */
-function placeInFrame(node: SemanticNode, frame: Rect): SemanticNode {
-  const { rect, origin, ...rest } = node;
+/** The tree a frame's document read, every box placed in the viewport of the document that holds the frame (`placeInFrame`). */
+function placeTree(node: SemanticNode, frame: FrameBox): SemanticNode {
+  const { rect: _rect, origin: _origin, ...rest } = node;
   return {
     ...rest,
-    ...(rect === undefined ? {} : placeBoxInFrame(rect, origin, frame)),
-    ...(node.children === undefined ? {} : { children: node.children.map((child) => placeInFrame(child, frame)) }),
+    ...placeInFrame(node, frame),
+    ...(node.children === undefined ? {} : { children: node.children.map((child) => placeTree(child, frame)) }),
   };
-}
-
-/**
- * A node box a child document measured against its own viewport, in the
- * top-level viewport's space: `rect` shifted by the frame's box and clipped
- * to it, empty when nothing of it is inside the frame. `origin` is shifted
- * but never clipped, and a clip that moves the box's corner keeps the
- * unclipped corner as `origin`, so an offset into the node lands where it
- * would at the top level.
- */
-export function placeBoxInFrame(rect: Rect, origin: ViewportPoint | undefined, frame: Rect): Pick<SemanticNode, 'rect' | 'origin'> {
-  const placed = clipRect(offsetRect(rect, frame), frame);
-  if (placed === undefined) return {};
-  const corner = origin ?? rect;
-  const shifted = { x: corner.x + frame.x, y: corner.y + frame.y };
-  return shifted.x === placed.x && shifted.y === placed.y ? { rect: placed } : { rect: placed, origin: shifted };
-}
-
-function offsetRect(rect: Rect, by: Rect): Rect {
-  return { x: rect.x + by.x, y: rect.y + by.y, width: rect.width, height: rect.height };
-}
-
-function clipRect(rect: Rect, bounds: Rect): Rect | undefined {
-  const x = Math.max(rect.x, bounds.x);
-  const y = Math.max(rect.y, bounds.y);
-  const width = Math.min(rect.x + rect.width, bounds.x + bounds.width) - x;
-  const height = Math.min(rect.y + rect.height, bounds.y + bounds.height) - y;
-  return width > 0 && height > 0 ? { x, y, width, height } : undefined;
 }
 
 function toSemanticNode(
