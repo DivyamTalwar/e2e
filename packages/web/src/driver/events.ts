@@ -7,7 +7,6 @@
 
 import type { Script } from 'webdriver-bidi-protocol';
 import type { AppLogEntry } from '@e2e-dev/core/engine';
-import type { NativeDialog } from './dialogs.ts';
 import type { ContextTree } from './context-tree.ts';
 import type { BidiSession } from './session.ts';
 import type { BidiConnection } from './connection.ts';
@@ -149,13 +148,12 @@ export function routeEvents(connection: BidiConnection, contexts: ContextTree, c
       const answer = async (accept: boolean, userText?: string): Promise<void> => {
         await connection.send('browsingContext.handleUserPrompt', { context: prompt.context, accept, ...(userText === undefined ? {} : { userText }) });
       };
-      const dialog: NativeDialog = {
-        type: () => prompt.type,
-        message: () => prompt.message,
+      void session.dialogs.dispatch({
+        type: prompt.type,
+        message: prompt.message,
         accept: (text) => answer(true, text),
         dismiss: () => answer(false),
-      };
-      void session.dialogs.dispatch(dialog);
+      });
     }),
     connection.on('log.entryAdded', (entry) => {
       if (ours(entry.source.context) === undefined || entry.text === null) return;

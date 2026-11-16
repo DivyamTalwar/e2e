@@ -3,21 +3,28 @@
  * go, and how a failure on the unawaited dialog path reaches the next step.
  */
 
-import { DialogRouter, type NativeDialog } from '../../src/driver/dialogs.ts';
+import { DialogRouter, type Dialog } from '../../src/driver/dialogs.ts';
 import { TestError } from '@e2e-dev/core/engine';
 import { describe, expect, it, vi } from 'vitest';
 import { ErrorLatch } from '../../src/errors.ts';
 
-function fakeDialog(text = 'are you sure?') {
+/** A native dialog of `type` saying `text`, whose answers are recorded. */
+function fakeDialog(text = 'are you sure?', type: Dialog['type'] = 'confirm') {
   const accept = vi.fn(async (_text?: string) => undefined);
   const dismiss = vi.fn(async () => undefined);
-  const dialog = { type: () => 'confirm', message: () => text, accept, dismiss } as unknown as NativeDialog;
+  const dialog: Dialog = { type, message: text, accept, dismiss };
   return { dialog, accept, dismiss };
+}
+
+/** A router on a latch of its own, as each session builds one. */
+function routed() {
+  const latch = new ErrorLatch();
+  return { latch, router: new DialogRouter(latch) };
 }
 
 describe('DialogRouter', () => {
   it('routes to the newest handler and falls back once it unsubscribes', async () => {
-    const router = new DialogRouter();
+    const { router } = routed();
     const first = vi.fn();
     const second = vi.fn();
     router.add(first);
@@ -33,7 +40,7 @@ describe('DialogRouter', () => {
   });
 
   it('tracks registrations by identity: the same handler twice, unsubscribed once, stays', async () => {
-    const router = new DialogRouter();
+    const { router, latch } = routed();
     const handler = vi.fn((dialog: { accept(): Promise<void> }) => dialog.accept());
     const unsubscribeFirst = router.add(handler);
     router.add(handler);
@@ -43,11 +50,11 @@ describe('DialogRouter', () => {
     const { dialog } = fakeDialog();
     await router.dispatch(dialog);
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(() => router.throwPending()).not.toThrow();
+    expect(() => latch.throwPending()).not.toThrow();
   });
 
   it('applies the accept and dismiss shorthands and passes the message through', async () => {
-    const router = new DialogRouter();
+    const { router } = routed();
     router.add('accept');
     const accepted = fakeDialog();
     await router.dispatch(accepted.dialog);
@@ -70,14 +77,14 @@ describe('DialogRouter', () => {
   });
 
   it('dismisses a dialog its handler left undecided and latches INVALID_STATE naming the handler', async () => {
-    const router = new DialogRouter();
+    const { router, latch } = routed();
     router.add(() => {
       // Looked, decided nothing: the page would stay blocked behind the dialog.
     });
     const { dialog, dismiss } = fakeDialog('are you sure?');
     await router.dispatch(dialog);
     expect(dismiss).toHaveBeenCalledTimes(1);
-    expect(() => router.throwPending()).toThrowError(
+    expect(() => latch.throwPending()).toThrowError(
       expect.objectContaining({
         code: 'INVALID_STATE',
         message: expect.stringContaining('returned without calling accept or dismiss'),
@@ -86,68 +93,60 @@ describe('DialogRouter', () => {
   });
 
   it('dismisses an unhandled dialog and latches INVALID_STATE, thrown exactly once', async () => {
-    const router = new DialogRouter();
+    const { router, latch } = routed();
     const { dialog, dismiss } = fakeDialog('unexpected');
     await router.dispatch(dialog);
     expect(dismiss).toHaveBeenCalledTimes(1);
-    expect(() => router.throwPending()).toThrowError(
+    expect(() => latch.throwPending()).toThrowError(
       expect.objectContaining({ code: 'INVALID_STATE', message: expect.stringContaining('unexpected') }),
     );
-    expect(() => router.throwPending()).not.toThrow();
+    expect(() => latch.throwPending()).not.toThrow();
   });
 
   it('latches a failing handler as ENGINE_FAILURE, thrown once', async () => {
-    const router = new DialogRouter();
+    const { router, latch } = routed();
     router.add(() => {
       throw new Error('handler exploded');
     });
     const { dialog, dismiss } = fakeDialog();
     await router.dispatch(dialog);
     expect(dismiss).toHaveBeenCalledTimes(1);
-    expect(() => router.throwPending()).toThrowError(
+    expect(() => latch.throwPending()).toThrowError(
       expect.objectContaining({ code: 'ENGINE_FAILURE', message: expect.stringContaining('handler exploded') }),
     );
 
-    expect(() => router.throwPending()).not.toThrow();
+    expect(() => latch.throwPending()).not.toThrow();
   });
 
   it('dismisses a dialog when accepting rejects and leaves it unanswered', async () => {
-    const router = new DialogRouter();
+    const { router, latch } = routed();
     const { dialog, accept, dismiss } = fakeDialog();
     accept.mockRejectedValueOnce(new Error('accept failed'));
     router.add((native) => native.accept());
     await router.dispatch(dialog);
     expect(dismiss).toHaveBeenCalledTimes(1);
-    expect(() => router.throwPending()).toThrowError(expect.objectContaining({ code: 'ENGINE_FAILURE' }));
+    expect(() => latch.throwPending()).toThrowError(expect.objectContaining({ code: 'ENGINE_FAILURE' }));
   });
 
   it('accepts a void handler that starts an answer without awaiting it', async () => {
-    const router = new DialogRouter();
+    const { router, latch } = routed();
     const { dialog, accept, dismiss } = fakeDialog();
     router.add((native) => { void native.accept(); });
     await router.dispatch(dialog);
     expect(accept).toHaveBeenCalledTimes(1);
     expect(dismiss).not.toHaveBeenCalled();
-    expect(() => router.throwPending()).not.toThrow();
+    expect(() => latch.throwPending()).not.toThrow();
   });
 
   it('latches a classified handler failure as it was: an assertion stays ASSERTION_FAILED', async () => {
-    const router = new DialogRouter();
+    const { router, latch } = routed();
     const failure = new TestError('ASSERTION_FAILED', 'expected the other message');
     router.add(async (dialog) => {
       await dialog.accept();
       throw failure;
     });
     await router.dispatch(fakeDialog().dialog);
-    expect(() => router.throwPending()).toThrow(failure);
-  });
-
-  it('shares one latch with its owner, so either side observes the failure', async () => {
-    const latch = new ErrorLatch();
-    const router = new DialogRouter(latch);
-    await router.dispatch(fakeDialog().dialog);
-    expect(() => latch.throwPending()).toThrowError(expect.objectContaining({ code: 'INVALID_STATE' }));
-    expect(() => router.throwPending()).not.toThrow();
+    expect(() => latch.throwPending()).toThrow(failure);
   });
 });
 
@@ -235,14 +234,13 @@ describe('ErrorLatch', () => {
 
 describe('native dialog kind', () => {
   it.each(['alert', 'confirm', 'prompt', 'beforeunload'] as const)('exposes %s independently of identical messages', async (kind) => {
-    const router = new DialogRouter();
-    const native = fakeDialog('same message');
-    native.dialog.type = () => kind;
+    const { router, latch } = routed();
+    const native = fakeDialog('same message', kind);
     const seen: string[] = [];
     router.add(async dialog => { seen.push(dialog.type); await dialog.dismiss(); });
     await router.dispatch(native.dialog);
     expect(seen).toEqual([kind]);
     expect(native.dismiss).toHaveBeenCalledOnce();
-    expect(() => router.throwPending()).not.toThrow();
+    expect(() => latch.throwPending()).not.toThrow();
   });
 });

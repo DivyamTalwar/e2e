@@ -1,11 +1,12 @@
 /**
- * Native dialog routing for one attempt. Handlers are registered by the `web`
- * fixture; the surface owns the router so a dialog that fires before a test
- * ever touches `web` is still accounted for instead of silently dismissed.
+ * Native dialog routing for one attempt. Handlers are registered through the
+ * `browser` fixture (`browser.onDialog`); the session owns the router, so a
+ * dialog that fires before a test registers one is still accounted for
+ * instead of silently dismissed.
  */
 
 import { EngineError } from '@e2e-dev/core/engine';
-import { ErrorLatch, isClassified, message } from '../errors.ts';
+import { isClassified, message, type ErrorLatch } from '../errors.ts';
 
 /** A native dialog as a test's handler sees it. */
 export interface Dialog {
@@ -21,14 +22,6 @@ export interface Dialog {
 
 export type DialogHandler = 'accept' | 'dismiss' | ((dialog: Dialog) => void | Promise<void>);
 
-/** A native dialog as the router answers it: the BiDi driver's user prompt. */
-export interface NativeDialog {
-  type(): string;
-  message(): string;
-  accept(text?: string): Promise<void>;
-  dismiss(): Promise<void>;
-}
-
 interface Registration {
   readonly handler: DialogHandler;
 }
@@ -37,10 +30,10 @@ export class DialogRouter {
   private registrations: Registration[] = [];
 
   /**
-   * `latch` is shared with the surface: a dialog failure and a route-handler
-   * failure surface through one check at the next step.
+   * `latch` is the session's: a dialog failure and a route-handler failure
+   * surface through one check at the next step.
    */
-  constructor(private readonly latch: ErrorLatch = new ErrorLatch()) {}
+  constructor(private readonly latch: ErrorLatch) {}
 
   /**
    * Registers a handler (the newest wins) and returns its idempotent
@@ -55,25 +48,24 @@ export class DialogRouter {
     };
   }
 
-  /** Rethrows an error latched by an unhandled or failing dialog handler. */
-  throwPending(): void {
-    this.latch.throwPending();
-  }
-
-  /** Routes one native dialog to the newest registered handler; the attempt end waits for it. */
-  dispatch(dialog: NativeDialog): Promise<void> {
+  /**
+   * Routes one native dialog to the newest registered handler; the attempt
+   * end waits for it. `dialog` answers the browser's prompt as is; a handler
+   * is given its own view of it, which records whether it decided.
+   */
+  dispatch(dialog: Dialog): Promise<void> {
     const work = this.route(dialog);
     this.latch.track('dialog', work);
     return work;
   }
 
-  private async route(dialog: NativeDialog): Promise<void> {
+  private async route(dialog: Dialog): Promise<void> {
     const handler = this.registrations.at(-1)?.handler;
     if (handler === undefined) {
       this.latch.latch(
         new EngineError(
           'INVALID_STATE',
-          `unhandled ${dialog.type()} dialog: ${dialog.message()}`,
+          `unhandled ${dialog.type} dialog: ${dialog.message}`,
           { retryable: false },
         ),
       );
@@ -82,9 +74,9 @@ export class DialogRouter {
     }
     let decided = false;
     let answered = false;
-    const publicDialog: Dialog = {
-      type: dialog.type() as Dialog['type'],
-      message: dialog.message(),
+    const seen: Dialog = {
+      type: dialog.type,
+      message: dialog.message,
       accept: async (text) => {
         decided = true;
         await dialog.accept(text);
@@ -100,7 +92,7 @@ export class DialogRouter {
       if (handler === 'accept') await dialog.accept();
       else if (handler === 'dismiss') await dialog.dismiss();
       else {
-        await handler(publicDialog);
+        await handler(seen);
         // A dialog left open blocks the page, and the failure would surface
         // later as an unrelated action timeout. The handler contract is the
         // same as a route handler's: decide, or the step fails naming you.
@@ -109,7 +101,7 @@ export class DialogRouter {
           this.latch.latch(
             new EngineError(
               'INVALID_STATE',
-              `dialog handler returned without calling accept or dismiss for ${dialog.type()} dialog: ${dialog.message()}`,
+              `dialog handler returned without calling accept or dismiss for ${dialog.type} dialog: ${dialog.message}`,
               { retryable: false },
             ),
           );
