@@ -7,28 +7,77 @@ import { sanitizeText, TestError } from './errors.ts';
 
 export type { TextPattern };
 
-/** Compiled wire patterns, bounded; assertion polls test the same pattern many times a second. */
-const MAX_CACHED_PATTERNS = 256;
-const compiled = new Map<string, RegExp>();
+/** The text-matching rules `createTextMatching` builds. */
+export interface TextMatching {
+  /**
+   * Tests input against a wire regexp (source + flags). Compiled patterns are
+   * cached by source and flags; `lastIndex` is reset before every test, so
+   * sticky/global state can never leak between matches.
+   */
+  readonly testPattern: (source: string, flags: string, input: string) => boolean;
+  /**
+   * Normalizes text by trimming leading/trailing whitespace and replacing every
+   * nonempty run of Unicode whitespace with one ASCII space.
+   */
+  readonly normalizeText: (text: string) => string;
+  /**
+   * The one text-matching rule. `mode` applies only to exact string patterns:
+   * regexps and case-insensitive substrings read the same way in both.
+   * `normalize: false` leaves whitespace alone on both sides, for a field the
+   * platform reports verbatim.
+   */
+  readonly compareText: (actual: string, pattern: TextPattern, comparison: TextComparison) => boolean;
+  /**
+   * Matches normalized text against a pattern. String matching is exact by
+   * default; `exact: false` is case-insensitive substring matching. Regular
+   * expressions use ECMAScript semantics with lastIndex reset before every match.
+   */
+  readonly matchesText: (actual: string, pattern: TextPattern) => boolean;
+}
 
 /**
- * Tests input against a wire regexp (source + flags). Compiled patterns are
- * cached by source and flags; `lastIndex` is reset before every test, so
- * sticky/global state can never leak between matches.
+ * Builds the text-matching rules over a compiled-pattern cache of their own.
+ * An engine that matches in a page (a browser's locate) serializes it with
+ * `toString()` and matches text there by this one rule, so it closes over
+ * nothing of this module.
  */
-export function testPattern(source: string, flags: string, input: string): boolean {
-  const key = `${flags}\n${source}`;
-  let pattern = compiled.get(key);
-  if (pattern === undefined) {
-    pattern = new RegExp(source, flags);
-    if (compiled.size >= MAX_CACHED_PATTERNS) {
-      compiled.delete(compiled.keys().next().value as string);
+export function createTextMatching(): TextMatching {
+  /** Compiled wire patterns, bounded; assertion polls test the same pattern many times a second. */
+  const MAX_CACHED_PATTERNS = 256;
+  const compiled = new Map<string, RegExp>();
+
+  const testPattern = (source: string, flags: string, input: string): boolean => {
+    const key = `${flags}\n${source}`;
+    let pattern = compiled.get(key);
+    if (pattern === undefined) {
+      pattern = new RegExp(source, flags);
+      if (compiled.size >= MAX_CACHED_PATTERNS) {
+        compiled.delete(compiled.keys().next().value as string);
+      }
+      compiled.set(key, pattern);
     }
-    compiled.set(key, pattern);
-  }
-  pattern.lastIndex = 0;
-  return pattern.test(input);
+    pattern.lastIndex = 0;
+    return pattern.test(input);
+  };
+
+  const normalizeText = (text: string): string => text.replace(/\s+/gu, ' ').trim();
+
+  const compareText = (actual: string, pattern: TextPattern, comparison: TextComparison): boolean => {
+    const subject = comparison.normalize ? normalizeText(actual) : actual;
+    if (pattern.kind === 'regexp') return testPattern(pattern.source, pattern.flags, subject);
+    const expected = comparison.normalize ? normalizeText(pattern.value) : pattern.value;
+    if (!pattern.exact) return subject.toLowerCase().includes(expected.toLowerCase());
+    const fold = (text: string): string => (comparison.ignoreCase === true ? text.toLowerCase() : text);
+    return comparison.mode === 'equals' ? fold(subject) === fold(expected) : fold(subject).includes(fold(expected));
+  };
+
+  const matchesText = (actual: string, pattern: TextPattern): boolean => compareText(actual, pattern, { mode: 'equals', normalize: true });
+
+  return { testPattern, normalizeText, compareText, matchesText };
 }
+
+/** This process's text matching, every caller sharing its compiled patterns; `TextMatching` documents each rule. */
+export const { testPattern, normalizeText, compareText, matchesText } = createTextMatching();
 
 /** Caps prose at `maxChars`, marking the cut with an ellipsis; a cut never splits a character in two (a surrogate pair). */
 export function bound(text: string, maxChars: number): string {
@@ -37,14 +86,6 @@ export function bound(text: string, maxChars: number): string {
   const last = text.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end -= 1;
   return `${text.slice(0, end)}…`;
-}
-
-/**
- * Normalizes text by trimming leading/trailing whitespace and replacing every
- * nonempty run of Unicode whitespace with one ASCII space.
- */
-export function normalizeText(text: string): string {
-  return text.replace(/\s+/gu, ' ').trim();
 }
 
 /**
@@ -95,30 +136,6 @@ export interface TextComparison {
 }
 
 /**
- * Matches normalized text against a pattern. String matching is exact by
- * default; `exact: false` is case-insensitive substring matching. Regular
- * expressions use ECMAScript semantics with lastIndex reset before every match.
- */
-export function matchesText(actual: string, pattern: TextPattern): boolean {
-  return compareText(actual, pattern, { mode: 'equals', normalize: true });
-}
-
-/**
- * The one text-matching rule. `mode` applies only to exact string patterns:
- * regexps and case-insensitive substrings read the same way in both.
- * `normalize: false` leaves whitespace alone on both sides, for a field the
- * platform reports verbatim.
- */
-export function compareText(actual: string, pattern: TextPattern, comparison: TextComparison): boolean {
-  const subject = comparison.normalize ? normalizeText(actual) : actual;
-  if (pattern.kind === 'regexp') return testPattern(pattern.source, pattern.flags, subject);
-  const expected = comparison.normalize ? normalizeText(pattern.value) : pattern.value;
-  if (!pattern.exact) return subject.toLowerCase().includes(expected.toLowerCase());
-  const fold = (text: string): string => (comparison.ignoreCase === true ? text.toLowerCase() : text);
-  return comparison.mode === 'equals' ? fold(subject) === fold(expected) : fold(subject).includes(fold(expected));
-}
-
-/**
  * The pattern under Playwright's `ignoreCase`: `true` adds a RegExp's `i`
  * flag, `false` removes it, `undefined` keeps the flags it came with. A string
  * pattern is returned as it is; `compareText` folds its case.
@@ -134,16 +151,3 @@ export function describePattern(pattern: TextPattern): string {
   if (pattern.kind === 'string') return JSON.stringify(pattern.value);
   return `/${pattern.source}/${pattern.flags}`;
 }
-
-/**
- * `matchesText` and everything it calls as source that declares them, so an
- * engine that matches in a page (a browser's locate) matches text by this
- * one rule. Each function reads only this module's bindings, which the
- * source declares too.
- */
-export const MATCHES_TEXT_SOURCE = `const MAX_CACHED_PATTERNS = ${MAX_CACHED_PATTERNS};
-const compiled = new Map();
-${testPattern.toString()}
-${normalizeText.toString()}
-${compareText.toString()}
-${matchesText.toString()}`;

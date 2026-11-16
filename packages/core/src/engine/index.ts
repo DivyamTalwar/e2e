@@ -36,7 +36,7 @@ export type { ComputedStyleProperty, ComputedStyleValues } from './computed-styl
 export { ConfigurationError, InfrastructureError, TestError } from '../internal/errors.ts';
 export { rejectUnknownKeys, rejectUnknownOptions } from '../internal/options.ts';
 export { validateJsonValue, type JsonValueRules } from '../internal/json-value.ts';
-export { describePattern, matchesText, MATCHES_TEXT_SOURCE, toTextPattern } from '../internal/text.ts';
+export { createTextMatching, describePattern, matchesText, toTextPattern, type TextMatching } from '../internal/text.ts';
 export { createResolver, resolveExpression, type ResolveExpressionOptions, type ResolverPlatform } from './resolve.ts';
 export type { TextMatch } from '../types.ts';
 export { raceAbort } from './timing.ts';

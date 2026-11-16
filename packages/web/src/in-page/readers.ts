@@ -7,7 +7,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { createResolver, MATCHES_TEXT_SOURCE, type LocatorExpression, type matchesText as matchText, type SemanticQuery } from '@e2e-dev/core/engine';
+import { createResolver, createTextMatching, type LocatorExpression, type SemanticQuery, type TextMatching } from '@e2e-dev/core/engine';
 import { readSemanticsFunction } from './read-semantics.ts';
 import type { RawNodeData, RawObservedNode, SemanticMode } from './read-node.ts';
 import type { PageArgument, Wire } from '../driver/script.ts';
@@ -52,7 +52,7 @@ interface TreeMetadata {
  * the builtins it names are the ones `READERS` binds around it, which the
  * document had before its own scripts ran.
  */
-function createReaders(read: typeof readSemanticsFunction, resolver: typeof createResolver, matchesText: typeof matchText) {
+function createReaders(read: typeof readSemanticsFunction, resolver: typeof createResolver, { matchesText }: TextMatching) {
   /** Whether `fn` reads as the native `JSON.stringify`; false when the page broke `Function.prototype.toString`, so it cannot tell. */
   const nativeStringify = (fn: unknown): boolean => {
     if (typeof fn !== 'function') return false;
@@ -217,8 +217,7 @@ export type ReaderResult<K extends ReaderName> = Wire<ReturnType<Readers[K]>>;
  */
 const READERS = `(() => {
   const { ${BUILTIN_NAMES.join(', ')} } = globalThis[globalThis.Symbol.for(${JSON.stringify(BUILTINS_KEY)})] ?? globalThis;
-  ${MATCHES_TEXT_SOURCE}
-  return (${createReaders.toString()})((${readSemanticsFunction.toString()}), (${createResolver.toString()}), matchesText);
+  return (${createReaders.toString()})((${readSemanticsFunction.toString()}), (${createResolver.toString()}), (${createTextMatching.toString()})());
 })()`;
 
 /** Where a document keeps its readers: named by their source, so another driver version attached to the same browser keeps its own. */

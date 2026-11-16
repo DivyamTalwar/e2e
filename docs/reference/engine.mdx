@@ -1627,7 +1627,7 @@ reproduces these semantics; import them instead of carrying a copy.
 
 | Export | Returns |
 | --- | --- |
-| [`matchesText`, `toTextPattern`, `describePattern`](#text-patterns) | `boolean`, `TextPattern`, `string` |
+| [`matchesText`, `toTextPattern`, `describePattern`, `createTextMatching`](#text-patterns) | `boolean`, `TextPattern`, `string`, `TextMatching` |
 | [`resolveExpression`](#resolveexpression) | `SemanticNode[]` |
 | [`urlMatches`](#urlmatches) | `boolean` |
 | [`siteOf`, `sameSite`](#site-helpers) | `string`, `boolean` |
@@ -1649,12 +1649,21 @@ reproduces these semantics; import them instead of carrying a copy.
 export function toTextPattern(match: TextMatch, options?: { exact?: boolean }): TextPattern;
 export function matchesText(actual: string, pattern: TextPattern): boolean;
 export function describePattern(pattern: TextPattern): string;
+export function createTextMatching(): TextMatching;
 ```
 
 ```ts
 const pattern = toTextPattern(/total/i);
 matchesText('Order total', pattern); // true
 describePattern(pattern); // '/total/i'
+```
+
+`createTextMatching()` returns the rules `matchesText` applies, as
+`matchesText`, `compareText`, `normalizeText`, and `testPattern`. It closes
+over nothing. An engine that matches text in a page sends its source there:
+
+```ts
+const source = `(${createTextMatching.toString()})()`;
 ```
 
 | Throws | When |
@@ -1686,15 +1695,11 @@ async locate(expression) {
 - An engine whose tree is the whole truth (a device) calls it; a browser
   engine reproduces it.
 - A `selector` expression needs the `selector` option.
-- The `matches` option `(node, query) => boolean | undefined` decides a
-  query by the platform's own rules, such as a browser's text and hidden
-  rules. Return `undefined` to keep the reference rules for that query.
-- The `hasText` option `(node, pattern) => boolean` decides a
-  `filter({ hasText })`. Without it, the text of the node or any descendant
-  counts.
-- The `order` option `(a, b) => number` sorts the matches, and the position
-  `nth` counts by, by the platform's own order, such as a browser listing
-  light-DOM matches before shadow-root ones. Without it, tree order.
+- `createResolver(platform)` runs the same rules over a platform's own
+  nodes. Its `ResolverPlatform` gives the `nodes` in match order, each
+  node's `parent`, and the platform's `matches`, `hasText`, `selector`, and
+  `fail`, such as a browser's text and hidden rules. It closes over nothing,
+  so a browser engine sends its source to the page.
 - A `frame` expression is `FRAME_NOT_FOUND`.
 - A `union` expression matches either branch in document order, without duplicate nodes.
 
@@ -2322,7 +2327,8 @@ return context.fixture('printer', printer, { print: { kind: 'resource' } });
 `LOCATOR_ACTION_KINDS`, `POINTER_ACTION_KINDS`, `KEY_MODIFIERS`,
 `KEY_NAMES`, `parseKey`, `ENGINE_ERROR_CODES`, `RETRYABLE_ENGINE_ERROR_CODES`,
 `Secret`, `isSecret`, `TextMatch`, `JsonValue`, `JsonValueRules`,
-`ResolveExpressionOptions`, `PollConditionOptions`, `WithoutUndefined`,
+`ResolveExpressionOptions`, `ResolverPlatform`, `TextMatching`,
+`PollConditionOptions`, `WithoutUndefined`,
 `FixtureOperation`, `OBSERVED_NAME_LIMIT`, and `OBSERVED_TEXT_LIMIT` are
 exported from `e2e/engine`. So are the [engine protocol](/reference/engine-protocol)'s
 `connectEngine`, `serveEngine`, `describeEngine`, `spawnTransport`,
