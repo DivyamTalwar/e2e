@@ -303,11 +303,12 @@ export class NetworkBinding implements DecisionScope {
 
   /**
    * A request's hop finished, with the `failure` that ended its load if one
-   * did; the response waits that matched the hop are told. A redirect hop
+   * did; the response waits that matched the hop are told. The request
+   * collector lets go of the hop's body: routes read it only while the first
+   * hop is held, and a redirect seldom carries it on. A redirect hop
    * (`mayRedirect`) stops counting and its record stays for the next hop; a
-   * last hop's record goes, unless a response wait still reads its body. The
-   * collectors let go of the bodies no one reads: the request body routes
-   * read while it was held, and a response body no wait matched.
+   * last hop's record goes, unless a response wait still reads its body, and
+   * the collector lets go of a response body no wait matched.
    */
   private settle(event: { readonly context: string | null; readonly request: Network.RequestData; readonly response?: Network.ResponseData }, failure: Error | null): void {
     const id = event.request.request;
@@ -316,16 +317,16 @@ export class NetworkBinding implements DecisionScope {
       this.stopCounting(record);
       for (const ended of record.loads.splice(0)) ended(failure);
     }
+    const ours = !this.closed && this.options.ours(event);
+    const requestCollector = this.requestCollector;
+    if (ours && requestCollector !== undefined && hasBody(event.request)) {
+      void releaseQuietly(this.connection.send('network.disownData', { dataType: 'request', collector: requestCollector, request: id }));
+    }
     if (event.response !== undefined && mayRedirect(event.response)) return;
     const read = record !== undefined && record.waits > 0;
     if (record !== undefined) record.settled = true;
     if (!read) this.requests.delete(id);
-    if (this.closed || !this.options.ours(event)) return;
-    const requestCollector = this.requestCollector;
-    if (requestCollector !== undefined && hasBody(event.request)) {
-      void releaseQuietly(this.connection.send('network.disownData', { dataType: 'request', collector: requestCollector, request: id }));
-    }
-    if (read || record?.fulfilledBody !== undefined) return;
+    if (!ours || read || record?.fulfilledBody !== undefined) return;
     void releaseQuietly(this.collector?.then((collector) => this.connection.send('network.disownData', { dataType: 'response', collector, request: id })));
   }
 
@@ -481,7 +482,9 @@ function isRedirect(response: Network.ResponseData): boolean {
  * Whether another hop of its request may follow `response`: a 3xx that names
  * a `Location`, whatever its status, since browsers differ on which they
  * follow. A 304 is always a request's last hop, and so is a 3xx with no
- * `Location`.
+ * `Location`. BiDi says of no hop that it is the last, so a redirect the
+ * page does not follow (`fetch` with `redirect: 'manual'`) keeps its record
+ * until its tab closes.
  */
 function mayRedirect(response: Network.ResponseData): boolean {
   return response.status >= 300 && response.status < 400 && response.status !== 304 && namesLocation(response);

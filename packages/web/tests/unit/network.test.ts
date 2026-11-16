@@ -962,5 +962,24 @@ describe('AttemptNetwork', () => {
       await settle();
       expect(fake.commands('network.disownData').map((command) => command.params)).toContainEqual({ dataType: 'request', collector: 'collector-1', request: 'post' });
     });
+
+    it('lets go of a posted body the server answered with a redirect to a page fetched without one', async () => {
+      const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'a=1' } } });
+      const { net, open } = network(fake);
+      await net.bind('user-1');
+      await open('tab');
+      await net.addRoute(route('**/api', async (_held, decisions) => decisions.continue({})));
+      const posted = request('post', `${SITE}/form`);
+      const post = { ...posted, request: { ...(posted['request'] as object), method: 'POST', bodySize: 3 } };
+      fake.emit('network.beforeRequestSent', post);
+      await settle();
+      fake.emit('network.responseCompleted', { ...post, response: { url: `${SITE}/form`, status: 303, headers: [{ name: 'Location', value: { type: 'string', value: '/done' } }] } });
+      const followed = { ...request('post', `${SITE}/done`), redirectCount: 1 };
+      fake.emit('network.beforeRequestSent', followed);
+      await settle();
+      fake.emit('network.responseCompleted', { ...followed, response: { url: `${SITE}/done`, status: 200, headers: [] } });
+      await settle();
+      expect(fake.commands('network.disownData').map((command) => command.params)).toContainEqual({ dataType: 'request', collector: 'collector-1', request: 'post' });
+    });
   });
 });
