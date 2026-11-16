@@ -2,7 +2,7 @@
 
 import type { Screen } from '@e2e-dev/core';
 import type { Browser } from './fixture/types.ts';
-import { cdpSource } from './driver/browser-source.ts';
+import { attachSource } from './driver/browser-source.ts';
 import { createWeb } from './engine.ts';
 
 /** How long an attached session's operations may take altogether when `timeout` is not given. */
@@ -33,7 +33,7 @@ export interface AttachedBrowser extends AsyncDisposable {
 export async function attachBrowser(cdpEndpoint: string, options: AttachBrowserOptions = {}): Promise<AttachedBrowser> {
   const engine = createWeb(
     { viewport: null, ...(options.testIdAttribute === undefined ? {} : { testIdAttribute: options.testIdAttribute }) },
-    cdpSource('attach', () => cdpEndpoint),
+    attachSource(cdpEndpoint),
   );
   const signals = [AbortSignal.timeout(options.timeout ?? DEFAULT_TIMEOUT_MS), ...(options.signal === undefined ? [] : [options.signal])];
   const { launch } = await import('@e2e-dev/core');

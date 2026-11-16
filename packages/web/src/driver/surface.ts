@@ -121,7 +121,7 @@ export class BidiSurface {
       projectRoot: info.projectRoot,
       permissions: Object.keys(info.app.permissions ?? {}),
       remoteFiles: source.files === 'remote',
-      userContext: source.userContext,
+      userContext: source.userContext.mode,
       env: info.env,
     };
     source.init(info);
@@ -212,7 +212,6 @@ export class BidiSurface {
         screen: context.screen,
         protectedApp: new ProtectedApp(this.origins, this.options.headers, credentials),
         remoteDownloads: source.downloads(),
-        downloadLimit: source.downloadLimit(),
         recorder: source.recorder(context.attemptId),
       },
       handle.contexts,

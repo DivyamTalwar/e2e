@@ -15,6 +15,12 @@ import { afterTrigger, type OperationBudget } from './budget.ts';
 import type { BidiConnection } from './connection.ts';
 import type { BidiSession } from './session.ts';
 
+/**
+ * How the downloads of a browser on another machine reach this one: read
+ * back through its provider, or `unserved`, which says why none can be.
+ */
+export type RemoteDownloads = LeaseDownloads | { readonly unserved: string };
+
 /** A download saved into the attempt's `downloads` folder: its path under the attempt's artifacts, and on disk. */
 export interface SavedDownload {
   readonly path: string;
@@ -26,13 +32,17 @@ export interface SavedDownload {
 export class AttemptDownloads {
   readonly dir: string;
 
-  /** `unserved` says why no download can be read back, when the browser's source serves none (`BrowserSource.downloadLimit`). */
+  /** `remote` is how the downloads of a browser on another machine reach this one; undefined for a browser that saves them here. */
   constructor(
     private readonly connection: BidiConnection,
-    private readonly remote: LeaseDownloads | undefined,
-    private readonly unserved: string | undefined,
+    private readonly remote: RemoteDownloads | undefined,
   ) {
-    this.dir = remote === undefined ? mkdtempSync(path.join(os.tmpdir(), 'e2e-bidi-downloads-')) : remote.dir;
+    this.dir = this.served?.dir ?? mkdtempSync(path.join(os.tmpdir(), 'e2e-bidi-downloads-'));
+  }
+
+  /** The provider that reads a download back off the browser's disk, when the browser saves them on another machine and its provider serves them. */
+  private get served(): LeaseDownloads | undefined {
+    return this.remote !== undefined && 'read' in this.remote ? this.remote : undefined;
   }
 
   /** Points the user context's downloads at this attempt's directory. */
@@ -61,8 +71,8 @@ export class AttemptDownloads {
     ours: (context: string) => boolean,
     place: (suggestedFilename: string) => { readonly relative: string; readonly absolute: string },
   ): Promise<SavedDownload[]> {
-    if (this.unserved !== undefined) throw new EngineError('UNSUPPORTED_CAPABILITY', this.unserved, { retryable: false });
-    const { remote } = this;
+    if (this.remote !== undefined && 'unserved' in this.remote) throw new EngineError('UNSUPPORTED_CAPABILITY', this.remote.unserved, { retryable: false });
+    const { served } = this;
     const { timeoutMs } = budget;
     const started: { readonly id: string; readonly suggestedFilename: string }[] = [];
     const ended = new Map<string, string | null>();
@@ -93,10 +103,10 @@ export class AttemptDownloads {
         const saved: SavedDownload[] = [];
         for (const { suggestedFilename, filepath } of finished) {
           const { relative, absolute } = place(suggestedFilename);
-          if (remote === undefined) copyFileSync(filepath, absolute);
+          if (served === undefined) copyFileSync(filepath, absolute);
           else {
-            slowRead = `download ${suggestedFilename} did not finish: ${remote.provider} read it back too slowly`;
-            writeFileSync(absolute, await remote.read(filepath, signal));
+            slowRead = `download ${suggestedFilename} did not finish: ${served.provider} read it back too slowly`;
+            writeFileSync(absolute, await served.read(filepath, signal));
           }
           saved.push({ path: relative, absolutePath: absolute, suggestedFilename });
         }
@@ -116,7 +126,7 @@ export class AttemptDownloads {
 
   /** Deletes the attempt's local download directory; files a wait saved are already copied out, and a remote one is the provider's. */
   dispose(): void {
-    if (this.remote === undefined) rmSync(this.dir, { recursive: true, force: true });
+    if (this.served === undefined) rmSync(this.dir, { recursive: true, force: true });
   }
 }
 

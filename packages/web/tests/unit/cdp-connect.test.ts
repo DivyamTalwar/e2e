@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineInitInfo } from '@e2e-dev/core/engine';
-import { web, type WebConnectOptions } from '../../src/index.ts';
+import { attachBrowser, web, type WebConnectOptions } from '../../src/index.ts';
 
 function initInfo(signal = new AbortController().signal): EngineInitInfo {
   return {
@@ -48,6 +48,15 @@ describe('web({ connect })', () => {
     for (const value of [{ cdpEndpoint: url }, url]) {
       expect(connect(value)).toThrow(expect.objectContaining({ message: expect.not.stringContaining('session-token') }));
     }
+  });
+});
+
+describe('attachBrowser', () => {
+  it('names its own argument when the endpoint is empty, never an option the caller did not write', async () => {
+    await expect(attachBrowser('  ')).rejects.toMatchObject({
+      code: 'ENGINE_FAILURE',
+      message: "attachBrowser's cdpEndpoint resolved to an empty CDP endpoint",
+    });
   });
 });
 

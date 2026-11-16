@@ -4,7 +4,8 @@
  * the engine's on the runner's, and `waitForDownload` gets it back through
  * the provider's `read`. A hosted browser needs exactly this, since the
  * runner's directory does not exist on its machine; here the "remote" disk
- * is a local directory the provider reads.
+ * is a local directory the provider reads. A provider that serves none
+ * refuses the wait before its trigger runs.
  */
 
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -127,6 +128,28 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
     expect(reads.every(read => read.lease === 'lease-1')).toBe(true);
     expect(reads.every(read => path.dirname(read.file) === path.join(remoteDisk!, 'downloads'))).toBe(true);
     expect(readdirSync(path.join(remoteDisk, 'downloads')).toSorted()).toEqual(reads.map(read => path.basename(read.file)).toSorted());
+  });
+
+  it('refuses a wait before its trigger runs when the provider serves no downloads', async () => {
+    artifactsDir = mkdtempSync(path.join(tmpdir(), 'e2e-provider-unserved-'));
+    chrome = await launchRemoteChrome();
+    const provider: BrowserProvider = {
+      name: 'toy-unserved', scope,
+      acquire: async () => ({ id: 'lease-1', cdpEndpoint: chrome!.endpoint }),
+      release: async () => undefined,
+    };
+    engine = webEngine({ browser: provider });
+    const prepared = await engine.prepare!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, slots: 1, env: {}, signal: signal(), headed: false, log: () => undefined });
+    await engine.init!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, env: { ...prepared?.env }, headed: false, workerSlot: 0, signal: signal(), log: () => undefined });
+    await engine.startAttempt!({ attemptId: 'a1', artifactsDir, signal: signal(), resolveSecret: noSecrets, ...ignoreTrace });
+    await engine.session!.open!(app.url, operation());
+    const browser = browserFixture(engine, { baseUrl: app.url, operation: () => operation() });
+    let triggered = false;
+    await expect(browser.waitForDownload(async () => { triggered = true; })).rejects.toMatchObject({
+      code: 'UNSUPPORTED_CAPABILITY',
+      message: 'browser provider "toy-unserved" serves no downloads, so a file its remote browser saves cannot be read back',
+    });
+    expect(triggered).toBe(false);
   });
 
   it.each(['waitForDownload', 'waitForDownloads'] as const)('%s bounds a completed download whose provider read stalls', async (method) => {

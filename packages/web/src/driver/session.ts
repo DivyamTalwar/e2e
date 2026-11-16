@@ -12,7 +12,7 @@ import type { ProtectedApp } from '../protected-app.ts';
 import { BidiInput } from './input.ts';
 import { ArtifactPaths } from './artifact-paths.ts';
 import type { ContextTree } from './context-tree.ts';
-import { AttemptDownloads } from './downloads.ts';
+import { AttemptDownloads, type RemoteDownloads } from './downloads.ts';
 import { BidiError, ErrorLatch, invalidState, releaseQuietly, unlessStale } from '../errors.ts';
 import { FrameRegistry } from './frames.ts';
 import type { BidiBrowser } from './launch.ts';
@@ -26,7 +26,7 @@ import { viewportSize } from '../in-page/document.ts';
 import { BidiVideo } from './video.ts';
 import { ProviderVideo } from './provider-video.ts';
 import { DriverVideo, type AttemptVideo } from './attempt-video.ts';
-import type { LeaseDownloads, LeaseRecording } from '../provider.ts';
+import type { LeaseRecording } from '../provider.ts';
 import type { BidiConnection } from './connection.ts';
 import type { PageArgument, PageValue } from './script.ts';
 
@@ -56,10 +56,8 @@ export interface AttemptSettings {
   readonly screen: ((snapshot: EngineSnapshot) => void) | undefined;
   /** The configured headers and the basic-auth credentials the attempt reaches a protected app with. */
   readonly protectedApp: ProtectedApp;
-  /** The provider that serves downloads off a remote browser's disk; undefined for a local browser. */
-  readonly remoteDownloads?: LeaseDownloads | undefined;
-  /** Why no download can be read back, when the browser's source serves none (`BrowserSource.downloadLimit`). */
-  readonly downloadLimit?: string | undefined;
+  /** How downloads are read back off a remote browser's disk, or why none can be (`BrowserSource.downloads`); undefined for a local browser. */
+  readonly remoteDownloads?: RemoteDownloads | undefined;
   /** How the browser's provider records the attempt, in place of the driver's own recording (`BrowserSource.recorder`); undefined when it records none. */
   readonly recorder: ((signal: AbortSignal) => Promise<LeaseRecording>) | undefined;
 }
@@ -123,7 +121,7 @@ export class BidiSession {
       },
       lifetime: this.lifetime,
     });
-    this.downloads = new AttemptDownloads(browser.connection, attempt.remoteDownloads, attempt.downloadLimit);
+    this.downloads = new AttemptDownloads(browser.connection, attempt.remoteDownloads);
     this.userContext = new AttemptUserContext({
       connection: browser.connection,
       traits: browser.traits,

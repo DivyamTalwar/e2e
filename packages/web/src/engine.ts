@@ -25,7 +25,7 @@ import { locate, observe, readStyle } from './driver/observe.ts';
 import { captureState, restoreState } from './driver/state.ts';
 import { goto, reset, restart, traverse } from './driver/steering.ts';
 import { BidiSurface } from './driver/surface.ts';
-import { cdpSource, launchSource, leaseSource, type BrowserSource } from './driver/browser-source.ts';
+import { connectSource, launchSource, leaseSource, type BrowserSource } from './driver/browser-source.ts';
 import type { WebFixtures } from './fixtures.ts';
 import { createBrowserFixture } from './fixture/browser.ts';
 import { ConfiguredInitScripts } from './init-scripts.ts';
@@ -45,9 +45,9 @@ export function createWeb(options: WebOptions, attachTo?: BrowserSource): Engine
   const { browser, provider } = checkWebOptions(options);
   const media = obj({ colorScheme: options.colorScheme, reducedMotion: options.reducedMotion });
   const source = attachTo
-    ?? (provider !== undefined ? leaseSource(new LeasedBrowsers(provider)) : options.connect !== undefined ? cdpSource('connect', options.connect.cdpEndpoint) : launchSource(browser, media));
-  // Clearing state and saved sessions replace the user context, which only an attempt in a fresh one may do; any other source says why not.
-  const { contextLimit } = source;
+    ?? (provider !== undefined ? leaseSource(new LeasedBrowsers(provider)) : options.connect !== undefined ? connectSource(options.connect.cdpEndpoint) : launchSource(browser, media));
+  // Clearing state and saved sessions replace the user context, which only an attempt in a fresh one may do; any other says why not.
+  const { userContext } = source;
   const surface = new BidiSurface({
     viewport: options.viewport === undefined ? DEFAULT_VIEWPORT : options.viewport,
     testIdAttribute: options.testIdAttribute ?? 'data-testid',
@@ -105,7 +105,7 @@ export function createWeb(options: WebOptions, attachTo?: BrowserSource): Engine
         surface.guard(operation, 'keyboard.type', (session, { signal }) => typeText(session, text, keyboardOptions.replace, signal), { input: true, traced: true }),
       press: (key, operation) => surface.guard(operation, 'keyboard.press', (session, { signal }) => session.input.press(key, signal), { input: true, traced: true }),
     },
-    validateApp: (app, info) => validateApp(app, info, browser, source.userContext !== 'adopt-tab'),
+    validateApp: (app, info) => validateApp(app, info, browser, userContext.mode !== 'adopt-tab'),
     ...(isSecret(options.basicAuth?.password) ? { secrets: [options.basicAuth.password] } : {}),
     session: {
       open: (url, operation) => surface.guard(operation, 'navigation', (session, { signal }) => goto(session, url, 'load', signal), { traced: true }),
@@ -118,9 +118,9 @@ export function createWeb(options: WebOptions, attachTo?: BrowserSource): Engine
       // Replaces the tab with a blank one, keeping the attempt's storage.
       restart: (operation) => surface.guard(operation, 'restart', (session, { signal }) => restart(session, signal)),
       // Starts the attempt over in a clean user context.
-      reset: contextLimit === undefined
+      reset: userContext.mode === 'fresh'
         ? (operation) => surface.guard(operation, 'state reset', (session, { signal }) => reset(session, signal))
-        : () => Promise.reject(new ConfigurationError('UNSUPPORTED_CAPABILITY', contextLimit('app.clearState()'))),
+        : () => Promise.reject(new ConfigurationError('UNSUPPORTED_CAPABILITY', userContext.limit('app.clearState()'))),
     },
     artifacts: {
       screenshot: (label, operation) => surface.guard(operation, 'screenshot', (session, { signal }) => screenshot(session, label, signal)),
@@ -128,7 +128,7 @@ export function createWeb(options: WebOptions, attachTo?: BrowserSource): Engine
       startVideo: (operation) => surface.guard(operation, 'video', (session, { signal }) => session.video.start(signal)),
       stopVideo: (operation) => surface.guard(operation, 'video', (session, { signal }) => session.video.stop(signal)),
     },
-    ...(contextLimit === undefined
+    ...(userContext.mode === 'fresh'
       ? {
           state: {
             capture: (operation) => surface.guard(operation, 'state capture', (session) => captureState(session)),

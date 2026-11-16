@@ -20,8 +20,9 @@ import {
   type EnginePrepareInfo,
   type EnginePrepareResult,
 } from '@e2e-dev/core/engine';
-import type { LeasedBrowsers, LeaseDownloads, LeaseRecording } from '../provider.ts';
+import type { LeasedBrowsers, LeaseRecording } from '../provider.ts';
 import { ContextTree } from './context-tree.ts';
+import type { RemoteDownloads } from './downloads.ts';
 import { cancelled, releaseQuietly } from '../errors.ts';
 import { routeEvents, SESSION_EVENTS } from './events.ts';
 import { connectBidiOverCdp, launchBidiBrowser, type BidiBrowser } from './launch.ts';
@@ -51,10 +52,12 @@ export interface BrowserSource {
   readonly opening: 'launch' | 'connect';
   /** `worker`: one browser for the worker, opened at init and again once it drops. `attempt`: a fresh browser for every attempt. */
   readonly scope: 'worker' | 'attempt';
-  /** The user context an attempt runs in. Only `fresh` lets an attempt replace it (`app.clearState()`, saved sessions). */
-  readonly userContext: UserContextMode;
-  /** Why `what` cannot replace the attempt's user context, which rides the browser's own; undefined when the attempt runs in a `fresh` one. */
-  readonly contextLimit: ((what: string) => string) | undefined;
+  /**
+   * The user context an attempt runs in. Only a `fresh` one lets an attempt
+   * replace it (`app.clearState()`, saved sessions); any other is the
+   * browser's own, and its `limit` says why `what` cannot replace that.
+   */
+  readonly userContext: { readonly mode: 'fresh' } | { readonly mode: Exclude<UserContextMode, 'fresh'>; readonly limit: (what: string) => string };
   /** Whether the browser's files are on this machine or on another one, which local paths do not reach. */
   readonly files: 'local' | 'remote';
   /** The `e2e doctor` checks of the browser. */
@@ -73,21 +76,17 @@ export interface BrowserSource {
   dispose(context: EngineCleanupContext): Promise<void>;
   /** How an attempt records the browser when its provider records it, in place of the screencast. */
   recorder(attemptId: string): ((signal: AbortSignal) => Promise<LeaseRecording>) | undefined;
-  /** How a download is read back off a browser on another machine, when its provider serves them. */
-  downloads(): LeaseDownloads | undefined;
-  /** Why no download can be read back: the browser is on another machine, and its provider serves none. */
-  downloadLimit(): string | undefined;
+  /** How a download is read back off a browser on another machine, or why none can be when its provider serves none; undefined for a browser that saves them on this machine. */
+  downloads(): RemoteDownloads | undefined;
 }
 
 /** The parts of a source that do nothing for it. */
 const NOTHING = {
-  contextLimit: undefined,
   finish: async (): Promise<void> => undefined,
   endAttempt: async (): Promise<void> => undefined,
   dispose: async (): Promise<void> => undefined,
   recorder: (): undefined => undefined,
   downloads: (): undefined => undefined,
-  downloadLimit: (): undefined => undefined,
 };
 
 /** A browser launched on this machine from the pinned build `prepare` installs into the run's browsers cache. */
@@ -97,7 +96,7 @@ export function launchSource(browser: BrowserName, media: WebMedia): BrowserSour
     ...NOTHING,
     opening: 'launch',
     scope: 'worker',
-    userContext: 'fresh',
+    userContext: { mode: 'fresh' },
     files: 'local',
     doctor: (info) => browserCheck(browser, info.env, info.headed),
     prepare: async (info) => {
@@ -113,26 +112,38 @@ export function launchSource(browser: BrowserName, media: WebMedia): BrowserSour
   };
 }
 
+/** `web({ connect })`: a remote Chromium at the endpoint `endpoint` resolves, each attempt in a fresh user context. */
+export function connectSource(endpoint: CdpEndpointResolver): BrowserSource {
+  return cdpSource('connect.cdpEndpoint', { mode: 'fresh' }, endpoint);
+}
+
 /**
- * A remote Chromium attached to over CDP at the endpoint `endpoint`
- * resolves: `web({ connect })`, whose attempts each get a fresh user
- * context, or `attachBrowser`, whose attempt adopts the tab open in the
- * browser's own one and leaves both as they are.
+ * `attachBrowser`: the Chromium at `cdpEndpoint`, whose attempt adopts the
+ * tab open in the browser's own user context and leaves both as they are.
  */
-export function cdpSource(kind: 'connect' | 'attach', endpoint: CdpEndpointResolver): BrowserSource {
+export function attachSource(cdpEndpoint: string): BrowserSource {
+  return cdpSource(
+    "attachBrowser's cdpEndpoint",
+    { mode: 'adopt-tab', limit: (what) => `${what} is unavailable on an attached browser: it replaces the browser context, and the attach drives the browser's own` },
+    () => cdpEndpoint,
+  );
+}
+
+/**
+ * A Chromium attached to over CDP at the endpoint `endpoint` resolves,
+ * which an error names as `named`, its attempts in `userContext`.
+ */
+function cdpSource(named: string, userContext: BrowserSource['userContext'], endpoint: CdpEndpointResolver): BrowserSource {
   return {
     ...NOTHING,
     opening: 'connect',
     scope: 'worker',
-    userContext: kind === 'attach' ? 'adopt-tab' : 'fresh',
-    contextLimit: kind === 'attach'
-      ? (what) => `${what} is unavailable on an attached browser: it replaces the browser context, and the attach drives the browser's own`
-      : undefined,
+    userContext,
     files: 'local',
     doctor: async () => [{ id: 'browser', status: 'skip', message: 'the browser is attached over CDP' }],
     prepare: async () => undefined,
     init: () => undefined,
-    open: async ({ signal }) => attach('connect.cdpEndpoint', await endpoint(signal), signal),
+    open: async ({ signal }) => attach(named, await endpoint(signal), signal),
   };
 }
 
@@ -146,10 +157,12 @@ export function leaseSource(leases: LeasedBrowsers): BrowserSource {
   return {
     opening: 'connect',
     scope: leases.scope,
-    userContext: leases.scope === 'attempt' ? 'default' : 'fresh',
-    contextLimit: leases.scope === 'attempt'
-      ? (what) => `${what} is unavailable with browser provider "${leases.name}" with scope "attempt": it replaces the browser context, and the attempt rides the leased browser's own; every attempt already starts on a fresh browser, and scope "worker" can clear one mid-test`
-      : undefined,
+    userContext: leases.scope === 'attempt'
+      ? {
+          mode: 'default',
+          limit: (what) => `${what} is unavailable with browser provider "${leases.name}" with scope "attempt": it replaces the browser context, and the attempt rides the leased browser's own; every attempt already starts on a fresh browser, and scope "worker" can clear one mid-test`,
+        }
+      : { mode: 'fresh' },
     files: 'remote',
     doctor: async () => [{ id: 'browser', status: 'skip', message: `browsers come from the "${leases.name}" provider` }],
     prepare: (info) => leases.prepare(info),
@@ -162,8 +175,7 @@ export function leaseSource(leases: LeasedBrowsers): BrowserSource {
     endAttempt: (context) => (leases.scope === 'attempt' ? leases.endAttempt(context) : Promise.resolve()),
     dispose: (context) => leases.dispose(context),
     recorder: (attemptId) => leases.recorder(attemptId),
-    downloads: () => leases.downloads(),
-    downloadLimit: () => (leases.downloads() === undefined ? `browser provider "${leases.name}" serves no downloads, so a file its remote browser saves cannot be read back` : undefined),
+    downloads: () => leases.downloads() ?? { unserved: `browser provider "${leases.name}" serves no downloads, so a file its remote browser saves cannot be read back` },
   };
 }
 
