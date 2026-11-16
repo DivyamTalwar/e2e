@@ -22,6 +22,6 @@ export class ArtifactPaths {
 }
 
 /** Constrains a caller-supplied artifact label to a safe filename. */
-export function sanitizeFilename(name: string): string {
+function sanitizeFilename(name: string): string {
   return name.replaceAll(/[^A-Za-z0-9._-]/g, '_').slice(0, 64) || 'artifact';
 }
