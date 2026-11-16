@@ -12,7 +12,6 @@ import { createGunzip } from 'node:zlib';
 import { EngineError } from '@e2e-dev/core/engine';
 import { installArchive, PINS } from './builds.ts';
 import { mirrorOrigin } from './download.ts';
-import { withCacheLock } from './lock.ts';
 import { browsersPath, installBuilds, type PinnedBuild } from './provision.ts';
 
 /** Where the pinned ffmpeg-static release is downloaded from, unless `E2E_BROWSERS_DOWNLOAD_HOST` names a mirror. */
@@ -101,6 +100,6 @@ export async function ensureFfmpeg(env: NodeJS.ProcessEnv, context: FfmpegContex
         signal: context.signal,
       }),
   };
-  await withCacheLock(browsersPath(env), lock, (owner) => installBuilds([ffmpeg], owner, lock));
+  await installBuilds(browsersPath(env), [ffmpeg], lock);
   return executable;
 }

@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { InfrastructureError } from '@e2e-dev/core/engine';
 import type { BrowserName } from '../browsers.ts';
+import { cancelledCheck } from './lock.ts';
 
 /** The fonts a headless browser renders with on a minimal Debian or Ubuntu image; each one the distribution lacks is left out. */
 const APT_TOOLS = ['fonts-noto-color-emoji', 'fonts-unifont', 'libfontconfig1', 'libfreetype6', 'xfonts-cyrillic', 'xfonts-scalable', 'fonts-liberation', 'fonts-ipafont-gothic', 'fonts-wqy-zenhei', 'fonts-tlwg-loma-otf', 'fonts-freefont-ttf'];
@@ -27,8 +28,8 @@ const APT_PACKAGES: Readonly<Record<BrowserName, readonly string[]>> = {
 
 /**
  * Runs `file` to completion and resolves to its exit code, null when it
- * could not start or a signal ended it. It never blocks the event loop: the
- * caller holds the install lock, whose heartbeat is a timer.
+ * could not start or a signal ended it. It never blocks the event loop, so
+ * the signal that cancels the install is heard while it runs.
  */
 function run(file: string, args: readonly string[], stdio: 'inherit' | 'ignore'): Promise<number | null> {
   return new Promise((resolve) => {
@@ -42,17 +43,24 @@ function run(file: string, args: readonly string[], stdio: 'inherit' | 'ignore')
  * Installs the system packages `names` load, with apt on Debian and Ubuntu
  * (as root, else through sudo); elsewhere there is nothing to do. A package
  * Ubuntu 24.04 renamed with a `t64` suffix also takes its older name, and a
- * font the distribution does not carry is skipped.
+ * font the distribution does not carry is skipped. Once `signal` aborted no
+ * further command starts and it throws `CANCELLED`; the one running is left
+ * to finish, since apt killed halfway leaves packages unconfigured. It needs
+ * no install lock: apt's state is the machine's, not the cache's, and apt
+ * locks it itself.
  */
-export async function installSystemDeps(names: readonly BrowserName[], log: (line: string) => void): Promise<void> {
+export async function installSystemDeps(names: readonly BrowserName[], log: (line: string) => void, signal: AbortSignal): Promise<void> {
   if (process.platform !== 'linux' || !existsSync('/usr/bin/apt-get')) return;
   const root = process.getuid?.() === 0;
   const apt = (args: readonly string[]) => (root ? run('apt-get', args, 'inherit') : run('sudo', ['apt-get', ...args], 'inherit'));
+  cancelledCheck(signal);
   if ((await apt(['update'])) !== 0) throw new InfrastructureError('BROWSER_INSTALL_FAILED', 'apt-get update failed');
   const fonts: string[] = [];
   for (const name of APT_TOOLS) {
+    cancelledCheck(signal);
     if ((await run('apt-get', ['install', '--simulate', '--no-install-recommends', name], 'ignore')) === 0) fonts.push(name);
   }
+  cancelledCheck(signal);
   const packages = [...new Set([...fonts, ...names.flatMap((name) => APT_PACKAGES[name])])];
   const wanted = packages.map((name) => (name.endsWith('t64') ? `${name} | ${name.slice(0, -3)}` : name)).join(', ');
   log(`Installing system packages: ${packages.join(' ')}`);

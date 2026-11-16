@@ -11,7 +11,6 @@ import { browserPlatform, executablePath, installBuild, PINS, type BrowserPlatfo
 import type { BrowserName } from '../browsers.ts';
 import { mirrorOrigin } from './download.ts';
 import { cancelledCheck, withCacheLock, type LockContext, type LockOwner } from './lock.ts';
-import { installSystemDeps } from './system-deps.ts';
 
 /** The build `name` runs in this mode, and the `e2e-web install` arguments that install it. */
 function buildOf(name: BrowserName, headed: boolean): { readonly browser: BuildName; readonly buildId: string; readonly installArgs: string } {
@@ -75,8 +74,6 @@ export interface InstallContext {
   readonly env: NodeJS.ProcessEnv;
   /** Whether the run launches a window, which decides the chromium build it needs. */
   readonly headed: boolean;
-  /** Also installs the system libraries the browsers need on Linux (apt). */
-  readonly withDeps?: boolean;
 }
 
 /**
@@ -85,7 +82,7 @@ export interface InstallContext {
  * so a download is never charged against a launch timeout and never runs
  * once per worker.
  */
-export async function ensureBrowsersInstalled(names: readonly BrowserName[], context: Omit<InstallContext, 'withDeps'>): Promise<void> {
+export async function ensureBrowsersInstalled(names: readonly BrowserName[], context: InstallContext): Promise<void> {
   const missing = [...new Set(names)].filter((name) => !isBrowserInstalled(name, context.env, context.headed));
   if (missing.length === 0) return;
   context.log(`Downloading missing browsers (first run): ${missing.join(', ')}...`);
@@ -108,29 +105,30 @@ export interface PinnedBuild {
 }
 
 /**
- * Installs each of `builds` the cache lacks, for `owner`, the holder of the
- * cache's install lock, so two runs that start at once download each build
- * once. A failed install throws `BROWSER_INSTALL_FAILED` naming the build
- * and what to do instead; `context.signal` aborting throws `CANCELLED`.
+ * Installs each of `builds` that `cacheDir` lacks, holding the cache's
+ * install lock, so two runs that start at once download each build once. A
+ * failed install throws `BROWSER_INSTALL_FAILED` naming the build and what
+ * to do instead; `context.signal` aborting throws `CANCELLED`.
  */
-export async function installBuilds(builds: readonly PinnedBuild[], owner: LockOwner, context: LockContext): Promise<void> {
-  for (const build of builds) {
-    if (existsSync(build.executable)) continue;
-    cancelledCheck(context.signal);
-    context.log(build.announcement);
-    try {
-      await build.install(owner);
-    } catch (cause) {
+export async function installBuilds(cacheDir: string, builds: readonly PinnedBuild[], context: LockContext): Promise<void> {
+  await withCacheLock(cacheDir, context, async (owner) => {
+    for (const build of builds) {
+      if (existsSync(build.executable)) continue;
       cancelledCheck(context.signal);
-      throw new InfrastructureError('BROWSER_INSTALL_FAILED', `could not install ${build.label}: ${cause instanceof Error ? cause.message : String(cause)}; ${build.recovery}`, { cause });
+      context.log(build.announcement);
+      try {
+        await build.install(owner);
+      } catch (cause) {
+        cancelledCheck(context.signal);
+        throw new InfrastructureError('BROWSER_INSTALL_FAILED', `could not install ${build.label}: ${cause instanceof Error ? cause.message : String(cause)}; ${build.recovery}`, { cause });
+      }
     }
-  }
+  });
 }
 
 /**
  * Downloads, verifies, and unpacks `names` into the browsers cache, skipping
- * any build already there, after the system packages `context.withDeps`
- * asks for. Holds the cache's install lock for all of it.
+ * any build already there, under the cache's install lock.
  */
 export async function installBrowsers(names: readonly BrowserName[], context: InstallContext): Promise<void> {
   const cacheDir = browsersPath(context.env);
@@ -147,8 +145,5 @@ export async function installBrowsers(names: readonly BrowserName[], context: In
       install: (owner) => installBuild({ build: browser, buildId, platform, cacheDir, sha256, host, owner, env: context.env, signal: context.signal }),
     };
   });
-  await withCacheLock(cacheDir, context, async (owner) => {
-    if (context.withDeps === true) await installSystemDeps(names, context.log);
-    await installBuilds(builds, owner, context);
-  });
+  await installBuilds(cacheDir, builds, context);
 }

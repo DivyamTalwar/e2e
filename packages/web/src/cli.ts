@@ -4,6 +4,7 @@ import os from 'node:os';
 import { BROWSER_NAMES, isBrowserName, type BrowserName } from './browsers.ts';
 import { ensureFfmpeg } from './install/ffmpeg.ts';
 import { installBrowsers } from './install/provision.ts';
+import { installSystemDeps } from './install/system-deps.ts';
 
 /** What `e2e-web install` installs: a browser, or ffmpeg. */
 export type InstallName = BrowserName | 'ffmpeg';
@@ -70,8 +71,9 @@ export async function main(args: readonly string[], io: CliIo = PROCESS_IO): Pro
 }
 
 /**
- * Installs `names`, narrating to stderr; resolves to the exit code. SIGINT
- * or SIGTERM aborts the download, the partial files are removed, and the
+ * Installs `names`, the system packages first when asked, narrating to
+ * stderr; resolves to the exit code. SIGINT or SIGTERM starts no further apt
+ * command and aborts the download, the partial files are removed, and the
  * exit code is the signal's, 130 or 143.
  */
 async function runInstall(names: readonly InstallName[], { withDeps, headed }: { readonly withDeps: boolean; readonly headed: boolean }): Promise<number> {
@@ -88,7 +90,8 @@ async function runInstall(names: readonly InstallName[], { withDeps, headed }: {
   });
   try {
     const browsers = names.filter(isBrowserName);
-    if (browsers.length > 0 || withDeps) await installBrowsers(browsers, { log, signal: controller.signal, env: process.env, headed, withDeps });
+    if (withDeps) await installSystemDeps(browsers, log, controller.signal);
+    if (browsers.length > 0) await installBrowsers(browsers, { log, signal: controller.signal, env: process.env, headed });
     if (names.includes('ffmpeg')) log(`ffmpeg: ${await ensureFfmpeg(process.env, { log, signal: controller.signal })}`);
     return signalCode ?? 0;
   } catch (cause) {
