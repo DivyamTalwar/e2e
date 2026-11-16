@@ -201,7 +201,7 @@ describe('a frame located through before its document loaded', () => {
 
   it('sees a tap land in a frame whose window the page reached into before its document loaded', async () => {
     const release = await appendLateFrame('/late-frame-reached');
-    // The browser keeps a window a script touched for the document that loads next, without the listeners it had.
+    // The browser keeps a window a script touched for the document that loads next: the kept window of `listen` (`in-page/hit-interceptor.ts`).
     await page.browser.evaluate(() => {
       Reflect.set(document.querySelector('iframe')!.contentWindow!, 'early', true);
       return null;

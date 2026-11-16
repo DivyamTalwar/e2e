@@ -162,6 +162,20 @@ describe('input', () => {
     await expect(page.engine.perform!(twin!.ref, { kind: 'tap' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', message: expect.stringContaining('now matches 2 elements') });
   });
 
+  it('suppresses a click an overlay took ahead of the page\'s own capture listeners on the window', async () => {
+    await page.setContent(`<button id=b style="position:absolute;left:300px;top:300px;width:100px;height:40px">b</button>
+      <div id=cover style="position:absolute;left:300px;top:300px;width:100px;height:40px;display:none"></div>
+      <script>
+        window.log = [];
+        for (const type of ['mousedown', 'mouseup', 'click']) addEventListener(type, () => log.push(type), true);
+        b.addEventListener('mousemove', () => { cover.style.display = 'block'; }, { once: true });
+      </script>`);
+    await page.browser.mouse.move(600, 600);
+    const [covered] = await page.locate(bySelector('#b'));
+    await expect(page.engine.perform!(covered!.ref, { kind: 'tap' }, page.op(2_000))).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('<div#cover> intercepts pointer events') });
+    expect(await log()).toEqual([]);
+  });
+
   it('counts the hover of a click an overlay swallowed as input, so a ref located before it is checked again', async () => {
     // The pointer arriving on the button adds a twin of the located element and raises an overlay that takes the press.
     await page.setContent(`<button class=twin>twin</button>

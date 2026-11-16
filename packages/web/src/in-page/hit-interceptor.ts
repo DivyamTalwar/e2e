@@ -13,9 +13,8 @@ type HitWatch = { readonly target: Element; verdict: Outcome | undefined };
  * Installs the capture listeners the click watch (`armHitInterceptor`)
  * decides through (they do nothing until a watch is armed), and keeps the
  * page's own `Event` constructor for the driver's edits, which a page may
- * replace later. A window can outlive what its listeners were added for
- * without a preload running again, so what adds them is kept for the watch
- * to call each time it is armed (`listen`).
+ * replace later. What adds the listeners is kept for the watch to call each
+ * time it is armed (`listen`).
  */
 const installHitInterceptor = withDom((dom): void => {
   Reflect.set(globalThis, Symbol.for('e2e.bidi.Event'), Event);
@@ -42,12 +41,17 @@ const installHitInterceptor = withDom((dom): void => {
   };
   let listeningIn: Document | undefined;
   /**
-   * Adds the listeners to the window. Adding one it still has does nothing,
-   * so this only restores what `document.open()` cleared. A frame's window
-   * that a script touched while it showed its first, empty document is kept
-   * for the document that loads next, and Chromium then delivers no event to
-   * the listeners it already had; added again, after the page's own by then,
-   * they hear the new document's events.
+   * Adds the listeners to the window, which can lose them, or stop hearing
+   * through them, with no preload running again. `document.open()` erases a
+   * window's listeners, in Chromium and in Firefox, and adding the same
+   * function again restores them. A frame's window kept from its first,
+   * empty document for the document that loads next keeps them registered,
+   * so adding them again does nothing. Firefox goes on delivering to them;
+   * Chromium delivers them no event until they are removed and added again,
+   * though a function the window never had works once added. So they are
+   * removed first only when the window shows another document than the one
+   * they were last added in (`listeningIn`): removed every time, they would
+   * sit behind the app's own capture listeners on the window at every click.
    */
   const listen = (): void => {
     const kept = listeningIn !== undefined && listeningIn !== document;
@@ -70,7 +74,7 @@ export const HIT_INTERCEPTOR_INIT_SCRIPT = `(${installHitInterceptor.toString()}
  * release, or click decides whether the input reaches the element
  * (retargeted to its button or link, through slots, shadow hosts, and
  * recorded closed roots), and every later one is suppressed when it did not.
- * The listeners are added again first, for a window that lost them.
+ * The listeners are added again first (`listen` in `installHitInterceptor`).
  * `hitInterceptorResult` reads the decision.
  */
 export const armHitInterceptor = withDom((dom, element: Element): void => {
