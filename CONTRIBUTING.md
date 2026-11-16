@@ -126,10 +126,11 @@ pnpm check   # lint -> check:dead-code -> typecheck -> docs:check
 pnpm test    # unit + integration
 ```
 
-Integration tests need Chromium. After `pnpm build`:
+Integration tests need Chromium, Firefox, and full Chrome. After `pnpm build`:
 
 ```sh
-node packages/web/dist/bin.js install chromium
+node packages/web/dist/bin.js install chromium firefox
+node packages/web/dist/bin.js install chromium --headed
 ```
 
 Docs are part of the change, not a follow-up. A behavior change updates its

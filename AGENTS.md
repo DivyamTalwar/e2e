@@ -158,9 +158,8 @@ suites that consume the built packages the way a user would.
   (peer). Each worker slot boots one warm browser machine from the pinned
   Playwright Ubuntu image; a Node TCP relay exposes DevTools, and SDK agent
   readiness allows machine startup without waiting for published ports. In
-  `attempt` scope (the provider's default, which `@e2e-dev/web` rejects
-  with `INVALID_CONFIG` for now) every attempt runs in a copy-on-write
-  branch. With `app`,
+  `attempt` scope (the provider's default) every attempt runs in a
+  copy-on-write branch. With `app`,
   the app under test runs in the same machine, so a branch also copies its
   running app and data on the machine. When maintaining this integration,
   update the provider's SDK dev dependency to a published version and raise
@@ -168,7 +167,7 @@ suites that consume the built packages the way a user would.
   image's Chromium close to the build `@e2e-dev/web` pins (`chrome` in
   `packages/web/src/install/builds.json`). Run
   `pnpm --filter @e2e-dev/smol test:unit` and `pnpm check`, then verify live
-  machines in worker scope with an app running in the VM.
+  machines in both scopes with an app running in the VM.
 - `packages/limrun` — the Limrun hosted mobile device provider. Each worker
   leases one remote device, installs its app, and releases the device at exit.
 - `packages/decision` — the published `@e2e-dev/decision` package: a
@@ -232,8 +231,9 @@ suites that consume the built packages the way a user would.
   `@e2e-dev/e2b/web` (`BrowserProvider`) starts Chromium on a sandbox's
   loopback and creates the sandbox with `maskRequestHost`, so E2B's edge
   rewrites `Host` to `localhost` and DevTools accepts the request. Keep the
-  Playwright image in `docs/examples/web/e2b-template.ts` in sync with
-  `@e2e-dev/web`. Run
+  Chromium of the Playwright image in `docs/examples/web/e2b-template.ts`
+  close to the build `@e2e-dev/web` pins (`chrome` in
+  `packages/web/src/install/builds.json`). Run
   `pnpm --filter @e2e-dev/e2b test`, then verify live sandboxes on both
   engines, web in both scopes, with `E2B_API_KEY` set.
 - `apps/testbed` (`@e2e-dev/testbed`, private) — dogfood project that
@@ -388,10 +388,12 @@ pnpm --filter @e2e-dev/testbed run test:headed
 - `pnpm typecheck` runs `build` first, then per-package `typecheck`. The
   package `typecheck` covers `tests/**`, which is what makes
   `tests/types/sdk-types.ts` a test.
-- Integration tests need Chromium: `node packages/web/dist/bin.js install
-  chromium` after `pnpm build`. The web engine's `prepare` hook
-  also installs a missing browser once per run, in the runner, before `plan`
-  is emitted and the run's clock starts.
+- Integration tests need Chromium, Firefox, and full Chrome. After
+  `pnpm build`, run `node packages/web/dist/bin.js install chromium firefox`,
+  then the same with `install chromium --headed`. The web engine's `prepare`
+  hook installs a missing browser once per run, in the runner, before `plan`
+  is emitted and the run's clock starts; a test that launches a browser
+  below the engine gets none installed and fails without it.
 
 ## Definition of done
 
@@ -440,6 +442,10 @@ thread handled, and labeled `Ready for Human Review`. "It compiles" and
 - Vitest 5, `pool: 'forks'`, two projects. `integration` is capped at
   `maxWorkers: 3` and runs in a later group — do not raise it; CPU starvation
   produces timeouts indistinguishable from real failures.
+- `@e2e-dev/web`'s integration suite runs on Chromium, then again on Firefox
+  (the `integration-firefox` project). A file only Chromium can run goes in
+  `tests/integration/chromium/`, which that project excludes. No test is
+  skipped for a browser: a Firefox limit is asserted (`onFirefox`).
 - Integration tests write throwaway projects into
   `packages/e2e/tests/tmp-projects/` (gitignored) and import the runner from
   `dist/` via a non-literal specifier so the fixture's `e2e` self-reference
@@ -510,10 +516,10 @@ the fixture project (`tests/integration/agent-ai-trace.test.ts` shows how).
 web engine's semantic tree against two oracles on the same page: Chrome's
 accessibility tree over CDP (role, name, checked, disabled, expanded,
 selected, pressed, heading level, and interactive nodes the tree left out)
-and Playwright's `getByRole(role, { name })` round trip, exact but tolerant of
-icon-font glyphs the way the engine's role locator is. It runs on the
-fixture pages in `tests/crosscheck/fixtures.ts` under `pnpm test`, and on
-every web-benchmark scenario in `benchmark.yml` or locally:
+and the engine's own `locate`, where an exact role query built from a node's
+role and name must find that node. It runs on the fixture pages in
+`tests/crosscheck/fixtures.ts` under `pnpm test`, and on every web-benchmark
+scenario in `benchmark.yml` or locally:
 
 ```bash
 pnpm --filter @e2e-dev/web-benchmark run build && pnpm --filter @e2e-dev/web-benchmark run start &
@@ -531,9 +537,10 @@ CROSSCHECK_BENCHMARK_URL=http://127.0.0.1:4280 pnpm --filter @e2e-dev/web exec v
 - A reader change (`src/in-page/read-semantics.ts`, and `accessible-name.ts`
   and `locator-match.ts` beside it) runs it before the PR. A bug in that
   family starts as a fixture page line here.
-- Pages load with Playwright's clock paused (`openCheckPage`), so a timer
-  cannot replace a node between the engine's read and the oracles'. Content a
-  timer reveals is never read: build fixture pages synchronously.
+- Pages load with their clock paused (`PAUSED_CLOCK_SCRIPT`, which
+  `openCheckPage` runs before any document), so a timer cannot replace a
+  node between the engine's read and the oracles'. Content a timer reveals
+  is never read: build fixture pages synchronously.
 - `tests/integration/conformance.test.ts` holds the reader to a third
   oracle: the role and accessible-name expectations of the axe-core test
   suite (`tests/conformance/axe-core/`, vendored byte for byte through

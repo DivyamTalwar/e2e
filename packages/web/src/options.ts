@@ -68,10 +68,10 @@ export interface WebScreencastOptions {
 export interface WebOptions {
   /**
    * Browser to launch, `chromium` (default) or `firefox`, driven over
-   * WebDriver BiDi. A `BrowserProvider` leases hosted browsers instead, one
-   * per worker slot, each attached to over CDP and released when the run
-   * ends; `scope: 'attempt'` is not supported right now. A provider implies
-   * chromium and excludes `connect`.
+   * WebDriver BiDi. A `BrowserProvider` leases hosted browsers instead, each
+   * attached to over CDP: one per worker slot, released when the run ends,
+   * or one per attempt with `scope: 'attempt'`. A provider implies chromium
+   * and excludes `connect`.
    */
   readonly browser?: BrowserName | BrowserProvider;
   /**

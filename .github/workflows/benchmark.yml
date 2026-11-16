@@ -86,8 +86,8 @@ jobs:
           # The reporter posts the comment with the job's token.
           GITHUB_TOKEN: ${{ inputs.agent-device-version == '' && github.token || '' }}
         run: pnpm --filter @e2e-dev/web-benchmark run test
-      # The engine's tree against Chrome's accessibility tree and Playwright's
-      # getByRole on every scenario, against the disagreements committed in
+      # The engine's tree against Chrome's accessibility tree and the engine's
+      # own locate on every scenario, against the disagreements committed in
       # packages/web/tests/crosscheck/expected.txt. `test` built the app.
       - name: Cross-check the tree
         env:
