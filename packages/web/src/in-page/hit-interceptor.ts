@@ -13,7 +13,9 @@ type HitWatch = { readonly target: Element; verdict: Outcome | undefined };
  * Installs the capture listeners the click watch (`armHitInterceptor`)
  * decides through (they do nothing until a watch is armed), and keeps the
  * page's own `Event` constructor for the driver's edits, which a page may
- * replace later.
+ * replace later. A window can outlive what its listeners were added for
+ * without a preload running again, so what adds them is kept for the watch
+ * to call each time it is armed (`listen`).
  */
 const installHitInterceptor = withDom((dom): void => {
   Reflect.set(globalThis, Symbol.for('e2e.bidi.Event'), Event);
@@ -38,7 +40,25 @@ const installHitInterceptor = withDom((dom): void => {
       event.stopImmediatePropagation();
     }
   };
-  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu'] as const) window.addEventListener(type, listener, { capture: true });
+  let listeningIn: Document | undefined;
+  /**
+   * Adds the listeners to the window. Adding one it still has does nothing,
+   * so this only restores what `document.open()` cleared. A frame's window
+   * that a script touched while it showed its first, empty document is kept
+   * for the document that loads next, and Chromium then delivers no event to
+   * the listeners it already had; added again, after the page's own by then,
+   * they hear the new document's events.
+   */
+  const listen = (): void => {
+    const kept = listeningIn !== undefined && listeningIn !== document;
+    listeningIn = document;
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu'] as const) {
+      if (kept) window.removeEventListener(type, listener, { capture: true });
+      window.addEventListener(type, listener, { capture: true });
+    }
+  };
+  Reflect.set(globalThis, Symbol.for('e2e.bidi.hit.listen'), listen);
+  listen();
 });
 
 /** The preload that runs `installHitInterceptor` before the page's own scripts, so no listener of the app runs ahead of the watch's. */
@@ -50,9 +70,12 @@ export const HIT_INTERCEPTOR_INIT_SCRIPT = `(${installHitInterceptor.toString()}
  * release, or click decides whether the input reaches the element
  * (retargeted to its button or link, through slots, shadow hosts, and
  * recorded closed roots), and every later one is suppressed when it did not.
+ * The listeners are added again first, for a window that lost them.
  * `hitInterceptorResult` reads the decision.
  */
 export const armHitInterceptor = withDom((dom, element: Element): void => {
+  const listen: (() => void) | undefined = Reflect.get(globalThis, Symbol.for('e2e.bidi.hit.listen'));
+  listen?.();
   const watch: HitWatch = { target: dom.pointerTarget(element), verdict: undefined };
   Reflect.set(globalThis, Symbol.for('e2e.bidi.hit.active'), watch);
 });

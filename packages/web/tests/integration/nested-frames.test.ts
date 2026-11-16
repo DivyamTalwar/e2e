@@ -163,10 +163,11 @@ describe('a frame located through before its document loaded', () => {
     await page.close();
   });
 
-  it('still takes a tap the engine sees land', async () => {
+  /** Appends an iframe `#late` whose document the server holds back; resolves with what lets it load. */
+  async function appendLateFrame(pathname: string): Promise<() => void> {
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
-    const late = page.serve('/late-frame', (_request, response) => {
+    const late = page.serve(pathname, (_request, response) => {
       void held.then(() => {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         response.end('<button onclick="this.textContent = \'Clicked\'">Press</button>');
@@ -180,12 +181,52 @@ describe('a frame located through before its document loaded', () => {
       document.body.append(frame);
       return null;
     }, late);
-    // The frame shows its first, empty document. Whatever this locate answers, it leaves that document's own world alone.
-    await page.engine.locate!(withinFrames(['#late'], buttonNamed('Press')), page.op(500)).catch(() => undefined);
-    release();
+    return release;
+  }
+
+  /** Taps the frame's button once it loaded, and reads that the page took the tap. */
+  async function tapInFrame(): Promise<void> {
     await expect.poll(async () => (await page.locate(withinFrames(['#late'], buttonNamed('Press')))).length).toBe(1);
     await page.act(withinFrames(['#late'], buttonNamed('Press')), { kind: 'tap' });
     expect(await page.locate(withinFrames(['#late'], buttonNamed('Clicked')))).toHaveLength(1);
+  }
+
+  it('still takes a tap the engine sees land', async () => {
+    const release = await appendLateFrame('/late-frame');
+    // The frame shows its first, empty document. Whatever this locate answers, it leaves that document's own world alone.
+    await page.engine.locate!(withinFrames(['#late'], buttonNamed('Press')), page.op(500)).catch(() => undefined);
+    release();
+    await tapInFrame();
+  });
+
+  it('sees a tap land in a frame whose window the page reached into before its document loaded', async () => {
+    const release = await appendLateFrame('/late-frame-reached');
+    // The browser keeps a window a script touched for the document that loads next, without the listeners it had.
+    await page.browser.evaluate(() => {
+      Reflect.set(document.querySelector('iframe')!.contentWindow!, 'early', true);
+      return null;
+    });
+    release();
+    await tapInFrame();
+  });
+
+  it('sees a tap land in a frame observed before its document loaded', async () => {
+    const release = await appendLateFrame('/late-frame-observed');
+    await page.observe();
+    release();
+    await tapInFrame();
+  });
+
+  it('sees a tap land in a frame the page wrote with document.open(), which drops the window\'s listeners', async () => {
+    await page.setContent('<iframe id="late"></iframe>');
+    await page.browser.evaluate(() => {
+      const written = document.querySelector('iframe')!.contentDocument!;
+      written.open();
+      written.write('<button onclick="this.textContent = \'Clicked\'">Press</button>');
+      written.close();
+      return null;
+    });
+    await tapInFrame();
   });
 });
 
