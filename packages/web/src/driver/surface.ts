@@ -7,7 +7,6 @@
  * label, the driver call, and how the guard treats it.
  */
 
-import path from 'node:path';
 import {
   EngineError,
   raceAbort,
@@ -24,17 +23,15 @@ import {
   type OperationContext,
   type ViewportSize,
 } from '@e2e-dev/core/engine';
-import type { DialogHandler } from './dialogs.ts';
 import type { ConfiguredInitScripts } from '../init-scripts.ts';
 import { credentialOrigins, httpCredentials, ProtectedApp } from '../protected-app.ts';
 import type { WebBasicAuth, WebMedia, WebScreencastOptions } from '../options.ts';
 import { DispatchScope } from './input.ts';
-import { afterDispatch, cancelled, classify, type ErrorLatch, invalidState, releaseQuietly } from '../errors.ts';
+import { afterDispatch, cancelled, classify, invalidState, releaseQuietly } from '../errors.ts';
 import { BROWSER_OPEN_TIMEOUT_MS, BrowserHandle, type BrowserSource } from './browser-source.ts';
 import { TriggerFailure, withDeadline, type OperationBudget } from './budget.ts';
 import { traceScreen } from './observe.ts';
 import { BidiSession, type SessionSettings } from './session.ts';
-import type { AttemptTab } from './tabs.ts';
 
 /** What a BiDi surface is configured with, from `web()`. */
 export interface BidiSurfaceOptions {
@@ -292,8 +289,8 @@ export class BidiSurface {
     if (failed !== undefined) throw classify(failed.reason, 'dispose');
   }
 
-  /** The running attempt; `INVALID_STATE` between attempts. */
-  private requireSession(): BidiSession {
+  /** The running attempt, which the `browser` fixture built for it reads once; `INVALID_STATE` between attempts. */
+  attempt(): BidiSession {
     if (this.session === undefined) throw invalidState('no attempt is running');
     return this.session;
   }
@@ -319,7 +316,7 @@ export class BidiSurface {
     const session = this.session;
     const dispatches = new DispatchScope();
     const run = (budget: OperationBudget): Promise<T> => dispatches.run(async () => {
-      const current = this.requireSession();
+      const current = this.attempt();
       // A tab change already queued (a tab that closed, one a test showed) lands before the operation reads or acts on one.
       await current.tabs.settled();
       return work(current, budget);
@@ -336,33 +333,6 @@ export class BidiSurface {
     }
     if (kind.traced === true && session !== undefined) await traceScreen(session, operation.signal);
     return result;
-  }
-
-  /** The absolute path of a file a test names relative to the project root. */
-  projectPath(file: string): string {
-    return path.resolve(this.settings?.projectRoot ?? '', file);
-  }
-
-  /** The latch of the attempt a fixture serves, bound once, so a route handler that outlives the attempt fails only its own. */
-  attemptLatch(): ErrorLatch {
-    return this.requireSession().latch;
-  }
-
-  /** Registers a dialog handler; returns its unsubscribe. */
-  onDialog(handler: DialogHandler): () => void {
-    return this.requireSession().dialogs.add(handler);
-  }
-
-  /** The attempt's open tabs, in the order they opened. */
-  tabs(): readonly AttemptTab[] {
-    const session = this.requireSession();
-    session.latch.throwPending();
-    return session.tabs.list();
-  }
-
-  /** The tab the attempt shows, if one is open. */
-  activeTab(): AttemptTab | undefined {
-    return this.session?.tabs.active();
   }
 }
 

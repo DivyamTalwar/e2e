@@ -2,10 +2,12 @@
  * Every engine operation goes through one guard: an error a route handler
  * latched fails the next step once, with its own classification, and an
  * operation already cancelled, or cancelled mid-flight, ends as `CANCELLED`.
+ * The calls a fixture makes outside the guard refuse a fixture whose attempt
+ * ended as the guard refuses its steps.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { browserFixture, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 describe('the operation guard', () => {
   let session: WebSession;
@@ -48,6 +50,38 @@ describe('the operation guard', () => {
       message: expect.stringContaining('route handler returned without calling fulfill'),
     });
     expect(triggered).toBe(false);
+  });
+
+  describe('a fixture whose attempt ended', () => {
+    const ended = { code: 'INVALID_STATE', message: 'no attempt is running' };
+
+    /** The runner's fixture, one no runner hosts (whose steps reach the engine), and a tab of the attempt, which then ends. */
+    async function staleFixture() {
+      const hosted = session.browser;
+      const bare = browserFixture(session.engine, { baseUrl: session.origin });
+      const [tab] = hosted.tabs();
+      expect(tab!.isActive()).toBe(true);
+      await session.endAttempt();
+      return { hosted, bare, tab: tab! };
+    }
+
+    it('refuses its tabs, a dialog handler, and a step between attempts, and none of its tabs is active', async () => {
+      const { hosted, bare, tab } = await staleFixture();
+      expect(() => hosted.tabs()).toThrow(expect.objectContaining(ended));
+      await expect(bare.onDialog(() => undefined)).rejects.toMatchObject(ended);
+      await expect(bare.url()).rejects.toMatchObject(ended);
+      expect(tab.isActive()).toBe(false);
+    });
+
+    it('refuses its tabs and a dialog handler while the next attempt runs, which keeps its own', async () => {
+      const { hosted, bare, tab } = await staleFixture();
+      await session.startAttempt();
+      await session.open(`${session.origin}/`);
+      expect(() => hosted.tabs()).toThrow(expect.objectContaining(ended));
+      await expect(bare.onDialog(() => undefined)).rejects.toMatchObject(ended);
+      expect(tab.isActive()).toBe(false);
+      expect(session.browser.tabs()).toHaveLength(1);
+    });
   });
 
   it('refuses an operation whose signal already aborted as CANCELLED', async () => {

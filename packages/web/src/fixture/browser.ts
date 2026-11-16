@@ -17,6 +17,7 @@
  * open.
  */
 
+import path from 'node:path';
 import type { Expectable, JsonValue } from '@e2e-dev/core';
 import {
   Deadline,
@@ -29,6 +30,7 @@ import {
   type FixtureOperations,
   type LocatorExpression,
 } from '@e2e-dev/core/engine';
+import { invalidState } from '../errors.ts';
 import { createBrowserExpectation } from './expectation.ts';
 import type { Browser, BrowserExpectation, BrowserTab, FrameScreen } from './types.ts';
 import { initScriptLabel, testInitScriptSource } from '../init-scripts.ts';
@@ -52,6 +54,14 @@ import type { AttemptTab } from '../driver/tabs.ts';
 
 /** Builds the attempt's `browser` fixture over the driver's surface. */
 export function createBrowserFixture(surface: BidiSurface, context: EngineFixtureContext): Browser {
+  /** The attempt the fixture is built for: its latch, dialogs, and tabs are this attempt's, so a route handler that outlives it fails only its own. */
+  const attempt = surface.attempt();
+  /** Refuses a call that runs outside the guard once the attempt ended, as the guard refuses a step. */
+  const requireRunning = (): void => {
+    if (attempt.lifetime.aborted) throw invalidState('no attempt is running');
+  };
+  /** The absolute path of a file a test names relative to the project root. */
+  const projectPath = (file: string): string => path.resolve(attempt.settings.projectRoot, file);
   /** Runs one driver call under the surface's guard, within the action timeout. */
   const run = <T>(label: string, work: (session: BidiSession, budget: OperationBudget) => Promise<T>, kind?: GuardKind): Promise<T> =>
     surface.guard(context.operation(), label, work, kind);
@@ -68,7 +78,6 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     deadlineFor: (timeout, api) => new Deadline(context.operation(stepTimeout(timeout, api) ?? context.timeouts.assertion).timeoutMs),
     context,
   });
-  const latch = surface.attemptLatch();
   /** One handle per tab, so the same tab is the same object for the attempt. */
   const tabHandles = new WeakMap<AttemptTab, BrowserTab>();
   const tabAction: FixtureOperation = { kind: 'resource' };
@@ -79,7 +88,7 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     const handle = context.fixture<BrowserTab>('tab', {
       url: () => run('url', (session) => session.currentUrl(tab.context)),
       title: () => run('title', (session) => session.page.run(documentTitle, [], tab.context)),
-      isActive: () => surface.activeTab() === tab,
+      isActive: () => !attempt.lifetime.aborted && attempt.tabs.active() === tab,
       isClosed: () => tab.closed,
       activate: () => run('tab', (session) => session.tabs.show(tab)),
       close: () => run('tab', (session) => session.tabs.close(tab)),
@@ -108,7 +117,7 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
       return evaluateInPage(fn, arg, (evaluate, input) => run('evaluate', (session) => session.evaluate(evaluate.toString(), input as PageArgument | undefined), { testCode: true }));
     },
     async addInitScript(script: unknown, ...rest: unknown[]) {
-      const source = await testInitScriptSource(script, rest.length === 0 ? undefined : { arg: rest[0] }, (file) => surface.projectPath(file));
+      const source = await testInitScriptSource(script, rest.length === 0 ? undefined : { arg: rest[0] }, projectPath);
       await run('addInitScript', (session) => session.userContext.addInitScript(source));
     },
     route(pattern, handler) {
@@ -120,11 +129,11 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
             handler,
             { url: request.url, method: request.method, headers: request.headers, ...(request.postData === undefined ? {} : { postData: request.postData }) },
             decisions,
-            (error) => latch.latch(error),
+            (error) => attempt.latch.latch(error),
             context,
-            (file) => surface.projectPath(file),
+            projectPath,
           );
-          latch.track('route', work);
+          attempt.latch.track('route', work);
           return work;
         },
       }));
@@ -162,10 +171,15 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     },
     // Async so the harness records the registration as a `browser.onDialog` step.
     async onDialog(handler) {
-      const unsubscribe = surface.onDialog(handler);
+      requireRunning();
+      const unsubscribe = attempt.dialogs.add(handler);
       return async () => unsubscribe();
     },
-    tabs: () => surface.tabs().map(tabHandle),
+    tabs: () => {
+      requireRunning();
+      attempt.latch.throwPending();
+      return attempt.tabs.list().map(tabHandle);
+    },
     async waitForPopup(trigger, options) {
       rejectUnknownOptions('browser.waitForPopup', options, ['timeout']);
       const operation = context.operation(stepTimeout(options?.timeout, 'browser.waitForPopup'));
