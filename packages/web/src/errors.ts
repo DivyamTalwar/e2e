@@ -126,26 +126,32 @@ const UNCERTAIN = new Set(['OPERATION_TIMEOUT', 'NODE_STALE', 'ENGINE_FAILURE', 
  * A classified failure of an input operation: once its input was dispatched,
  * a timeout, a gone node, or a fault leaves it uncertain whether the app
  * took it (`ACTION_MAY_HAVE_COMMITTED`, never retried blindly). A sensitive
- * fill's value is scrubbed from the message and its cause dropped, so the
- * plaintext never leaves the engine.
+ * fill's value never leaves the engine (`scrubbed`).
  */
 export function afterDispatch(error: Error, label: string, dispatched: boolean, sensitive?: string): Error {
   const code = error instanceof EngineError || error instanceof TestError ? error.code : undefined;
-  const scrub = (text: string): string => (sensitive === undefined || sensitive === '' ? text : text.replaceAll(sensitive, '[redacted]'));
+  const safe = sensitive === undefined ? error : scrubbed(error, sensitive);
   if (dispatched && code !== undefined && UNCERTAIN.has(code)) {
-    return new EngineError('ACTION_MAY_HAVE_COMMITTED', `${label} failed after its input was dispatched: ${scrub(error.message)}`, {
+    return new EngineError('ACTION_MAY_HAVE_COMMITTED', `${label} failed after its input was dispatched: ${safe.message}`, {
       retryable: false,
       ...(sensitive === undefined ? { cause: error } : {}),
     });
   }
-  if (sensitive === undefined || error.message.indexOf(sensitive) === -1) return sensitive === undefined ? error : withoutCause(error);
-  return new EngineError(error instanceof EngineError ? error.code : 'ENGINE_FAILURE', scrub(error.message), { retryable: false });
+  return safe;
 }
 
-/** A sensitive fill's error without the raw cause, whose stack a report would print. */
-function withoutCause(error: Error): Error {
-  if (!(error instanceof EngineError) || error.cause === undefined) return error;
-  return new EngineError(error.code, error.message, { retryable: error.retryable });
+/**
+ * A sensitive fill's error with the value scrubbed from its message and
+ * without the raw cause, whose stack a report would print. Its class, code,
+ * and retryability stay, so the failure reads as it would for any other fill;
+ * an empty value leaves nothing to scrub.
+ */
+function scrubbed(error: Error, sensitive: string): Error {
+  const text = sensitive === '' ? error.message : error.message.replaceAll(sensitive, '[redacted]');
+  if (text === error.message && error.cause === undefined) return error;
+  if (error instanceof EngineError) return new EngineError(error.code, text, { retryable: error.retryable });
+  if (error instanceof TestError) return new TestError(error.code, text, { retryable: error.retryable });
+  return text === error.message ? error : new EngineError('ENGINE_FAILURE', text, { retryable: false });
 }
 
 /** Whether `cause` classifies as a gone node or document. */

@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { EngineError, TestError } from '@e2e-dev/core/engine';
-import { BidiError, classify, isStale, releaseQuietly, ScriptError, unlessStale } from '../../src/errors.ts';
+import { afterDispatch, BidiError, classify, isStale, releaseQuietly, ScriptError, unlessStale } from '../../src/errors.ts';
 
 describe('classify', () => {
   it.each([
@@ -53,5 +53,46 @@ describe('releaseQuietly', () => {
   it('settles whatever the release does', async () => {
     await expect(releaseQuietly(Promise.reject(new Error('already gone')))).resolves.toBeUndefined();
     await expect(releaseQuietly(undefined)).resolves.toBeUndefined();
+  });
+});
+
+describe('afterDispatch', () => {
+  const stale = new EngineError('NODE_STALE', 'fill: no such node', { retryable: true });
+
+  it('passes a failure before any input went out through untouched', () => {
+    expect(afterDispatch(stale, 'fill', false)).toBe(stale);
+  });
+
+  it('leaves it uncertain whether the app took input that went out, keeping the failure as the cause', () => {
+    const error = afterDispatch(stale, 'fill', true);
+    expect(error).toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED', retryable: false, cause: stale });
+    expect(error.message).toBe('fill failed after its input was dispatched: fill: no such node');
+  });
+
+  it('keeps a failure the app decided as it is once input went out', () => {
+    const refused = new TestError('ACTION_FAILED', 'element is not editable');
+    expect(afterDispatch(refused, 'fill', true)).toBe(refused);
+  });
+
+  it.each([
+    new EngineError('NODE_STALE', 'fill "hunter2": no such node', { retryable: true, cause: new ScriptError('hunter2') }),
+    new TestError('ACTION_FAILED', 'cannot fill "hunter2"', { cause: new ScriptError('hunter2') }),
+  ])('scrubs a sensitive value from the message and drops the cause, keeping the class and code: $code', (raw) => {
+    const error = afterDispatch(raw, 'fill', false, 'hunter2');
+    expect(error.constructor).toBe(raw.constructor);
+    expect(error).toMatchObject({ code: raw.code, retryable: raw.retryable });
+    expect(error.message).toBe(raw.message.replace('hunter2', '[redacted]'));
+    expect(error.cause).toBeUndefined();
+  });
+
+  it('scrubs the value from an uncertain failure too, and attaches no cause', () => {
+    const error = afterDispatch(new EngineError('OPERATION_TIMEOUT', 'fill "hunter2" timed out', { retryable: false }), 'fill', true, 'hunter2');
+    expect(error).toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED', message: 'fill failed after its input was dispatched: fill "[redacted]" timed out' });
+    expect(error.cause).toBeUndefined();
+  });
+
+  it('keeps the failure of a sensitive fill of an empty value as it is', () => {
+    const refused = new TestError('ACTION_FAILED', 'element is not editable');
+    expect(afterDispatch(refused, 'fill', false, '')).toBe(refused);
   });
 });
