@@ -152,35 +152,45 @@ export async function typeText(session: BidiSession, text: string, replace: bool
     await session.input.key(pressStroke('ControlOrMeta+a'), signal);
     await session.input.key(pressStroke('Delete'), signal);
   }
-  await typeInto(session, text, signal);
+  await typeInto(session, text, signal, documents);
 }
 
 /**
  * Types `text` into whatever holds focus, as Playwright's `keyboard.type`
- * does: a character the US keyboard has is a key press, anything else (an
- * emoji, a letter of another alphabet) is inserted as text in the document
- * holding focus, since no key types it.
+ * does: a run of characters the US keyboard has is key presses, a run of
+ * anything else (an emoji, letters of another alphabet) is inserted as text,
+ * one edit per character, in the document holding focus, since no key types
+ * it. `documents` are the tab's documents when the caller already read
+ * them; else they are read once, when the first run is inserted. Each of
+ * them is offered what is left of a run until one takes some; a character
+ * none takes is dropped, as a key press with no focus is.
  */
-export async function typeInto(session: BidiSession, text: string, signal: AbortSignal): Promise<void> {
-  let run = '';
-  const flush = async (): Promise<void> => {
-    if (run === '') return;
-    await session.input.send([typeSource(run)], signal);
-    run = '';
-  };
+export async function typeInto(session: BidiSession, text: string, signal: AbortSignal, documents?: readonly string[]): Promise<void> {
+  const runs: { readonly keys: boolean; readonly graphemes: string[] }[] = [];
   for (const { segment } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
-    if (/^[\x20-\x7e]$/.test(segment) || segment === '\n' || segment === '\r\n' || segment === '\t') {
-      run += segment;
+    const keys = /^[\x20-\x7e]$/.test(segment) || segment === '\n' || segment === '\r\n' || segment === '\t';
+    const last = runs.at(-1);
+    if (last?.keys === keys) last.graphemes.push(segment);
+    else runs.push({ keys, graphemes: [segment] });
+  }
+  let contexts = documents;
+  for (const run of runs) {
+    if (run.keys) {
+      await session.input.send([typeSource(run.graphemes.join(''))], signal);
       continue;
     }
-    await flush();
-    signal.throwIfAborted();
-    session.input.mutated();
-    for (const context of await session.documentContexts(session.requireContext())) {
-      if (await unlessStale(session.page.run(insertFocusedText, [segment], context), false)) break;
+    contexts ??= await session.documentContexts(session.requireContext());
+    for (let left = run.graphemes; left.length > 0;) {
+      signal.throwIfAborted();
+      session.input.mutated();
+      let inserted = 0;
+      for (const context of contexts) {
+        inserted = await unlessStale(session.page.run(insertFocusedText, [left], context), 0);
+        if (inserted > 0) break;
+      }
+      left = left.slice(Math.max(inserted, 1));
     }
   }
-  await flush();
 }
 
 /**

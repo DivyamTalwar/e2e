@@ -1,5 +1,6 @@
-/** Held keyboard input through the actual browser fixture and native DOM events. */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+/** Held keyboard input and typed text through the actual browser fixture and native DOM events. */
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BidiConnection } from '../../src/driver/connection.ts';
 import type { Browser } from '../../src/fixture/types.ts';
 import { onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 describe('held keyboard input', () => {
@@ -61,5 +62,43 @@ describe('held keyboard input', () => {
     await browser.keyboard.up('a');
     const events = await browser.evaluate(() => document.querySelector('#events')?.textContent ?? '');
     expect(events).toBe('keydown|a|false|false;keydown|a|false|true;keyup|a|false|false;keydown|a|false|false;keyup|a|false|false;');
+  });
+});
+
+describe('typed text no key of the keyboard types', () => {
+  let session: WebSession;
+  beforeAll(async () => {
+    session = await startWebSession({ timeoutMs: 5_000 });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  afterAll(async () => { await session.close(); });
+
+  it('is inserted where focus is, a run of it in one page call and one edit per character', async () => {
+    await session.setContent('<iframe srcdoc="<input id=field>"></iframe>');
+    await session.waitForFrames();
+    await session.browser.evaluate(() => {
+      const field = document.querySelector('iframe')!.contentDocument!.querySelector<HTMLInputElement>('#field')!;
+      const edits: (string | null)[] = [];
+      Reflect.set(window, 'edits', edits);
+      field.addEventListener('input', (event) => edits.push((event as InputEvent).data));
+      field.focus();
+      return null;
+    });
+    const sent: string[] = [];
+    const send = BidiConnection.prototype.send;
+    vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(function (this: BidiConnection, method, params) {
+      const declaration = (params as { functionDeclaration?: unknown }).functionDeclaration;
+      if (method === 'browsingContext.getTree' || (typeof declaration === 'string' && declaration.includes('insertText'))) sent.push(method);
+      return send.call(this, method, params);
+    });
+    await session.browser.keyboard.type('aこんにちはb');
+    // One read of the tab's documents, then one insert offered to the top document and one to the frame holding focus.
+    expect(sent).toEqual(['browsingContext.getTree', 'script.callFunction', 'script.callFunction']);
+    expect(await session.browser.evaluate(() => ({
+      value: document.querySelector('iframe')!.contentDocument!.querySelector<HTMLInputElement>('#field')!.value,
+      edits: Reflect.get(window, 'edits') as string[],
+    }))).toEqual({ value: 'aこんにちはb', edits: ['a', 'こ', 'ん', 'に', 'ち', 'は', 'b'] });
   });
 });

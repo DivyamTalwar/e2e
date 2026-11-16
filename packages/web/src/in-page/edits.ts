@@ -143,16 +143,22 @@ export function fileInputTakes(element: Element): { directory: boolean; multiple
 }
 
 /**
- * Inserts `text` where focus is in this document, as an IME would commit it
- * (Playwright's `insertText`): for a character no key of the keyboard types.
- * Returns false when this document does not hold focus, or its focus is an
- * iframe whose own document does.
+ * Inserts each of `graphemes` where focus is in this document, one edit
+ * each, as an IME would commit it (Playwright's `insertText`): for
+ * characters no key of the keyboard types. Answers how many it inserted. It
+ * stops at the first this document does not take: it does not hold focus,
+ * its focus is an iframe whose own document does, or the edit was refused.
  */
-export const insertFocusedText = withDom((dom, text: string): boolean => {
-  if (!document.hasFocus()) return false;
-  const active = dom.activeElement();
-  if (active === null || active.nodeName === 'IFRAME' || active.nodeName === 'FRAME') return false;
-  return document.execCommand('insertText', false, text);
+export const insertFocusedText = withDom((dom, graphemes: readonly string[]): number => {
+  let inserted = 0;
+  for (const text of graphemes) {
+    if (!document.hasFocus()) break;
+    const active = dom.activeElement();
+    if (active === null || active.nodeName === 'IFRAME' || active.nodeName === 'FRAME') break;
+    if (!document.execCommand('insertText', false, text)) break;
+    inserted += 1;
+  }
+  return inserted;
 });
 
 /** Whether the focused element of this document takes keystrokes, following focus into open and recorded closed shadow roots. */
