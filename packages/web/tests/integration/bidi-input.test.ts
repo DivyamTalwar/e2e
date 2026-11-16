@@ -4,37 +4,23 @@
  * a swipe leaves the mouse on what it scrolled, a drag carries pressure and
  * reaches a target in a rotated frame, a pointer target outside the
  * viewport is refused as never sent, and a ref reused after input checks
- * its locator again. Firefox runs when it is installed
- * (`npx @e2e-dev/web install firefox`).
+ * its locator again.
  */
 
-import { existsSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LocatorExpression } from '@e2e-dev/core/engine';
-import { bySelector, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { ROOT_NODE_ID } from '../../src/driver/observe.ts';
-import { browserExecutable } from '../../src/install/provision.ts';
-
-/** Whether the pinned Firefox is installed. */
-async function firefoxInstalled(): Promise<boolean> {
-  try {
-    return existsSync(await browserExecutable('firefox', false));
-  } catch {
-    return false;
-  }
-}
-
-const browsers = (await firefoxInstalled()) ? (['chromium', 'firefox'] as const) : (['chromium'] as const);
 
 /** Escapes HTML for a single-quoted attribute value, so a document can carry a `srcdoc`. */
 function attribute(html: string): string {
   return html.replace(/&/g, '&amp;').replace(/'/g, '&#39;');
 }
 
-describe.each(browsers)('input on %s', (browser) => {
+describe('input', () => {
   let page: WebSession;
   beforeAll(async () => {
-    page = await startWebSession({ web: { browser }, timeoutMs: 10_000 });
+    page = await startWebSession({ timeoutMs: 10_000 });
   });
   afterAll(async () => {
     await page.close();
@@ -108,14 +94,14 @@ describe.each(browsers)('input on %s', (browser) => {
         done.addEventListener('drop', (event) => { event.preventDefault(); log.push(event.dataTransfer.getData('text/plain')); });
       </script>`);
     const drop = page.browser.locator('#card').dragTo(page.browser.locator('#done'));
-    if (browser === 'firefox') {
+    if (onFirefox) {
       await expect(drop).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY', message: expect.stringContaining('show_bug.cgi?id=1515879') });
       // The button is up: the page takes input again.
       await page.browser.locator('#done').tap();
     } else {
       await drop;
     }
-    expect(await log()).toEqual(browser === 'firefox' ? [] : ['card']);
+    expect(await log()).toEqual(onFirefox ? [] : ['card']);
   });
 
   it('refuses a pointer target outside the viewport before sending anything, and takes its far edge', async () => {

@@ -7,15 +7,14 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LocatorExpression } from '@e2e-dev/core/engine';
-import type { BrowserName } from '../../src/browsers.ts';
 import { PARITY_PAGES } from '../helpers/locator-parity.ts';
 import { byRole, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
-describe.each<BrowserName>(['chromium', 'firefox'])('locators match as Playwright does on %s', (browser) => {
+describe('locators match as Playwright does', () => {
   let session: WebSession;
 
   beforeAll(async () => {
-    session = await startWebSession({ web: { browser } });
+    session = await startWebSession();
   }, 120_000);
 
   afterAll(async () => {

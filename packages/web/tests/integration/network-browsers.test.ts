@@ -8,17 +8,17 @@
 
 import { gzipSync } from 'node:zlib';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 const ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>';
 const TEXT = 'hello gzip world '.repeat(20);
 
-describe.each(['chromium', 'firefox'] as const)('the network on %s', (browser) => {
+describe('the network', () => {
   let session: WebSession;
   const hits = new Map<string, number>();
 
   beforeAll(async () => {
-    session = await startWebSession({ web: { browser, headers: { 'X-Gate': 'open' } }, timeoutMs: 8_000, startAttempt: false });
+    session = await startWebSession({ web: { headers: { 'X-Gate': 'open' } }, timeoutMs: 8_000, startAttempt: false });
     for (const icon of ['/assets/favicon.ico', '/favicon.ico']) {
       session.serve(icon, (_request, response) => {
         hits.set(icon, (hits.get(icon) ?? 0) + 1);
@@ -72,7 +72,7 @@ describe.each(['chromium', 'firefox'] as const)('the network on %s', (browser) =
     expect(hits.get('/assets/favicon.ico')).toBe(1);
   });
 
-  it(`sends a page fetch of /favicon.ico to the network past an unrelated route, and ${browser === 'chromium' ? 'past' : 'to'} its own route`, async () => {
+  it(`sends a page fetch of /favicon.ico to the network past an unrelated route, and ${onFirefox ? 'to' : 'past'} its own route`, async () => {
     await session.setContent('<title>Icons</title>');
     await session.browser.route('**/nothing', (route) => route.continue());
     await expect(fetchText('/favicon.ico')).resolves.toBe(ICON);
@@ -81,8 +81,8 @@ describe.each(['chromium', 'firefox'] as const)('the network on %s', (browser) =
       routed = true;
       await route.fulfill({ body: 'ROUTED' });
     });
-    await expect(fetchText('/favicon.ico')).resolves.toBe(browser === 'chromium' ? ICON : 'ROUTED');
-    expect(routed).toBe(browser !== 'chromium');
+    await expect(fetchText('/favicon.ico')).resolves.toBe(onFirefox ? 'ROUTED' : ICON);
+    expect(routed).toBe(onFirefox);
   });
 
   it('fulfills an amended gzip response with the upstream headers over its decoded body', async () => {

@@ -5,14 +5,12 @@
  */
 
 import { launchBidiBrowser, type BidiBrowser } from '../../src/driver/launch.ts';
-import type { BrowserName } from '../../src/browsers.ts';
-import { startPageServer, type PageServer } from './web-session.ts';
+import { startPageServer, testBrowser, type PageServer } from './web-session.ts';
 import type { BidiConnection } from '../../src/driver/connection.ts';
 import { callFunction, type PageArgument, type PageFunction, type PageValue } from '../../src/driver/script.ts';
 
 /** How to open the tab. */
 export interface BidiPageOptions {
-  readonly browser?: BrowserName;
   /** Script sources every document of the tab runs before its own, in order. */
   readonly preloadScripts?: readonly string[];
 }
@@ -36,12 +34,12 @@ export interface BidiPage {
   close(): Promise<void>;
 }
 
-/** Launches a headless browser and opens one tab on it. */
+/** Launches the suite's browser (`testBrowser`) headless and opens one tab on it. */
 export async function openBidiPage(options: BidiPageOptions = {}): Promise<BidiPage> {
   const server = await startPageServer();
   let browser: BidiBrowser;
   try {
-    browser = await launchBidiBrowser(options.browser ?? 'chromium', { headed: false, timeoutMs: 30_000, env: process.env, signal: new AbortController().signal });
+    browser = await launchBidiBrowser(testBrowser(), { headed: false, timeoutMs: 30_000, env: process.env, signal: new AbortController().signal });
   } catch (cause) {
     await server.close();
     throw cause;

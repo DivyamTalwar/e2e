@@ -77,11 +77,11 @@ const CASES: readonly (readonly [string, Readonly<Record<string, number>>])[] = 
   }],
 ];
 
-describe.each(['chromium', 'firefox'] as const)('selectors as Playwright reads them on %s', (browser) => {
+describe('selectors as Playwright reads them', () => {
   let page: BidiPage;
 
   beforeAll(async () => {
-    page = await openBidiPage({ browser });
+    page = await openBidiPage();
   });
 
   afterAll(async () => {
