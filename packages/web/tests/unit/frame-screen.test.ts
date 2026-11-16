@@ -36,7 +36,7 @@ function browserWithRecordingContext() {
     },
   } as unknown as EngineFixtureContext;
     // The frame scopes mint locators only; the surface is never driven.
-  const surface = { attemptScope: () => ({ latch: new ErrorLatch() }) } as unknown as BidiSurface;
+  const surface = { attemptLatch: () => new ErrorLatch() } as unknown as BidiSurface;
   const browser = createBrowserFixture(surface, context);
   return { browser, minted };
 }

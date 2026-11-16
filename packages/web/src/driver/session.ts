@@ -244,6 +244,7 @@ export class BidiSession {
         if (context !== this.context) return;
         for (const watch of this.navigationAborts) watch.url ??= url;
       },
+      lifetime: this.lifetime,
     });
     this.downloads = new AttemptDownloads(browser.connection, attempt.remoteDownloads, attempt.downloadLimit);
     this.tabs = new AttemptTabs({

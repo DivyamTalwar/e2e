@@ -8,7 +8,7 @@
  * context's requests reaches the new one.
  */
 
-import type { Network } from 'webdriver-bidi-protocol';
+import type { Network, Storage } from 'webdriver-bidi-protocol';
 import { raceAbort } from '@e2e-dev/core/engine';
 import type { ContextTree } from './context-tree.ts';
 import { BidiError, releaseQuietly } from '../errors.ts';
@@ -285,6 +285,18 @@ export class NetworkBinding implements DecisionScope {
     } catch (cause) {
       if (cause instanceof BidiError && cause.error === 'no such network data') return undefined;
       throw cause;
+    }
+  }
+
+  /**
+   * Stores `cookies` in the user context's jar, as a route's fetch does with
+   * the ones its response set. Once the binding closed, its user context is
+   * replaced or going, so the rest are dropped.
+   */
+  async storeCookies(cookies: readonly Storage.PartialCookie[], signal: AbortSignal): Promise<void> {
+    for (const cookie of cookies) {
+      if (this.closed) return;
+      await raceAbort(() => this.connection.send('storage.setCookie', { cookie, partition: { type: 'storageKey', userContext: this.userContext } }), signal, 'route.fetch cookies');
     }
   }
 

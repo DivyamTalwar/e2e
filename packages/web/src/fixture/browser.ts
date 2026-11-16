@@ -31,7 +31,7 @@ import {
   type LocatorExpression,
 } from '@e2e-dev/core/engine';
 import { createBrowserExpectation } from './expectation.ts';
-import type { Browser, BrowserExpectation, BrowserTab, FrameScreen, WebResponse } from './types.ts';
+import type { Browser, BrowserExpectation, BrowserTab, FrameScreen } from './types.ts';
 import { initScriptLabel, testInitScriptSource } from '../init-scripts.ts';
 import { mediaLabel } from '../options.ts';
 import { evaluateInPage } from '../in-page/evaluation.ts';
@@ -44,11 +44,10 @@ import { deleteCookies, readCookies, writeCookies } from '../driver/cookies.ts';
 import { saveDownloads, type SavedDownload } from '../driver/downloads.ts';
 import { moveSources, pressDownSources, releaseSources, wheelSources } from '../driver/input-sources.ts';
 import { fixtureKeyStroke } from '../driver/keyboard.ts';
-import type { InterceptedRequest } from '../driver/network-decisions.ts';
-import { readResponseBody, runRouteHandler, waitedResponse, webResponse } from './routes.ts';
+import { readResponseBody, runRouteHandler, waitedResponse } from './routes.ts';
 import type { BidiSession } from '../driver/session.ts';
 import { goto, reload, traverse } from '../driver/steering.ts';
-import type { AttemptScope, BidiSurface, GuardKind } from '../driver/surface.ts';
+import type { BidiSurface, GuardKind } from '../driver/surface.ts';
 import type { PageArgument } from '../driver/script.ts';
 import type { AttemptTab } from '../driver/tabs.ts';
 
@@ -70,8 +69,7 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     deadlineFor: (timeout, api) => new Deadline(context.operation(stepTimeout(timeout, api) ?? context.timeouts.assertion).timeoutMs),
     context,
   });
-  const scope = surface.attemptScope();
-  const { latch } = scope;
+  const latch = surface.attemptLatch();
   /** One handle per tab, so the same tab is the same object for the attempt. */
   const tabHandles = new WeakMap<AttemptTab, BrowserTab>();
   const tabAction: FixtureOperation = { kind: 'resource' };
@@ -122,7 +120,7 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
           const work = runRouteHandler(
             handler,
             { url: request.url, method: request.method, headers: request.headers, ...(request.postData === undefined ? {} : { postData: request.postData }) },
-            { ...decisions, fetch: () => routeFetch(surface, scope, context, request) },
+            decisions,
             (error) => latch.latch(error),
             context,
             (file) => surface.projectPath(file),
@@ -240,84 +238,6 @@ function declareFixture(
     keyboard: { down: { ...action, label: (key) => key }, up: { ...action, label: (key) => key }, press: { ...action, label: (key) => key }, type: { ...action, label: (text) => `${text.length} chars` } },
     mouse: { move: action, wheel: action, down: action, up: action },
   });
-}
-
-/**
- * `route.fetch` for a request held in the attempt `scope`: replays it from
- * Node as the browser sent it (its body bytes, its cookies, and the site
- * headers) within the operation's budget, and stores the cookies the
- * response sets in the user context, as Playwright's `route.fetch` does. A
- * Basic challenge from a credential origin is answered once with the
- * attempt's `basicAuth` credentials, as the browser answers its own. A body the browser did not
- * keep refuses the replay rather than send none.
- */
-async function routeFetch(surface: BidiSurface, scope: AttemptScope, context: EngineFixtureContext, request: InterceptedRequest): Promise<WebResponse> {
-  if (request.bodyUnavailable === true) {
-    throw new TestError('ACTION_FAILED', 'route.fetch: the browser kept none of the request body (too large or streamed), so the request cannot be replayed');
-  }
-  const operation = context.operation();
-  const signal = AbortSignal.any([operation.signal, AbortSignal.timeout(operation.timeoutMs), scope.lifetime]);
-  const headers = { ...request.headers, ...(request.cookie === undefined ? {} : { cookie: request.cookie }), ...scope.protectedApp.headersFor(request.url) };
-  const send = (extra: Record<string, string>): Promise<Response> => fetch(request.url, {
-    method: request.method,
-    headers: { ...headers, ...extra },
-    redirect: 'manual',
-    signal,
-    ...(request.body === undefined ? {} : { body: new Uint8Array(request.body) }),
-  });
-  let fetched = await send({});
-  const credentials = scope.protectedApp.credentialsFor(request.url);
-  if (fetched.status === 401 && credentials !== undefined && /^basic\b/i.test(fetched.headers.get('www-authenticate') ?? '')) {
-    await fetched.body?.cancel();
-    fetched = await send({ authorization: `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}` });
-  }
-  const cookies = fetched.headers.getSetCookie().flatMap((header) => setCookieOf(header, new URL(request.url)) ?? []);
-  if (cookies.length > 0) await scope.storeCookies(cookies, signal);
-  const body = await readResponseBody('route.fetch', async () => Buffer.from(await fetched.arrayBuffer()));
-  const responseHeaders = Object.fromEntries([...fetched.headers].filter(([name]) => name !== 'set-cookie'));
-  const setCookies = fetched.headers.getSetCookie();
-  return webResponse({ url: request.url, status: fetched.status, headers: setCookies.length === 0 ? responseHeaders : { ...responseHeaders, 'set-cookie': setCookies.join('\n') } }, body);
-}
-
-/** A `Set-Cookie` cookie's path when the header gives none: the directory of `url`'s path (RFC 6265 default-path). */
-function defaultCookiePath(url: URL): string {
-  const directory = url.pathname.slice(0, url.pathname.lastIndexOf('/'));
-  return directory === '' ? '/' : directory;
-}
-
-/**
- * One `Set-Cookie` header of a response from `url` as a cookie to store;
- * undefined for one with no name, or with a `Domain` the response's host does
- * not belong to, which a browser would refuse too.
- */
-export function setCookieOf(header: string, url: URL): Storage.PartialCookie | undefined {
-  const [pair = '', ...attributes] = header.split(';');
-  const split = pair.indexOf('=');
-  const name = pair.slice(0, split).trim();
-  if (split <= 0 || name === '') return undefined;
-  const attribute = new Map<string, string>();
-  for (const each of attributes) {
-    const at = each.indexOf('=');
-    attribute.set((at === -1 ? each : each.slice(0, at)).trim().toLowerCase(), at === -1 ? '' : each.slice(at + 1).trim());
-  }
-  const domain = (attribute.get('domain') ?? '').toLowerCase();
-  const bare = domain.replace(/^\./, '');
-  if (bare !== '' && url.hostname !== bare && !url.hostname.endsWith(`.${bare}`)) return undefined;
-  const path = attribute.get('path') ?? '';
-  const sameSite = attribute.get('samesite')?.toLowerCase() ?? '';
-  const maxAge = attribute.get('max-age') ?? '';
-  const expires = Date.parse(attribute.get('expires') ?? '');
-  const expiry = /^-?\d+$/.test(maxAge) ? Math.floor(Date.now() / 1000) + Number(maxAge) : Number.isNaN(expires) ? undefined : Math.floor(expires / 1000);
-  return {
-    name,
-    value: { type: 'string', value: pair.slice(split + 1).trim() },
-    domain: domain === '' ? url.hostname : domain,
-    path: path.startsWith('/') ? path : defaultCookiePath(url),
-    ...(attribute.has('secure') ? { secure: true } : {}),
-    ...(attribute.has('httponly') ? { httpOnly: true } : {}),
-    ...(['strict', 'lax', 'none'].includes(sameSite) ? { sameSite: sameSite as Network.SameSite } : {}),
-    ...(expiry === undefined ? {} : { expiry }),
-  };
 }
 
 /** Runs `trigger` once and saves the first `count` downloads it starts, each attached as a `download` artifact. */

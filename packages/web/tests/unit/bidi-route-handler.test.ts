@@ -6,7 +6,6 @@
 
 import { describe, expect, it } from 'vitest';
 import type { EngineFixtureContext } from '@e2e-dev/core/engine';
-import type { WebResponse } from '../../src/fixture/types.ts';
 import type { RouteDecisions } from '../../src/driver/network-decisions.ts';
 import { runRouteHandler } from '../../src/fixture/routes.ts';
 
@@ -17,8 +16,11 @@ const REQUEST = { url: 'http://app.test/api/users', method: 'GET', headers: {} }
 /** Decisions that record what the route decided. */
 function adapter() {
   const calls: string[] = [];
-  const held: RouteDecisions & { fetch(): Promise<WebResponse> } = {
-    fetch: async () => ({ url: '', status: 200, headers: {}, body: async () => Buffer.alloc(0), json: async () => null as never, text: async () => '' }),
+  const held: RouteDecisions = {
+    fetch: async () => {
+      calls.push('fetch');
+      return { url: 'http://app.test/api/users', status: 200, headers: { 'content-type': 'text/plain' }, body: async () => Buffer.from('upstream') };
+    },
     fulfill: async (decision) => void calls.push(`fulfill ${decision.status}`),
     continue: async (decision) => void calls.push(`continue ${decision.url ?? ''}`),
     fallback: async () => void calls.push('fallback'),
@@ -34,6 +36,41 @@ describe('runRouteHandler', () => {
     await runRouteHandler((route) => route.fulfill({ status: 204 }), REQUEST, held, (error) => latched.push(error), context, (file) => file);
     await runRouteHandler((route) => route.continue({ url: '/v2/users' }), REQUEST, held, (error) => latched.push(error), context, (file) => file);
     expect(calls).toEqual(['fulfill 204', 'continue http://app.test/v2/users']);
+    expect(latched).toEqual([]);
+  });
+
+  it('reads the upstream response within the operation budget, and leaves the request undecided', async () => {
+    const { held, calls } = adapter();
+    const latched: Error[] = [];
+    const budget = { signal: new AbortController().signal, timeoutMs: 1_000 };
+    const asked: unknown[] = [];
+    held.fetch = async (given) => {
+      asked.push(given);
+      return { url: REQUEST.url, status: 200, headers: {}, body: async () => Buffer.from('{"ok":true}') };
+    };
+    const read: unknown[] = [];
+    await runRouteHandler(async (route) => {
+      const upstream = await route.fetch();
+      read.push(upstream.status, await upstream.text(), await upstream.json(), (await upstream.body()).toString());
+      await route.fulfill({ status: 204 });
+    }, REQUEST, held, (error) => latched.push(error), { ...context, operation: () => budget } as never, (file) => file);
+    expect(asked).toEqual([budget]);
+    expect(read).toEqual([200, '{"ok":true}', { ok: true }, '{"ok":true}']);
+    expect(calls).toEqual(['fulfill 204']);
+    expect(latched).toEqual([]);
+  });
+
+  it('keeps a fetched body that could not be read for its readers to reject with', async () => {
+    const { held } = adapter();
+    const latched: Error[] = [];
+    held.fetch = async () => ({ url: REQUEST.url, status: 200, headers: {}, body: async () => Promise.reject(new Error('terminated')) });
+    let failure: unknown;
+    await runRouteHandler(async (route) => {
+      const upstream = await route.fetch();
+      failure = await upstream.text().then(() => undefined, (cause: unknown) => cause);
+      await route.abort();
+    }, REQUEST, held, (error) => latched.push(error), { ...context, operation: () => ({ signal: new AbortController().signal, timeoutMs: 1_000 }) } as never, (file) => file);
+    expect(failure).toMatchObject({ code: 'ACTION_FAILED', message: 'route.fetch: response body could not be read: terminated' });
     expect(latched).toEqual([]);
   });
 

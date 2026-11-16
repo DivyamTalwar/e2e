@@ -27,7 +27,7 @@ import { message } from '../errors.ts';
 export async function runRouteHandler(
   handler: Parameters<Browser['route']>[1],
   request: WebRoute['request'],
-  decisions: RouteDecisions & { fetch(): Promise<WebResponse> },
+  decisions: RouteDecisions,
   latch: (error: Error) => void,
   context: EngineFixtureContext,
   resolvePath: (file: string) => string,
@@ -54,7 +54,8 @@ export async function runRouteHandler(
     request,
     fetch: async (...args: unknown[]) => {
       requireNoArguments('route.fetch', args);
-      return decisions.fetch();
+      const response = await decisions.fetch(context.operation());
+      return webResponse(response, await readResponseBody('route.fetch', () => response.body()));
     },
     fulfill: async (response) => {
       const decision = parseFulfill(response, resolvePath);
@@ -108,7 +109,7 @@ export async function readResponseBody(
 }
 
 /** The `WebResponse` over a response's metadata and a reader for its body bytes. */
-export function webResponse(fields: Pick<WebResponse, 'url' | 'status' | 'headers'>, body: () => Promise<Buffer>): WebResponse {
+function webResponse(fields: Pick<WebResponse, 'url' | 'status' | 'headers'>, body: () => Promise<Buffer>): WebResponse {
   const text = async (): Promise<string> => new TextDecoder().decode(await body());
   return {
     ...fields,

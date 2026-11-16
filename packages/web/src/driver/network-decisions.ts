@@ -3,23 +3,25 @@
  * redirect hop goes on with what its first hop was continued with, a CORS
  * preflight is answered while routes are set, a blank-served tab gets a
  * blank document, and every other request runs the test's routes to one
- * decision (`network.continueRequest`, `provideResponse`, or `failRequest`).
- * A held basic-auth challenge is answered here too (`continueWithAuth`).
- * The binding hands each request over with its record, where a decision
- * keeps what the request's later hops and a response wait read.
+ * decision (`network.continueRequest`, `provideResponse`, or `failRequest`),
+ * after any fetch of its own a route makes of it. A held basic-auth
+ * challenge is answered here too (`continueWithAuth`). The binding hands
+ * each request over with its record, where a decision keeps what the
+ * request's later hops and a response wait read.
  */
 
 import { readFile } from 'node:fs/promises';
 import { STATUS_CODES } from 'node:http';
 import path from 'node:path';
-import type { Network } from 'webdriver-bidi-protocol';
-import { EngineError, type JsonValue, type TextPattern } from '@e2e-dev/core/engine';
+import type { Network, Storage } from 'webdriver-bidi-protocol';
+import { EngineError, TestError, type JsonValue, type OperationContext, type TextPattern } from '@e2e-dev/core/engine';
 import type { BrowserTraits } from '../browsers.ts';
 import { BidiError, releaseQuietly } from '../errors.ts';
 import { lowercaseNames, type ProtectedApp } from '../protected-app.ts';
 import type { BidiConnection, BidiEventParams } from './connection.ts';
 import { CONTENT_TYPES } from './content-types.ts';
 import { bytesText, headerRecord, stripHash, wireHeaders } from './network-wire.ts';
+import { fetchedResponse, replayRequest, setCookieOf, type FetchedResponse } from './route-fetch.ts';
 import { routePatternMatches } from './route-pattern.ts';
 
 /** A request the browser holds for a route to decide. */
@@ -31,12 +33,6 @@ export interface InterceptedRequest {
   readonly headers: Readonly<Record<string, string>>;
   /** The request body, when it has one the browser collected. */
   readonly postData?: string;
-  /** The same body as the browser sent it, byte for byte. */
-  readonly body?: Buffer;
-  /** Whether the request had a body the browser kept none of (too large, a stream), so it cannot be replayed. */
-  readonly bodyUnavailable?: boolean;
-  /** The cookies the browser sends with it, as one `cookie` header value. */
-  readonly cookie?: string;
 }
 
 /** What `route.fulfill` hands the driver once the response is validated. */
@@ -63,13 +59,15 @@ export interface ContinueDecision {
   readonly postData?: string;
 }
 
-/** What a route does with one held request; exactly one of these runs. */
+/** What a route does with one held request: exactly one of continue, fulfill, abort, and fallback runs, after any fetch. */
 export interface RouteDecisions {
   continue(decision: ContinueDecision): Promise<void>;
   fulfill(decision: FulfillDecision): Promise<void>;
   abort(): Promise<void>;
   /** Hands the request to the next older matching route, or to the network. */
   fallback(): Promise<void>;
+  /** Reads the upstream response within `budget`, without deciding the request or following a redirect. */
+  fetch(budget: Pick<OperationContext, 'signal' | 'timeoutMs'>): Promise<FetchedResponse>;
 }
 
 /** One registered route: the URL pattern it takes, and what it does with each request. */
@@ -101,11 +99,16 @@ export interface DecisionRecord {
   authAnswered?: boolean;
 }
 
-/** What a decision reads of the user context that holds the request; the binding provides it. */
+/** What a decision reads and writes of the user context that holds the request; the binding provides it. */
 export interface DecisionScope {
   /** The body the request collector kept for `request`; undefined when there is no collector or it kept none (too large, a stream). */
   requestBody(request: string): Promise<Buffer | undefined>;
+  /** Stores `cookies` in the user context's jar, giving up once `signal` aborts. */
+  storeCookies(cookies: readonly Storage.PartialCookie[], signal: AbortSignal): Promise<void>;
 }
+
+/** A held request's body as the collector kept it: its bytes, `none` for a request without one, `lost` for one the browser kept none of. */
+type HeldBody = Buffer | 'none' | 'lost';
 
 /** What deciding held requests needs of the attempt. */
 export interface DecisionOptions {
@@ -117,6 +120,8 @@ export interface DecisionOptions {
   readonly onFailure: (error: Error) => void;
   /** Takes the URL of a document request a test route aborted in `context`, before the abort goes out. */
   readonly onNavigationAbort: (context: string, url: string) => void;
+  /** Aborts when the attempt closes, ending a route's fetch that nothing awaits any more. */
+  readonly lifetime: AbortSignal;
 }
 
 /** Decides the requests and basic-auth challenges the intercepts of one user context hold. */
@@ -252,13 +257,13 @@ export class RequestDecisions {
     const address = stripHash(request.url);
     const url = URL.canParse(address) ? new URL(address) : undefined;
     const matching = url === undefined ? [] : this.routes.filter((route) => routePatternMatches(route.pattern, url.href)).toReversed();
+    const body = matching.length === 0 ? 'none' : await this.heldBody(request, event.navigation !== null);
     const intercepted: InterceptedRequest = {
       id: request.request,
       url: address,
       method: request.method,
       headers,
-      ...(request.cookies.length === 0 ? {} : { cookie: request.cookies.map((cookie) => `${cookie.name}=${bytesText(cookie.value)}`).join('; ') }),
-      ...(matching.length === 0 ? {} : await this.postData(request, event.navigation !== null)),
+      ...(Buffer.isBuffer(body) ? { postData: body.toString() } : {}),
     };
     for (const route of matching) {
       let passed = false;
@@ -272,6 +277,7 @@ export class RequestDecisions {
         fallback: async () => {
           passed = true;
         },
+        fetch: (budget) => this.fetch(intercepted, request.cookies, body, budget),
       });
       if (!passed) return;
     }
@@ -279,15 +285,42 @@ export class RequestDecisions {
   }
 
   /**
-   * The request's body when the collector kept one, as text and bytes; a
-   * body it did not keep (too large, a stream) is marked unavailable. So is
-   * a held navigation's on Chromium, which never answers for the body of a
-   * paused form submission (https://github.com/puppeteer/puppeteer/pull/15607).
+   * The request's body as the collector kept it. One it did not keep (too
+   * large, a stream) is lost, and so is a held navigation's on Chromium,
+   * which never answers for the body of a paused form submission
+   * (https://github.com/puppeteer/puppeteer/pull/15607).
    */
-  private async postData(request: Network.RequestData, navigation: boolean): Promise<{ postData?: string; body?: Buffer; bodyUnavailable?: true }> {
-    if (request.bodySize === 0 || (request.bodySize === null && ['GET', 'HEAD'].includes(request.method))) return {};
+  private async heldBody(request: Network.RequestData, navigation: boolean): Promise<HeldBody> {
+    if (request.bodySize === 0 || (request.bodySize === null && ['GET', 'HEAD'].includes(request.method))) return 'none';
     const body = navigation && !this.options.traits.navigationBodies ? undefined : await this.scope.requestBody(request.request);
-    return body === undefined ? { bodyUnavailable: true } : { postData: body.toString(), body };
+    return body ?? 'lost';
+  }
+
+  /**
+   * A route's fetch of the request it holds: sends it from Node as the
+   * browser sent it (its body bytes and its cookies) with the configured
+   * headers `continue` adds, within `budget` and the attempt's lifetime, and
+   * stores the cookies the response sets in the user context, as
+   * Playwright's `route.fetch` does. A Basic challenge is answered with the
+   * credentials a challenge to the browser from that origin gets, once. A
+   * body the browser did not keep refuses the fetch rather than send none.
+   */
+  private async fetch(request: InterceptedRequest, cookies: readonly Network.Cookie[], body: HeldBody, budget: Pick<OperationContext, 'signal' | 'timeoutMs'>): Promise<FetchedResponse> {
+    if (body === 'lost') {
+      throw new TestError('ACTION_FAILED', 'route.fetch: the browser kept none of the request body (too large or streamed), so the request cannot be replayed');
+    }
+    const signal = AbortSignal.any([budget.signal, AbortSignal.timeout(budget.timeoutMs), this.options.lifetime]);
+    const { protectedApp } = this.options;
+    const headers = {
+      ...request.headers,
+      ...(cookies.length === 0 ? {} : { cookie: cookies.map((cookie) => `${cookie.name}=${bytesText(cookie.value)}`).join('; ') }),
+      ...protectedApp.headersFor(request.url),
+    };
+    const sent = { url: request.url, method: request.method, headers, ...(body === 'none' ? {} : { body }) };
+    const fetched = await replayRequest(sent, protectedApp.credentialsFor(request.url), signal);
+    const set = fetched.headers.getSetCookie().flatMap((header) => setCookieOf(header, new URL(request.url)) ?? []);
+    if (set.length > 0) await this.scope.storeCookies(set, signal);
+    return fetchedResponse(request.url, fetched);
   }
 
   /**

@@ -350,25 +350,9 @@ export class BidiSurface {
     return path.resolve(this.settings?.projectRoot ?? '', file);
   }
 
-  /**
-   * What a fixture binds to the attempt it serves, once: its latch, its
-   * access to a protected app, its lifetime, and its cookie jar. A route
-   * handler that outlives the attempt then fails, reads, and writes only its
-   * own, and its work is cancelled when the attempt closes.
-   */
-  attemptScope(): AttemptScope {
-    const session = this.requireSession();
-    return {
-      latch: session.latch,
-      protectedApp: session.attempt.protectedApp,
-      lifetime: session.lifetime,
-      storeCookies: async (cookies, signal) => {
-        const bound = AbortSignal.any([signal, session.lifetime]);
-        for (const cookie of cookies) {
-          await raceAbort(() => session.connection.send('storage.setCookie', { cookie, partition: session.partition() }), bound, 'route.fetch cookies');
-        }
-      },
-    };
+  /** The latch of the attempt a fixture serves, bound once, so a route handler that outlives the attempt fails only its own. */
+  attemptLatch(): ErrorLatch {
+    return this.requireSession().latch;
   }
 
   /** Registers a dialog handler; returns its unsubscribe. */
@@ -401,17 +385,6 @@ export interface GuardKind {
   readonly traced?: boolean;
   readonly testCode?: boolean;
   readonly trigger?: boolean;
-}
-
-/** What `attemptScope` binds: the attempt's own latch, protected-app access, lifetime, and cookie jar. */
-export interface AttemptScope {
-  readonly latch: ErrorLatch;
-  /** The configured headers and the basic-auth credentials a route's own `fetch` sends. */
-  readonly protectedApp: ProtectedApp;
-  /** Aborts when the attempt closes. */
-  readonly lifetime: AbortSignal;
-  /** Stores cookies in the attempt's jar, giving up once `signal` aborts or the attempt closes. */
-  storeCookies(cookies: readonly Storage.PartialCookie[], signal: AbortSignal): Promise<void>;
 }
 
 /**
