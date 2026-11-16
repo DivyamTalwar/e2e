@@ -183,19 +183,14 @@ export async function typeInto(session: BidiSession, text: string, signal: Abort
   await flush();
 }
 
-/** The element left the document: retryable, so the harness locates it again. */
-function detached(): EngineError {
-  return new EngineError('NODE_STALE', 'element is not attached to the DOM', { retryable: true });
-}
-
 /**
  * The one place an answer about acting on an element (`Outcome`) becomes
  * the action's. Runs `attempt` until it answers anything but not yet,
  * pausing between tries: `ok` is the result, an element out of the document
- * fails as `detached` does, and a refusal, or a not yet once the deadline
- * leaves no room for another try, fails with the answer's reason after
- * `prefix`. An attempt that throws ends the poll. Nothing runs once `signal`
- * aborted.
+ * fails as a retryable `NODE_STALE`, so the harness locates it again, and a
+ * refusal, or a not yet once the deadline leaves no room for another try,
+ * fails with the answer's reason after `prefix`. An attempt that throws ends
+ * the poll. Nothing runs once `signal` aborted.
  */
 async function settle<T extends object>(
   deadline: Deadline,
@@ -207,7 +202,7 @@ async function settle<T extends object>(
     signal.throwIfAborted();
     const outcome = await attempt();
     if (outcome.kind === 'ok') return outcome;
-    if (outcome.kind === 'detached') throw detached();
+    if (outcome.kind === 'detached') throw new EngineError('NODE_STALE', 'element is not attached to the DOM', { retryable: true });
     if (outcome.kind === 'refused' || deadline.remaining() <= POLL_MS) throw new EngineError('NOT_ACTIONABLE', `${prefix}${outcome.reason}`, { retryable: false });
     await sleep(POLL_MS, undefined, { signal });
   }
@@ -390,9 +385,7 @@ async function mutateWhenReady(session: BidiSession, deadline: Deadline, signal:
  * clicked like any control, and its script decides what the click does.
  */
 async function setChecked(session: BidiSession, target: NodeTarget, checked: boolean, deadline: Deadline, signal: AbortSignal): Promise<void> {
-  const before = await session.page.run(checkState, [target.element], target.context);
-  if (before === 'detached') throw detached();
-  if (before.checked === null) throw new EngineError('NOT_ACTIONABLE', 'Not a checkbox or radio button', { retryable: false });
+  const before = await settle(deadline, signal, () => session.page.run(checkState, [target.element], target.context), '');
   if (before.checked === checked) return;
   if (!checked && before.radio === 'native') {
     throw new EngineError('NOT_ACTIONABLE', 'uncheck cannot clear a radio button; select another radio in its group', { retryable: false });
@@ -401,12 +394,13 @@ async function setChecked(session: BidiSession, target: NodeTarget, checked: boo
   await clickControl(session, target, deadline, {}, signal, checked ? 'check' : 'uncheck');
   let first = true;
   await settle(deadline, signal, async () => {
-    const after = await unlessStale(session.page.run(checkState, [target.element], target.context), 'detached');
-    if (after === 'detached' && !first) {
+    const after = await unlessStale(session.page.run(checkState, [target.element], target.context), { kind: 'detached' });
+    const gone = after.kind === 'detached';
+    if (gone && !first) {
       throw new EngineError('NOT_ACTIONABLE', `${checked ? 'check' : 'uncheck'} clicked the control but its checked state did not change before the control was replaced`, { retryable: false });
     }
     first = false;
-    if (after === 'detached' || after.checked === checked) return { kind: 'ok' };
+    if (gone || (after.kind === 'ok' && after.checked === checked)) return { kind: 'ok' };
     return { kind: 'not-yet', reason: `${checked ? 'check' : 'uncheck'} clicked the control but its checked state did not change${hint}` };
   }, '');
 }

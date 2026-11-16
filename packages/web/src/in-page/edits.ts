@@ -12,15 +12,19 @@ import { withDom, type Outcome } from './dom.ts';
  */
 export const focus = withDom((dom, element: Element): boolean => dom.focus(element));
 
-/** A checkable's state and kind, as Playwright reads it: a checkable role without `aria-checked` is unchecked; `checked` is null for an element with no checked state, and an element out of the document is `detached`. */
-export function checkState(element: Element): { checked: boolean | null; radio: 'native' | 'aria' | null } | 'detached' {
-  if (!element.isConnected) return 'detached';
+/**
+ * A checkable's state and kind, as Playwright reads it: a checkable role
+ * without `aria-checked` is unchecked. Refused for an element with no
+ * checked state.
+ */
+export function checkState(element: Element): Outcome<{ checked: boolean; radio: 'native' | 'aria' | null }> {
+  if (!element.isConnected) return { kind: 'detached' };
   const role = (element.getAttribute('role') ?? '').trim().split(/\s+/)[0] ?? '';
   const input = element.nodeName === 'INPUT' ? (element as HTMLInputElement) : null;
   const radio = input?.type === 'radio' ? 'native' : role === 'radio' || role === 'menuitemradio' ? 'aria' : null;
-  if (input !== null && (input.type === 'checkbox' || input.type === 'radio')) return { checked: input.checked, radio };
-  if (['checkbox', 'menuitemcheckbox', 'option', 'radio', 'switch', 'menuitemradio', 'treeitem'].includes(role)) return { checked: element.getAttribute('aria-checked') === 'true', radio };
-  return { checked: null, radio };
+  if (input !== null && (input.type === 'checkbox' || input.type === 'radio')) return { kind: 'ok', checked: input.checked, radio };
+  if (['checkbox', 'menuitemcheckbox', 'option', 'radio', 'switch', 'menuitemradio', 'treeitem'].includes(role)) return { kind: 'ok', checked: element.getAttribute('aria-checked') === 'true', radio };
+  return { kind: 'refused', reason: 'Not a checkbox or radio button' };
 }
 
 /**
