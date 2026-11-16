@@ -1,7 +1,7 @@
 /** `sanitizeFilename`: a name the engine does not choose becomes one plain file name. */
 
 import { describe, expect, it } from 'vitest';
-import { sanitizeFilename } from '../../src/driver/session.ts';
+import { sanitizeFilename } from '../../src/driver/artifact-paths.ts';
 
 const HOSTILE_NAMES = [
   '../../etc/passwd',

@@ -4,8 +4,6 @@
  * it, with the primitives every other module drives the page through.
  */
 
-import { mkdirSync } from 'node:fs';
-import path from 'node:path';
 import type { Emulation } from 'webdriver-bidi-protocol';
 import { EngineError, obj, TestError, withTimeout, type AppLogEntry, type EngineSnapshot, type NodeRef, type ViewportPoint, type ViewportSize } from '@e2e-dev/core/engine';
 import { CLOSED_SHADOW_ROOTS_INIT_SCRIPT } from '../in-page/closed-shadow.ts';
@@ -15,6 +13,7 @@ import type { ConfiguredInitScripts } from '../init-scripts.ts';
 import type { WebMedia, WebScreencastOptions } from '../options.ts';
 import type { ProtectedApp } from '../protected-app.ts';
 import { BidiInput } from './input.ts';
+import { ArtifactPaths } from './artifact-paths.ts';
 import type { ContextTree } from './context-tree.ts';
 import { AttemptDownloads } from './downloads.ts';
 import { BidiError, cancelled, ErrorLatch, invalidState, releaseQuietly, ScriptError, unlessStale } from '../errors.ts';
@@ -221,7 +220,8 @@ export class BidiSession {
   private readonly granted = new Map<string, Promise<void>>();
   /** The web origins the attempt's documents have been at, whose storage a saved session keeps. */
   readonly visited = new Set<string>();
-  private artifactCounter = 0;
+  /** Where the attempt's screenshots and downloads are written. */
+  readonly artifacts: ArtifactPaths;
 
   constructor(
     readonly browser: BidiBrowser,
@@ -230,6 +230,7 @@ export class BidiSession {
     private readonly contexts: ContextTree,
   ) {
     this.media = settings.media;
+    this.artifacts = new ArtifactPaths(attempt.artifactsDir);
     this.viewport = settings.viewport;
     this.input = new BidiInput({ connection: browser.connection, traits: browser.traits, context: () => this.requireContext(), viewport: () => this.viewportSize() });
     this.network = new AttemptNetwork(browser.connection, {
@@ -739,16 +740,6 @@ export class BidiSession {
     return out;
   }
 
-  /** Reserves one artifact path under the attempt directory: a counter keeps names unique, the label readable. */
-  artifactPath(folder: string, label: string | undefined, extension: string): { relative: string; absolute: string } {
-    this.artifactCounter += 1;
-    const name = `${String(this.artifactCounter).padStart(3, '0')}${label === undefined ? '' : `-${sanitizeFilename(label)}`}${extension}`;
-    const relative = path.posix.join(folder, name);
-    const absolute = path.join(this.attempt.artifactsDir, relative);
-    mkdirSync(path.dirname(absolute), { recursive: true });
-    return { relative, absolute };
-  }
-
   /**
    * Ends the attempt: its video, user context, network, and download
    * directory, each attempted whatever the others did; the first failure is
@@ -799,9 +790,4 @@ async function settleEach(steps: readonly (() => unknown)[]): Promise<PromiseSet
     }
   }
   return results;
-}
-
-/** Constrains a caller-supplied artifact label to a safe filename. */
-export function sanitizeFilename(name: string): string {
-  return name.replaceAll(/[^A-Za-z0-9._-]/g, '_').slice(0, 64) || 'artifact';
 }

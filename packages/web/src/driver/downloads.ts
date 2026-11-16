@@ -129,7 +129,7 @@ export async function saveDownloads(session: BidiSession, count: number, trigger
   const reading = AbortSignal.any([budget.signal, AbortSignal.timeout(Math.max(1, endsAt - Date.now()))]);
   const saved: SavedDownload[] = [];
   for (const download of finished) {
-    const { relative, absolute } = session.artifactPath('downloads', download.suggestedFilename, '');
+    const { relative, absolute } = session.artifacts.reserve('downloads', download.suggestedFilename, '');
     await session.downloads.save(download, absolute, reading);
     saved.push({ path: relative, absolutePath: absolute, suggestedFilename: download.suggestedFilename });
   }
