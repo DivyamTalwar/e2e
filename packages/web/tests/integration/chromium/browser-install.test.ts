@@ -1,7 +1,9 @@
 /**
  * A real install of the pinned headless shell from Chrome for Testing into a
- * fresh cache, then a BiDi session on it. Skipped when the download host
- * cannot be reached, so an offline machine runs the rest of the suite.
+ * fresh cache, then a BiDi session on it: the one test that proves the
+ * pinned archive is at its URL, has its pinned hash, and runs. It needs the
+ * network and fails without it; the unit tests cover the installer against
+ * a local archive server.
  */
 
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
@@ -9,26 +11,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { launchBidiBrowser } from '../../../src/driver/launch.ts';
-import { browserPlatform, downloadUrl, PINS } from '../../../src/install/builds.ts';
+import { browserPlatform, PINS } from '../../../src/install/builds.ts';
 import { browserExecutable, installBrowsers } from '../../../src/install/provision.ts';
 
-const platform = browserPlatform();
 const { buildId } = PINS['chrome-headless-shell'];
 
-/** Whether the headless shell's archive answers within a few seconds. */
-async function reachable(): Promise<boolean> {
-  if (platform === undefined) return false;
-  try {
-    const response = await fetch(downloadUrl('chrome-headless-shell', buildId, platform), { method: 'HEAD', signal: AbortSignal.timeout(5_000) });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-const online = await reachable();
-
-describe.skipIf(!online)('installing the pinned headless shell', () => {
+describe('installing the pinned headless shell', () => {
   const cache = mkdtempSync(path.join(tmpdir(), 'e2e-browser-install-'));
   const env = { ...process.env, E2E_BROWSERS_PATH: cache };
 
@@ -42,7 +30,7 @@ describe.skipIf(!online)('installing the pinned headless shell', () => {
     const executable = browserExecutable('chromium', false, env);
     expect(existsSync(executable)).toBe(true);
     expect(logs).toEqual([`Downloading chrome-headless-shell ${buildId} into ${cache}`]);
-    expect(readdirSync(path.join(cache, 'chrome-headless-shell'))).toEqual([`${platform!.cacheKey}-${buildId}`]);
+    expect(readdirSync(path.join(cache, 'chrome-headless-shell'))).toEqual([`${browserPlatform()!.cacheKey}-${buildId}`]);
 
     const browser = await launchBidiBrowser('chromium', { headed: false, timeoutMs: 30_000, executablePath: executable, env: process.env, signal: new AbortController().signal });
     try {

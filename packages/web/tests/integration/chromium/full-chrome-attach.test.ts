@@ -2,8 +2,9 @@
  * Attaching over CDP to the pinned full Chrome, not the headless shell: its
  * browser UI targets and component extension service workers sit beside the
  * tab, as in a user's own Chrome, and `attachBrowser` and
- * `web({ connect })` still navigate and locate. Skipped when the headed build
- * is not installed (`npx @e2e-dev/web install chromium --headed`).
+ * `web({ connect })` still navigate and locate. The host launches below the
+ * engine's `prepare`, so nothing installs the headed build for it: the suite
+ * fails without it, naming the install command.
  */
 
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -17,19 +18,14 @@ import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
 import { browserExecutable } from '../../../src/install/provision.ts';
 
-/** The pinned full Chrome's executable, when it is installed. */
-function installedChrome(): string | undefined {
-  try {
-    const executable = browserExecutable('chromium', true);
-    return existsSync(executable) ? executable : undefined;
-  } catch {
-    return undefined;
-  }
+/** The pinned full Chrome's executable, which the suite needs installed. */
+function installedChrome(): string {
+  const executable = browserExecutable('chromium', true);
+  if (!existsSync(executable)) throw new Error(`the pinned full Chrome is not installed at ${executable}: run "node packages/web/dist/bin.js install chromium --headed"`);
+  return executable;
 }
 
-const fullChrome = installedChrome();
-
-describe.skipIf(fullChrome === undefined)('attaching to the pinned full Chrome over CDP', () => {
+describe('attaching to the pinned full Chrome over CDP', () => {
   let app: FixtureApp;
   let chrome: RemoteChrome;
   let endpoint: string;
@@ -37,7 +33,7 @@ describe.skipIf(fullChrome === undefined)('attaching to the pinned full Chrome o
 
   beforeAll(async () => {
     app = await startFixtureApp();
-    chrome = await launchRemoteChrome({ fullChrome: fullChrome! });
+    chrome = await launchRemoteChrome({ fullChrome: installedChrome() });
     endpoint = `http://${new URL(chrome.endpoint).host}`;
     artifactsDir = mkdtempSync(path.join(tmpdir(), 'e2e-full-chrome-artifacts-'));
   }, 60_000);
