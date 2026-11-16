@@ -4,16 +4,12 @@
  * kills it and removes its profile once the launching process lets go.
  */
 
-import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { launchBidiBrowser } from '../../src/driver/launch.ts';
-import { watchdogArgs } from '../../src/driver/browser-watchdog.ts';
-
-const WATCHDOG = fileURLToPath(new URL('../../src/driver/browser-watchdog.ts', import.meta.url));
+import { spawnWatched } from '../../src/driver/browser-watchdog.ts';
 
 /** Whether a process with `pid` still runs. */
 function alive(pid: number): boolean {
@@ -43,7 +39,7 @@ describe('browser watchdog', () => {
   it('kills the browser and removes its profile once its stdin closes, as when the launching process is killed', async () => {
     const profile = mkdtempSync(path.join(os.tmpdir(), 'e2e-watchdog-test-'));
     const browserLike = ['-e', 'console.error(`pid ${process.pid}`); setInterval(() => undefined, 1000);'];
-    const watchdog = spawn(process.execPath, [WATCHDOG, ...watchdogArgs(profile, process.execPath, browserLike)], { stdio: ['pipe', 'ignore', 'pipe'] });
+    const watchdog = spawnWatched(profile, process.execPath, browserLike);
     const pid = await new Promise<number>((resolve) => watchdog.stderr.on('data', (chunk: Buffer) => {
       const match = /pid (\d+)/.exec(chunk.toString());
       if (match !== null) resolve(Number(match[1]));
@@ -58,7 +54,7 @@ describe('browser watchdog', () => {
 
   it('removes the profile and exits with the browser when the browser exits on its own', async () => {
     const profile = mkdtempSync(path.join(os.tmpdir(), 'e2e-watchdog-test-'));
-    const watchdog = spawn(process.execPath, [WATCHDOG, ...watchdogArgs(profile, process.execPath, ['-e', 'process.exit(3)'])], { stdio: ['pipe', 'ignore', 'ignore'] });
+    const watchdog = spawnWatched(profile, process.execPath, ['-e', 'process.exit(3)']);
     const code = await new Promise<number | null>((resolve) => watchdog.once('exit', (exitCode) => resolve(exitCode)));
     expect(code).toBe(3);
     expect(existsSync(profile)).toBe(false);

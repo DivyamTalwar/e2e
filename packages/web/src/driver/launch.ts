@@ -2,22 +2,21 @@
  * Launches a local browser, or attaches to a remote Chromium, and opens a
  * WebDriver BiDi session on it. Firefox speaks BiDi natively over a
  * WebSocket; Chromium speaks CDP, so the `chromium-bidi` mapper translates,
- * in a child process (`mapper-process.ts`). Local launches run the pinned
- * builds `install/provision.ts` keeps in the browsers cache.
+ * in a child process (`mapper-transport.ts`). Local launches run the pinned
+ * builds `install/provision.ts` keeps in the browsers cache, with the flags
+ * in `launch-flags.ts`, under a watchdog (`browser-watchdog.ts`).
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
 import { EngineError, raceAbort, withTimeout } from '@e2e-dev/core/engine';
 import { BROWSER_TRAITS, type BrowserName, type BrowserTraits } from '../browsers.ts';
-import { watchdogArgs } from './browser-watchdog.ts';
+import { endpointLine, spawnWatched, stopped, type Watchdog } from './browser-watchdog.ts';
 import { ChromiumCdp } from './cdp.ts';
 import { cancelled, releaseQuietly } from '../errors.ts';
-import { MAPPER_READY, type MapperTarget } from './mapper-process.ts';
+import { chromiumArgs, firefoxArgs } from './launch-flags.ts';
+import { chromiumMapper } from './mapper-transport.ts';
 import type { CdpTarget } from '../options.ts';
 import { BidiConnection, type BidiTransport, webSocketTransport } from './connection.ts';
 import { browserExecutable } from '../install/provision.ts';
@@ -50,158 +49,28 @@ export interface BidiLaunchOptions {
   readonly firefoxPrefs?: Readonly<Record<string, string | number | boolean>>;
 }
 
-/**
- * The Chromium switches and disabled features an automated run launches
- * with, Playwright 1.64's set: no background throttling, no first-run UI,
- * nothing the browser fetches or shows on its own.
- */
-const CHROMIUM_ARGS = [
-  '--disable-field-trial-config',
-  '--disable-background-networking',
-  '--disable-background-timer-throttling',
-  '--disable-backgrounding-occluded-windows',
-  '--disable-back-forward-cache',
-  '--disable-breakpad',
-  '--disable-client-side-phishing-detection',
-  '--disable-component-extensions-with-background-pages',
-  '--disable-component-update',
-  '--no-default-browser-check',
-  '--disable-default-apps',
-  '--disable-dev-shm-usage',
-  '--disable-extensions',
-  '--allow-pre-commit-input',
-  '--disable-hang-monitor',
-  '--disable-ipc-flooding-protection',
-  '--disable-popup-blocking',
-  '--disable-prompt-on-repost',
-  '--disable-renderer-backgrounding',
-  '--force-color-profile=srgb',
-  '--metrics-recording-only',
-  '--no-first-run',
-  '--password-store=basic',
-  '--use-mock-keychain',
-  '--no-service-autorun',
-  '--disable-search-engine-choice-screen',
-  '--disable-infobars',
-  `--disable-features=${[
-    'AvoidUnnecessaryBeforeUnloadCheckSync',
-    'DestroyProfileOnBrowserClose',
-    'DialMediaRouteProvider',
-    'GlobalMediaControls',
-    'HttpsUpgrades',
-    'LensOverlay',
-    'MediaRouter',
-    'PaintHolding',
-    'ThirdPartyStoragePartitioning',
-    'BlockOriginHeaderModificationOnRedirect',
-    'AvoidCorsURLLoaderRestartOnRedirect',
-    'Translate',
-    'AutoDeElevate',
-    'OptimizationHints',
-    'NetworkTimeServiceQuerying',
-    'AimEnabled',
-  ].join(',')}`,
-  '--enable-features=CDPScreenshotNewSurface',
-  '--enable-unsafe-swiftshader',
-  '--no-sandbox',
-];
+const FIREFOX_ENDPOINT = /WebDriver BiDi listening on (ws:\/\/\S+)/;
+const CHROMIUM_ENDPOINT = /DevTools listening on (ws:\/\/\S+)/;
 
-/**
- * The Firefox preferences an automated profile takes, Playwright 1.64's BiDi
- * launcher's set (beside the Remote Agent's recommended set, which it applies on
- * start): nothing reaches the network on its own, background windows keep
- * focus and full-rate timers, and startup opens no page of its own. Beside
- * it, `layout.css.getBoxQuads.enabled` gives pages `getBoxQuads`, which the
- * driver maps a point through a frame a rotation or 3D transform turns with,
- * and no link hands its scheme (`mailto:`, an app's own) to the system, as
- * the Chromium headless shell never does: on a machine with no handler,
- * Firefox raises a dialog over the page that takes every later click.
- */
-const FIREFOX_PREFS: Readonly<Record<string, string | number | boolean>> = {
-  'app.normandy.api_url': '',
-  'app.update.checkInstallTime': false,
-  'app.update.disabledForTesting': true,
-  'apz.content_response_timeout': 60_000,
-  'ui.useOverlayScrollbars': 0,
-  'network.protocol-handler.external-default': false,
-  'network.protocol-handler.external.mailto': false,
-  'browser.contentblocking.features.standard': '-tp,tpPrivate,cookieBehavior0,-cm,-fp',
-  'browser.newtabpage.activity-stream.discoverystream.region-weather-config': '',
-  'browser.newtabpage.activity-stream.newtabWallpapers.enabled': false,
-  'browser.newtabpage.activity-stream.newtabWallpapers.v2.enabled': false,
-  'browser.newtabpage.activity-stream.showSponsoredTopSites': false,
-  'browser.newtabpage.activity-stream.feeds.system.topstories': false,
-  'browser.newtabpage.enabled': false,
-  'browser.pagethumbnails.capturing_disabled': true,
-  'browser.safebrowsing.blockedURIs.enabled': false,
-  'browser.safebrowsing.downloads.enabled': false,
-  'browser.safebrowsing.malware.enabled': false,
-  'browser.safebrowsing.phishing.enabled': false,
-  'browser.search.update': false,
-  'browser.sessionstore.resume_from_crash': false,
-  'browser.shell.checkDefaultBrowser': false,
-  'browser.startup.homepage': 'about:blank',
-  'browser.startup.homepage_override.mstone': 'ignore',
-  'browser.startup.page': 0,
-  'browser.tabs.disableBackgroundZombification': false,
-  'browser.tabs.warnOnClose': false,
-  'browser.tabs.warnOnCloseOtherTabs': false,
-  'browser.tabs.warnOnOpen': false,
-  'browser.translations.automaticallyPopup': false,
-  'browser.uitour.enabled': false,
-  'browser.urlbar.suggest.searches': false,
-  'browser.warnOnQuit': false,
-  'datareporting.healthreport.service.enabled': false,
-  'datareporting.healthreport.uploadEnabled': false,
-  'datareporting.usage.uploadEnabled': false,
-  'datareporting.policy.dataSubmissionEnabled': false,
-  'datareporting.policy.dataSubmissionPolicyBypassNotification': true,
-  'toolkit.telemetry.reportingpolicy.firstRun': false,
-  'devtools.jsonview.enabled': false,
-  'dom.disable_open_during_load': false,
-  'dom.file.createInChild': true,
-  'dom.ipc.reportProcessHangs': false,
-  'dom.max_chrome_script_run_time': 0,
-  'dom.max_script_run_time': 0,
-  'dom.min_background_timeout_value': 0,
-  'dom.min_background_timeout_value_without_budget_throttling': 0,
-  'dom.timeout.enable_budget_timer_throttling': false,
-  'dom.security.https_first': false,
-  'extensions.autoDisableScopes': 0,
-  'extensions.enabledScopes': 5,
-  'extensions.getAddons.cache.enabled': false,
-  'extensions.installDistroAddons': false,
-  'extensions.update.enabled': false,
-  'extensions.update.notifyUser': false,
-  'focusmanager.testmode': true,
-  'general.useragent.updates.enabled': false,
-  'geo.provider.testing': true,
-  'geo.wifi.scan': false,
-  'hangmonitor.timeout': 0,
-  'layout.css.getBoxQuads.enabled': true,
-  'layout.testing.top-level-always-active': true,
-  'media.gmp-manager.updateEnabled': false,
-  'media.sanity-test.disabled': true,
-  'network.connectivity-service.enabled': false,
-  'network.cookie.sameSite.laxByDefault': false,
-  'network.http.prompt-temp-redirect': false,
-  'network.http.speculative-parallel-limit': 0,
-  'network.manage-offline-status': false,
-  'privacy.trackingprotection.enabled': false,
-  'security.certerrors.mitm.priming.enabled': false,
-  'security.fileuri.strict_origin_policy': false,
-  'security.notification_enable_delay': 0,
-  'signon.autofillForms': false,
-  'signon.rememberSignons': false,
-  'startup.homepage_welcome_url': 'about:blank',
-  'startup.homepage_welcome_url.additional': '',
-  'toolkit.cosmeticAnimations.enabled': false,
-  'toolkit.startup.max_resumed_crashes': -1,
-  // Wheel actions go through the path real wheels take, so a scroll shows on the next frame, as it does in Chromium.
-  'remote.events.async.wheel.enabled': true,
-  // Mouse actions too: the parent process routes them into an out-of-process (cross-site) frame, which a mouse
-  // event synthesized in the top document's process never reaches.
-  'remote.events.async.mouse.enabled': true,
+/** How one browser is launched: its arguments on a fresh profile, and the BiDi transport to it once it listens. */
+interface Launcher {
+  /** The browser's arguments on `profile`, which Firefox's preferences are written into. */
+  args(profile: string, options: BidiLaunchOptions): string[];
+  /** Waits for the endpoint `watchdog`'s browser prints and connects to it; `signal` aborting stops the wait. */
+  transport(watchdog: Watchdog, timeoutMs: number, signal: AbortSignal): Promise<BidiTransport>;
+}
+
+/** Every browser's launcher: Firefox serves BiDi on a WebSocket of its own, Chromium through the mapper. */
+const LAUNCHERS: Readonly<Record<BrowserName, Launcher>> = {
+  chromium: {
+    args: (profile, options) => chromiumArgs(profile, options.headed),
+    transport: (watchdog, timeoutMs, signal) => chromiumMapper(endpointLine(watchdog, CHROMIUM_ENDPOINT, timeoutMs).then((url) => ({ url })), timeoutMs, signal),
+  },
+  firefox: {
+    args: (profile, options) => firefoxArgs(profile, options.headed, options.firefoxPrefs),
+    transport: (watchdog, timeoutMs, signal) =>
+      raceAbort(async () => webSocketTransport(`${await endpointLine(watchdog, FIREFOX_ENDPOINT, timeoutMs)}/session`, timeoutMs), signal, 'BiDi firefox launch'),
+  },
 };
 
 /**
@@ -213,49 +82,19 @@ const FIREFOX_PREFS: Readonly<Record<string, string | number | boolean>> = {
  */
 export async function launchBidiBrowser(name: BrowserName, options: BidiLaunchOptions): Promise<BidiBrowser> {
   const { signal, timeoutMs } = options;
-  if (signal.aborted) throw cancelled(`BiDi ${name} launch cancelled`);
+  const what = `BiDi ${name} launch`;
+  if (signal.aborted) throw cancelled(`${what} cancelled`);
   const executable = options.executablePath ?? (await browserExecutable(name, options.headed, options.env));
   const profile = mkdtempSync(path.join(os.tmpdir(), `e2e-bidi-${name}-`));
-  let watchdog: ChildProcess;
+  const failure = (cause: unknown): EngineError => launchFailure(`${what} failed`, cause);
+  let watchdog: Watchdog;
   try {
-    watchdog = LAUNCHERS[name].spawn(executable, profile, options);
+    watchdog = spawnWatched(profile, executable, LAUNCHERS[name].args(profile, options));
   } catch (cause) {
     rmSync(profile, { recursive: true, force: true, maxRetries: 3 });
-    throw launchFailure(`BiDi ${name} launch failed`, cause);
+    throw failure(cause);
   }
-  let connection: BidiConnection | undefined;
-  const abandon = (): void => {
-    connection?.close();
-    void stopped(watchdog);
-  };
-  signal.addEventListener('abort', abandon, { once: true });
-  try {
-    connection = new BidiConnection(await LAUNCHERS[name].transport(watchdog, timeoutMs, signal));
-    const open = connection;
-    const traits = BROWSER_TRAITS[name];
-    const version = await openSession(open, traits, timeoutMs, signal);
-    return {
-      traits,
-      version,
-      connection: open,
-      exclusive: true,
-      close: async () => {
-        await Promise.race([
-          releaseQuietly(open.send('browser.close', {})),
-          new Promise((resolve) => setTimeout(resolve, 2_000)),
-        ]);
-        open.close();
-        await stopped(watchdog);
-      },
-    };
-  } catch (cause) {
-    connection?.close();
-    await stopped(watchdog);
-    if (signal.aborted) throw cancelled(`BiDi ${name} launch cancelled`);
-    throw launchFailure(`BiDi ${name} launch failed`, cause);
-  } finally {
-    signal.removeEventListener('abort', abandon);
-  }
+  return open({ what, failure, traits: BROWSER_TRAITS[name], transport: () => LAUNCHERS[name].transport(watchdog, timeoutMs, signal), owned: watchdog, timeoutMs, signal });
 }
 
 /**
@@ -266,31 +105,66 @@ export async function launchBidiBrowser(name: BrowserName, options: BidiLaunchOp
  * the session) stops the attach and fails it `CANCELLED`.
  */
 export async function connectBidiOverCdp(target: CdpTarget, timeoutMs: number, signal: AbortSignal): Promise<BidiBrowser> {
-  if (signal.aborted) throw cancelled('BiDi attach over CDP cancelled');
+  const what = 'BiDi attach over CDP';
+  if (signal.aborted) throw cancelled(`${what} cancelled`);
+  return open({
+    what,
+    // A failed handshake can echo its credentials in altered forms, so with headers only the kind of failure is kept.
+    failure: (cause) =>
+      target.headers === undefined
+        ? launchFailure(`${what} failed`, cause)
+        : new EngineError('ENGINE_FAILURE', `${what} failed; check the endpoint, handshake headers, and connection timeout`, { retryable: false }),
+    traits: BROWSER_TRAITS.chromium,
+    transport: () => chromiumMapper(webSocketDebuggerUrl(target, timeoutMs, signal).then((url) => ({ url, headers: target.headers })), timeoutMs, signal),
+    owned: undefined,
+    timeoutMs,
+    signal,
+  });
+}
+
+/** What `open` opens a session on, and how its outcome is reported. */
+interface BidiOpen {
+  /** What is being done, as its cancellation names it: `BiDi chromium launch`. */
+  readonly what: string;
+  /** The error a failure is reported as, unless `signal` aborted. */
+  readonly failure: (cause: unknown) => EngineError;
+  readonly traits: BrowserTraits;
+  /** Connects the BiDi transport to the browser, once it listens. */
+  readonly transport: () => Promise<BidiTransport>;
+  /** The watchdog of a browser this process launched, which a close or a failure stops; undefined for a browser attached to, which is left running. */
+  readonly owned: Watchdog | undefined;
+  readonly timeoutMs: number;
+  readonly signal: AbortSignal;
+}
+
+/**
+ * Connects to a browser and opens its BiDi session, the tail of a launch and
+ * of an attach. A failure or `signal` aborting at any stage closes the
+ * connection and stops an owned browser.
+ */
+async function open(spec: BidiOpen): Promise<BidiBrowser> {
+  const { traits, owned, timeoutMs, signal } = spec;
   let connection: BidiConnection | undefined;
   try {
-    const url = webSocketDebuggerUrl(target, timeoutMs, signal);
-    connection = new BidiConnection(await chromiumMapper(url.then((resolved) => ({ url: resolved, headers: target.headers })), timeoutMs, signal));
-    const open = connection;
-    const version = await openSession(open, BROWSER_TRAITS.chromium, timeoutMs, signal);
+    connection = new BidiConnection(await spec.transport());
+    const opened = connection;
+    const version = await openSession(opened, traits, timeoutMs, signal);
     return {
-      traits: BROWSER_TRAITS.chromium,
+      traits,
       version,
-      connection: open,
-      exclusive: false,
+      connection: opened,
+      exclusive: owned !== undefined,
       close: async () => {
-        await Promise.race([releaseQuietly(open.send('session.end', {})), new Promise((resolve) => setTimeout(resolve, 2_000))]);
-        open.close();
+        await Promise.race([releaseQuietly(opened.send(owned === undefined ? 'session.end' : 'browser.close', {})), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+        opened.close();
+        if (owned !== undefined) await stopped(owned);
       },
     };
   } catch (cause) {
     connection?.close();
-    if (signal.aborted) throw cancelled('BiDi attach over CDP cancelled');
-    // A failed handshake can echo its credentials in altered forms, so with headers only the kind of failure is kept.
-    if (target.headers !== undefined) {
-      throw new EngineError('ENGINE_FAILURE', 'BiDi attach over CDP failed; check the endpoint, handshake headers, and connection timeout', { retryable: false });
-    }
-    throw launchFailure('BiDi attach over CDP failed', cause);
+    if (owned !== undefined) await stopped(owned);
+    if (signal.aborted) throw cancelled(`${spec.what} cancelled`);
+    throw spec.failure(cause);
   }
 }
 
@@ -348,180 +222,3 @@ async function chromiumVersion(connection: BidiConnection): Promise<string> {
   const { product } = await ChromiumCdp.browser(connection).send('Browser.getVersion', {});
   return product.slice(product.lastIndexOf('/') + 1);
 }
-
-const FIREFOX_ENDPOINT = /WebDriver BiDi listening on (ws:\/\/\S+)/;
-const CHROMIUM_ENDPOINT = /DevTools listening on (ws:\/\/\S+)/;
-
-/** Spawns Firefox on a fresh profile with the driver's preferences, its BiDi endpoint on a free port. */
-function spawnFirefox(executable: string, profile: string, options: BidiLaunchOptions): ChildProcess {
-  const prefs = Object.entries({ ...FIREFOX_PREFS, ...options.firefoxPrefs }).map(([key, value]) => `user_pref(${JSON.stringify(key)}, ${JSON.stringify(value)});`);
-  writeFileSync(path.join(profile, 'user.js'), `${prefs.join('\n')}\n`);
-  const args = [
-    '--remote-debugging-port=0',
-    '--profile',
-    profile,
-    '-no-remote',
-    ...(options.headed ? ['--foreground'] : ['--headless']),
-    // On Windows firefox.exe hands off to the browser process and exits at once unless told to wait for it.
-    ...(process.platform === 'win32' ? ['-wait-for-browser'] : []),
-  ];
-  return spawnWatched(executable, profile, args);
-}
-
-/** Spawns Chromium on a fresh profile with the driver's switches, its DevTools endpoint on a free port. */
-function spawnChromium(executable: string, profile: string, options: BidiLaunchOptions): ChildProcess {
-  const args = [
-    ...CHROMIUM_ARGS,
-    '--remote-debugging-port=0',
-    `--user-data-dir=${profile}`,
-    ...(options.headed
-      ? []
-      : ['--headless', '--hide-scrollbars', '--mute-audio', '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4']),
-    '--no-startup-window',
-  ];
-  return spawnWatched(executable, profile, args);
-}
-
-/** How one browser is launched: its process, and the BiDi transport to it once it listens. */
-interface Launcher {
-  spawn(executable: string, profile: string, options: BidiLaunchOptions): ChildProcess;
-  /** Waits for the endpoint `watchdog`'s browser prints and connects to it; `signal` aborting stops the wait. */
-  transport(watchdog: ChildProcess, timeoutMs: number, signal: AbortSignal): Promise<BidiTransport>;
-}
-
-/** Every browser's launcher: Firefox serves BiDi on a WebSocket of its own, Chromium through the mapper. */
-const LAUNCHERS: Readonly<Record<BrowserName, Launcher>> = {
-  chromium: {
-    spawn: spawnChromium,
-    transport: (watchdog, timeoutMs, signal) => chromiumMapper(endpointLine(watchdog, CHROMIUM_ENDPOINT, timeoutMs).then((url) => ({ url })), timeoutMs, signal),
-  },
-  firefox: {
-    spawn: spawnFirefox,
-    transport: (watchdog, timeoutMs, signal) =>
-      raceAbort(async () => webSocketTransport(`${await endpointLine(watchdog, FIREFOX_ENDPOINT, timeoutMs)}/session`, timeoutMs), signal, 'BiDi firefox launch'),
-  },
-};
-
-/** The watchdog's entry point beside this module: the built `.js`, or the source when run from `src`. */
-const WATCHDOG_ENTRY = fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './browser-watchdog.ts' : './browser-watchdog.js', import.meta.url));
-
-/**
- * Spawns the browser under its watchdog, which holds this process's end of
- * a stdin pipe: the browser's stderr comes through the watchdog's, and the
- * browser and its profile go once this process closes the pipe or exits.
- */
-function spawnWatched(executable: string, profile: string, args: readonly string[]): ChildProcess {
-  const watchdog = spawn(process.execPath, [WATCHDOG_ENTRY, ...watchdogArgs(profile, executable, args)], { stdio: ['pipe', 'ignore', 'pipe'] });
-  watchdog.stdin?.on('error', () => undefined);
-  return watchdog;
-}
-
-/** Resolves with the endpoint the browser prints on stderr once it listens. */
-function endpointLine(child: ChildProcess, pattern: RegExp, timeoutMs: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let output = '';
-    const timer = setTimeout(() => reject(new Error(`no endpoint within ${timeoutMs}ms`)), timeoutMs);
-    child.stderr?.on('data', (chunk: Buffer) => {
-      output += chunk.toString();
-      const match = pattern.exec(output);
-      if (match?.[1] === undefined) return;
-      clearTimeout(timer);
-      // Drained so a chatty browser never blocks on a full pipe.
-      child.stderr?.removeAllListeners('data');
-      child.stderr?.resume();
-      resolve(match[1]);
-    });
-    child.once('error', (cause) => {
-      clearTimeout(timer);
-      reject(cause);
-    });
-    child.once('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`browser exited with code ${String(code)} before listening: ${output.slice(-500)}`));
-    });
-  });
-}
-
-/** The mapper's entry point beside this module: the built `.js`, or the source when run from `src`. */
-const MAPPER_ENTRY = fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './mapper-process.ts' : './mapper-process.js', import.meta.url));
-
-/**
- * Starts the `chromium-bidi` mapper in a child process at once, so it loads
- * while the browser starts, hands it `cdpUrl` when that resolves, and
- * returns the BiDi side of it, one JSON message per stdio line. Resolves
- * once the mapper serves; `signal` aborting first kills it.
- */
-async function chromiumMapper(cdp: Promise<MapperTarget>, timeoutMs: number, signal: AbortSignal): Promise<BidiTransport> {
-  const child = spawn(process.execPath, [MAPPER_ENTRY], { stdio: ['pipe', 'pipe', 'pipe'] });
-  let errors = '';
-  child.stderr.on('data', (chunk: Buffer) => {
-    errors = `${errors}${chunk.toString()}`.slice(-4_000);
-  });
-  child.stdin.on('error', () => undefined);
-  const why = (code: number | null, killedBy: NodeJS.Signals | null): string =>
-    `the chromium-bidi mapper exited (${killedBy ?? `code ${String(code)}`})${errors.trim() === '' ? '' : `: ${errors.trim()}`}`;
-  const exited = new Promise<string>((resolve) => {
-    child.once('error', (cause) => resolve(`the chromium-bidi mapper could not start: ${cause.message}`));
-    child.once('exit', (code, killedBy) => resolve(why(code, killedBy)));
-  });
-  const closeHandlers: ((reason?: string) => void)[] = [];
-  void exited.then((reason) => {
-    for (const handler of closeHandlers) handler(reason);
-  });
-  let deliver: (message: string) => void = () => undefined;
-  let ready: () => void = () => undefined;
-  const started = new Promise<void>((resolve) => (ready = resolve));
-  createInterface({ input: child.stdout }).on('line', (line) => {
-    if (line === MAPPER_READY) ready();
-    else deliver(line);
-  });
-  try {
-    const target = await raceAbort(Promise.race([cdp, exited.then((reason) => Promise.reject(new Error(reason)))]), signal, 'starting the chromium-bidi mapper');
-    child.stdin.write(`${JSON.stringify(target)}\n`);
-    await withTimeout(
-      raceAbort(Promise.race([started, exited.then((reason) => Promise.reject(new Error(reason)))]), signal, 'starting the chromium-bidi mapper'),
-      timeoutMs,
-      () => new Error(`the chromium-bidi mapper did not start within ${timeoutMs}ms`),
-    );
-  } catch (cause) {
-    child.kill('SIGKILL');
-    throw cause;
-  }
-  return {
-    send: (message) => {
-      if (!child.stdin.writable) throw new Error('the chromium-bidi mapper is gone');
-      child.stdin.write(`${message}\n`);
-    },
-    onMessage: (handler) => {
-      deliver = handler;
-    },
-    onClose: (handler) => closeHandlers.push(handler),
-    close: () => {
-      child.stdin.end();
-      setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
-    },
-  };
-}
-
-/**
- * Closes the watchdog's stdin, which kills the browser and removes its
- * profile, and resolves once the watchdog exited; a watchdog that outlives
- * its grace is killed.
- */
-function stopped(watchdog: ChildProcess): Promise<void> {
-  if (watchdog.exitCode !== null || watchdog.signalCode !== null) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      watchdog.kill('SIGKILL');
-      resolve();
-    }, WATCHDOG_EXIT_MS);
-    watchdog.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    watchdog.stdin?.end();
-  });
-}
-
-/** How long the watchdog gets to kill the browser and remove its profile. */
-const WATCHDOG_EXIT_MS = 10_000;
