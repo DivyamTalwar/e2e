@@ -26,7 +26,7 @@ describe('web({ headers })', () => {
   });
 
   it('rejects headers that are not a plain object, null included', () => {
-    for (const headers of [['x-a'], null, 'x-a: v', 3]) {
+    for (const headers of [['x-a'], null, 'x-a: v', 3, new Headers({ 'x-a': 'v' })]) {
       expect(() => web({ headers: headers as unknown as Record<string, string> })).toThrowError(
         /must be an object/,
       );
@@ -80,7 +80,7 @@ describe('web({ basicAuth })', () => {
   });
 
   it('rejects credentials that are not a plain object, null included', () => {
-    for (const basicAuth of [null, ['ada', 'x'], 'ada:x']) {
+    for (const basicAuth of [null, ['ada', 'x'], 'ada:x', new URL('http://ada:x@localhost')]) {
       expect(() =>
         web({ basicAuth: basicAuth as unknown as { username: string; password: string } }),
       ).toThrowError(/must be an object/);
