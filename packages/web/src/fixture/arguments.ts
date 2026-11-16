@@ -9,12 +9,14 @@ import type { CookieTarget } from '../driver/cookies.ts';
 import { MEDIA_KEYS, mediaProblem, type WebMedia } from '../options.ts';
 
 /**
- * Where each cookie of `browser.setCookies` lands. The harness's URL rule
- * decides which targets are admitted; a domain cookie is checked as the
+ * Each cookie of `browser.setCookies` with where it lands. The harness's URL
+ * rule decides which targets are admitted; a domain cookie is checked as the
  * origin it would be sent to, under the app's scheme (`http` for an app with
  * no URL), and a relative `url` lands on the base URL the way `goto` would.
- * A target that is not http(s) is `POLICY_DENIED`; a cookie that names
- * neither a `url` nor a `domain` is refused by name.
+ * A `url` gives its host, its directory as the path, and `secure` for
+ * `https:` unless the cookie says. A target that is not http(s) is
+ * `POLICY_DENIED`; a cookie that names neither a `url` nor a `domain` is
+ * refused by name.
  */
 export function cookieTargets(cookies: Parameters<Browser['setCookies']>[0], context: EngineFixtureContext): CookieTarget[] {
   // An app without a URL has no site either, and no base to read a scheme from.
@@ -27,7 +29,9 @@ export function cookieTargets(cookies: Parameters<Browser['setCookies']>[0], con
     }
     const target = context.app.resolveUrl(cookie.url ?? `${scheme()}://${cookie.domain.replace(/^\./, '')}`);
     if (!/^https?:/.test(target)) throw new ConfigurationError('POLICY_DENIED', `cookie URL must be http(s): ${target}`);
-    return cookie.url === undefined ? { domain: cookie.domain, path: cookie.path ?? '/' } : { url: target };
+    if (cookie.url === undefined) return { cookie, domain: cookie.domain, path: cookie.path ?? '/', secure: cookie.secure ?? false };
+    const { hostname, pathname, protocol } = new URL(target);
+    return { cookie, domain: hostname, path: pathname.slice(0, pathname.lastIndexOf('/') + 1), secure: cookie.secure ?? protocol === 'https:' };
   });
 }
 

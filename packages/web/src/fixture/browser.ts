@@ -146,7 +146,7 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     cookies: () => run('cookies', readCookies),
     setCookies(cookies) {
       const targets = cookieTargets(cookies, context);
-      return run('setCookies', (session) => writeCookies(session, cookies, targets));
+      return run('setCookies', (session) => writeCookies(session, targets));
     },
     async clearCookies(options) {
       requireCookieFilter(options);

@@ -1,8 +1,9 @@
 /**
- * `cookieTargets`, where each cookie of `browser.setCookies` lands: a cookie
- * that names its own `url` or `domain` needs no app URL, so it is set on a
- * target with none (`attachBrowser`), and one that names neither is refused
- * by name.
+ * `cookieTargets`, where each cookie of `browser.setCookies` lands: a `url`
+ * gives its host, its directory, and `secure` for `https:`, a `domain` its
+ * own domain and path. A cookie that names its own `url` or `domain` needs
+ * no app URL, so it is set on a target with none (`attachBrowser`), and one
+ * that names neither is refused by name.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -20,19 +21,40 @@ function contextOf(base: string | undefined): EngineFixtureContext {
 }
 
 describe('cookieTargets', () => {
-  it('lands a url cookie on the URL it resolves to and a domain cookie on its domain and path', () => {
-    expect(cookieTargets([
+  it('lands a url cookie on the host and directory of the URL it resolves to and a domain cookie on its domain and path', () => {
+    const cookies: Cookie[] = [
       { name: 'a', value: '1', url: '/account' },
-      { name: 'b', value: '2', domain: '.app.test' },
-      { name: 'c', value: '3', domain: 'app.test', path: '/admin' },
-    ], contextOf('https://app.test/'))).toEqual([{ url: 'https://app.test/account' }, { domain: '.app.test', path: '/' }, { domain: 'app.test', path: '/admin' }]);
+      { name: 'b', value: '2', url: '/account/settings' },
+      { name: 'c', value: '3', domain: '.app.test' },
+      { name: 'd', value: '4', domain: 'app.test', path: '/admin' },
+    ];
+    expect(cookieTargets(cookies, contextOf('https://app.test/'))).toEqual([
+      { cookie: cookies[0], domain: 'app.test', path: '/', secure: true },
+      { cookie: cookies[1], domain: 'app.test', path: '/account/', secure: true },
+      { cookie: cookies[2], domain: '.app.test', path: '/', secure: false },
+      { cookie: cookies[3], domain: 'app.test', path: '/admin', secure: false },
+    ]);
+  });
+
+  it('is secure for an https url unless the cookie says, and for a domain only when the cookie says', () => {
+    const placed = cookieTargets([
+      { name: 'a', value: '1', url: 'http://app.test/' },
+      { name: 'b', value: '2', url: 'http://app.test/', secure: true },
+      { name: 'c', value: '3', url: 'https://app.test/', secure: false },
+      { name: 'd', value: '4', domain: 'app.test', secure: true },
+    ], contextOf('https://app.test/'));
+    expect(placed.map(({ secure }) => secure)).toEqual([false, true, false, true]);
   });
 
   it('needs no app URL for a cookie that names its own url or domain', () => {
-    expect(cookieTargets([
+    const cookies: Cookie[] = [
       { name: 'a', value: '1', url: 'https://other.test/account' },
       { name: 'b', value: '2', domain: 'other.test' },
-    ], contextOf(undefined))).toEqual([{ url: 'https://other.test/account' }, { domain: 'other.test', path: '/' }]);
+    ];
+    expect(cookieTargets(cookies, contextOf(undefined))).toEqual([
+      { cookie: cookies[0], domain: 'other.test', path: '/', secure: true },
+      { cookie: cookies[1], domain: 'other.test', path: '/', secure: false },
+    ]);
   });
 
   it('refuses a relative url without an app URL, a target that is not http(s), and a cookie that names neither', () => {

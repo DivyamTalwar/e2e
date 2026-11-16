@@ -37,8 +37,13 @@ export interface CookieFilter {
   path?: string | RegExp;
 }
 
-/** Where one cookie is set: on the URL it names, or on its domain and path. */
-export type CookieTarget = { readonly url: string } | { readonly domain: string; readonly path: string };
+/** One cookie of `browser.setCookies` with where the browser stores it: its domain, its path, and whether it is secure. */
+export interface CookieTarget {
+  readonly cookie: CookieFields;
+  readonly domain: string;
+  readonly path: string;
+  readonly secure: boolean;
+}
 
 /** The fields a cookie filter matches on. */
 const FILTER_FIELDS = ['name', 'domain', 'path'] as const;
@@ -48,9 +53,9 @@ export async function readCookies(session: BidiSession): Promise<Cookie[]> {
   return (await storedCookies(session.connection, session.userContext.id)).map(toCookie);
 }
 
-/** Stores each of `cookies` on its target in `targets` (`cookieTargets`), in the attempt's user context. */
-export async function writeCookies(session: BidiSession, cookies: readonly CookieFields[], targets: readonly CookieTarget[]): Promise<void> {
-  for (const [index, cookie] of cookies.entries()) await storeCookie(session.connection, session.userContext.id, partialCookie(cookie, targets[index]!));
+/** Stores each cookie of `targets` (`cookieTargets`) where it lands, in the attempt's user context. */
+export async function writeCookies(session: BidiSession, targets: readonly CookieTarget[]): Promise<void> {
+  for (const target of targets) await storeCookie(session.connection, session.userContext.id, partialCookie(target));
 }
 
 /**
@@ -85,17 +90,16 @@ function partition(userContext: string): Storage.StorageKeyPartitionDescriptor {
   return { type: 'storageKey', userContext };
 }
 
-/** A fixture cookie as the browser stores it on `target`: a URL gives its host, its directory as the path, and `secure` for `https:`. */
-function partialCookie(cookie: CookieFields, target: CookieTarget): Storage.PartialCookie {
-  const url = 'url' in target ? new URL(target.url) : undefined;
+/** A fixture cookie as the browser stores it where it lands. */
+function partialCookie({ cookie, domain, path, secure }: CookieTarget): Storage.PartialCookie {
   return {
     name: cookie.name,
     value: { type: 'string', value: cookie.value },
-    domain: url?.hostname ?? ('domain' in target ? target.domain : ''),
-    path: url === undefined ? ('path' in target ? target.path : '/') : url.pathname.slice(0, url.pathname.lastIndexOf('/') + 1),
+    domain,
+    path,
     ...(cookie.expires !== undefined && cookie.expires >= 0 ? { expiry: Math.floor(cookie.expires) } : {}),
     ...(cookie.httpOnly !== undefined ? { httpOnly: cookie.httpOnly } : {}),
-    secure: cookie.secure ?? url?.protocol === 'https:',
+    secure,
     ...(cookie.sameSite !== undefined ? { sameSite: cookie.sameSite.toLowerCase() as Network.SameSite } : {}),
   };
 }
