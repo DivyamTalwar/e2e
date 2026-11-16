@@ -1,4 +1,4 @@
-/** A BiDi session's own state: the input it sends (held keys through chords and modifier clicks until their `keyboard.up`, pressure, the viewport bound, what counts as dispatched), refs a locate just proved, and a user context that opens after the attempt closed. */
+/** A BiDi session's own state: the input it sends (held keys through chords and modifier clicks until their `keyboard.up`, pressure, the viewport bound, what counts as dispatched), refs a locate just proved, the tabs it opens and the ones it closes again, and the user contexts it removes or refuses to set up once the attempt closed. */
 
 import { describe, expect, it, vi } from 'vitest';
 import { ContextTree } from '../../src/driver/context-tree.ts';
