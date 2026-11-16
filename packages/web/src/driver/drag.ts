@@ -53,12 +53,13 @@ function dragStarted(): Promise<boolean> | boolean {
  * Presses at `from`, then reads where the drag goes (`resolveTarget`), as
  * Playwright resolves a drop target only once the source is pressed, moves
  * there through `dragPath`, and releases; a drag the page starts on the
- * first move carries its data to the drop. `stepMs` paces each move. Every
- * input goes through `input`, the scripts and the drag event subscription
- * through `connection`. Once `signal` aborts, nothing more is dispatched;
- * however it ends, interception is off and the button is up where the
- * mouse last was, so a drag that failed midway drops nothing at the
- * target, and only the mouse is released, so keys the test holds stay
+ * first move carries its data to the drop. The first move is one discrete
+ * step, and the rest of a drag the page did not start take `durationMs`.
+ * Every input goes through `input`, the scripts and the drag event
+ * subscription through `connection`. Once `signal` aborts, nothing more is
+ * dispatched; however it ends, interception is off and the button is up
+ * where the mouse last was, so a drag that failed midway drops nothing at
+ * the target, and only the mouse is released, so keys the test holds stay
  * held.
  */
 export async function chromiumDrag(
@@ -68,7 +69,7 @@ export async function chromiumDrag(
   documents: readonly string[],
   from: Point,
   resolveTarget: () => Promise<Point>,
-  stepMs: number,
+  durationMs: number,
   signal: AbortSignal,
 ): Promise<void> {
   let intercepted: (data: Protocol.Input.DragData) => void = () => undefined;
@@ -97,7 +98,7 @@ export async function chromiumDrag(
     await input.interceptDrags(false);
     intercepting = false;
     if (data === undefined) {
-      await input.send(dragReleaseSources(rest, stepMs), signal);
+      await input.send(dragReleaseSources(rest, durationMs), signal);
       pressed = false;
       return;
     }
@@ -139,7 +140,7 @@ function undropped(): boolean {
 
 /**
  * Presses at `from`, reads where the drag goes (`resolveTarget`), moves
- * there through `dragPath` at `stepMs` a step, and releases, on Firefox.
+ * there through `dragPath` over `durationMs`, and releases, on Firefox.
  * A drag the page started and did not cancel that ends without a drop is
  * refused as `UNSUPPORTED_CAPABILITY`. However it ends, the button is up.
  */
@@ -149,7 +150,7 @@ export async function firefoxDrag(
   documents: readonly string[],
   from: Point,
   resolveTarget: () => Promise<Point>,
-  stepMs: number,
+  durationMs: number,
   signal: AbortSignal,
 ): Promise<void> {
   await input.send(pressDownSources(from.x, from.y), signal);
@@ -157,7 +158,7 @@ export async function firefoxDrag(
   try {
     const [, ...steps] = dragPath(from, await resolveTarget());
     await Promise.all(documents.map((each) => unlessStale(callFunction(connection, each, watchUndropped), undefined)));
-    await input.send(dragReleaseSources(steps, stepMs), signal);
+    await input.send(dragReleaseSources(steps, durationMs), signal);
     released = true;
   } finally {
     if (!released) await releaseQuietly(input.send(releaseSources()));

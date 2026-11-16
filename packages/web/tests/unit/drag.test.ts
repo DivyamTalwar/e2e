@@ -1,9 +1,9 @@
-/** Chromium drags over the `goog:cdp` passthrough: whatever fails, interception ends and the mouse button comes up, and keys stay as the test holds them. */
+/** Chromium drags over the `goog:cdp` passthrough: whatever fails, interception ends and the mouse button comes up, and keys stay as the test holds them. A drag's duration is spent whole on either browser. */
 
 import { describe, expect, it } from 'vitest';
 import { BidiInput } from '../../src/driver/input.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
-import { chromiumDrag } from '../../src/driver/drag.ts';
+import { chromiumDrag, firefoxDrag } from '../../src/driver/drag.ts';
 import { FakeBidi } from '../helpers/bidi-fake.ts';
 
 const FROM = { x: 1, y: 1 };
@@ -81,6 +81,15 @@ describe('chromiumDrag', () => {
     await drag(fake, AbortSignal.timeout(500));
     const moves = fake.commands('input.performActions').flatMap((command) => (command.params['actions'] as { actions: { type: string; pressure?: number }[] }[])[0]!.actions).filter((action) => action.type === 'pointerMove');
     expect(moves.slice(1).map((action) => action.pressure)).toEqual([0.5, 0.5, 0.5, 0.5, 0.5]);
+  });
+
+  it.each(['chromium', 'firefox'] as const)('spends the whole duration on the moves after the press, on %s', async (browser) => {
+    const fake = peer(() => false);
+    const input = new BidiInput({ connection: fake.connection, traits: BROWSER_TRAITS[browser], context: () => 'tab', viewport: async () => ({ width: 100, height: 100 }) });
+    if (browser === 'chromium') await chromiumDrag(input, fake.connection, 'tab', ['tab'], FROM, async () => TO, 500, AbortSignal.timeout(500));
+    else await firefoxDrag(input, fake.connection, ['tab'], FROM, async () => TO, 500, AbortSignal.timeout(500));
+    const moves = fake.commands('input.performActions').flatMap((command) => (command.params['actions'] as { actions: { type: string; duration?: number }[] }[])[0]!.actions).filter((action) => action.type === 'pointerMove');
+    expect(moves.reduce((sum, action) => sum + (action.duration ?? 0), 0)).toBe(500);
   });
 
   it('sends nothing when cancelled before the press', async () => {

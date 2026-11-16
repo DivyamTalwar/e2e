@@ -29,7 +29,7 @@ import type { NodeTarget } from './frames.ts';
 import { invert, project } from './projection.ts';
 import { ROOT_NODE_ID, stillLocated } from './observe.ts';
 import { CONTENT_TYPES } from './content-types.ts';
-import { type ClickOptions, clickSources, dragStepMs, moveSources, nearestPixel, swipeDistance, swipeSources, typeSource, wheelDelta } from './input-sources.ts';
+import { type ClickOptions, clickSources, moveSources, nearestPixel, swipeDistance, swipeSources, typeSource, wheelDelta } from './input-sources.ts';
 import { pressStroke } from './keyboard.ts';
 import type { BidiSession } from './session.ts';
 import { ElementRef } from './script.ts';
@@ -527,8 +527,8 @@ async function dragTo(session: BidiSession, source: NodeTarget, target: NodeTarg
 async function drag(session: BidiSession, from: ViewportPoint, to: () => Promise<ViewportPoint>, durationMs: number, signal: AbortSignal): Promise<void> {
   const context = session.requireContext();
   const documents = await session.documentContexts(context);
-  if (session.browser.traits.cdp) await chromiumDrag(session.input, session.connection, context, documents, from, to, dragStepMs(durationMs), signal);
-  else await firefoxDrag(session.input, session.connection, documents, from, to, dragStepMs(durationMs), signal);
+  if (session.browser.traits.cdp) await chromiumDrag(session.input, session.connection, context, documents, from, to, durationMs, signal);
+  else await firefoxDrag(session.input, session.connection, documents, from, to, durationMs, signal);
 }
 
 /**

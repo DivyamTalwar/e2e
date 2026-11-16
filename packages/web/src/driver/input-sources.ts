@@ -75,13 +75,13 @@ export function dragPath(from: { x: number; y: number }, to: { x: number; y: num
   return path;
 }
 
-/** How long each step of a drag that lasts `durationMs` takes. */
-export function dragStepMs(durationMs: number): number {
-  return Math.round(durationMs / DRAG_STEPS);
-}
-
-/** The source that ends a drag after its press: the mouse moves through `points`, each step taking `stepMs`, and releases the primary button at the last. */
-export function dragReleaseSources(points: readonly ViewportPoint[], stepMs: number): Input.SourceActions[] {
+/**
+ * The source that ends a drag after its press: the mouse moves through
+ * `points` over `durationMs`, each step taking an equal share however many
+ * of the path's steps are left, and releases the primary button at the last.
+ */
+export function dragReleaseSources(points: readonly ViewportPoint[], durationMs: number): Input.SourceActions[] {
+  const stepMs = Math.round(durationMs / points.length);
   const moves = points.map((point): Input.PointerSourceAction => ({ type: 'pointerMove', x: point.x, y: point.y, origin: 'viewport', ...(stepMs > 0 ? { duration: stepMs } : {}) }));
   return [mouse([...moves, { type: 'pointerUp', button: 0 }])];
 }

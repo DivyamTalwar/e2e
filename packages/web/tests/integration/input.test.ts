@@ -1,11 +1,12 @@
 /**
  * Input on both BiDi browsers, as a page sees it: a key held across a
  * Shift change gets its keyup, Shift shifts a key named by its character,
- * a swipe leaves the mouse on what it scrolled, a drag carries pressure and
- * reaches a target in a rotated frame, a pointer target outside the
- * viewport is refused as never sent, a tap cancelled while it aims leaves
- * no click watch behind, and a ref reused after input, the hover of a
- * swallowed click included, checks its locator again.
+ * a swipe leaves the mouse on what it scrolled, a drag carries pressure,
+ * lasts as long as asked, and reaches a target in a rotated frame, a
+ * pointer target outside the viewport is refused as never sent, a tap
+ * cancelled while it aims leaves no click watch behind, and a ref reused
+ * after input, the hover of a swallowed click included, checks its locator
+ * again.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -73,6 +74,16 @@ describe('input', () => {
     </script>`);
     await page.engine.performAt!({ x: 50, y: 50 }, { kind: 'dragTo', target: { x: 300, y: 200 } }, page.op());
     expect(await log()).toEqual([0.5, 0.5, 0.5, 0.5, 0.5]);
+  });
+
+  it('holds a swipe between points for its whole duration', async () => {
+    await page.setContent(`<div style="width:600px;height:400px"></div><script>
+      window.log = [];
+      for (const type of ['pointerdown', 'pointerup']) addEventListener(type, (event) => log.push(event.timeStamp), true);
+    </script>`);
+    await page.engine.performAt!({ x: 50, y: 50 }, { kind: 'swipeTo', target: { x: 300, y: 200 }, durationMs: 1_500 }, page.op());
+    const [down, up] = await log() as number[];
+    expect(up! - down!).toBeGreaterThanOrEqual(1_500);
   });
 
   it('drags onto a target in a rotated frame, resolving the target once the source is pressed', async () => {
