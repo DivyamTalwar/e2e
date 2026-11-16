@@ -258,7 +258,7 @@ export class AttemptTabs {
     const waitMs = budget.timeoutMs;
     const popup = this.nextPopup();
     try {
-      return await afterTrigger(trigger, popup.opened, budget, (triggerMs) => {
+      return await afterTrigger(trigger, () => popup.opened, budget, (triggerMs) => {
         const url = popup.loading();
         if (url !== undefined) return new TestError('ACTION_FAILED', `the tab the app opened did not load ${url} within ${waitMs}ms`);
         return new TestError(

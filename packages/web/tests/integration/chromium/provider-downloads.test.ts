@@ -173,7 +173,7 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
         new Promise<{ code: string; message: string }>((resolve) => { watchdog = setTimeout(() => resolve({ code: 'still pending', message: '' }), 1500); }),
       ]);
       expect(readSignal).toBeDefined();
-      expect(result).toMatchObject({ code: 'ACTION_FAILED', message: expect.stringContaining('did not finish') });
+      expect(result).toMatchObject({ code: 'ACTION_FAILED', message: 'download report.txt did not finish: browser provider "stalled-remote" read it back too slowly' });
       expect(readSignal?.aborted).toBe(true);
       expect(attached).toEqual([]);
     } finally { clearTimeout(watchdog); }

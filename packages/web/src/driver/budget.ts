@@ -56,29 +56,38 @@ export class TriggerFailure extends Error {
 }
 
 /**
- * Runs the test's `trigger` and resolves with `wait` once both have
- * finished, within `budget`. The trigger is test code that runs its own
- * steps, so the wait owns the deadline: when the budget runs out it fails
- * with what `timedOut` builds from how long the trigger took, undefined
- * while it is still pending. What the trigger throws leaves as a
- * `TriggerFailure`.
+ * Runs the test's `trigger`, then `wait`, and resolves with what `wait` did,
+ * all within `budget`. The trigger is test code that runs its own steps, so
+ * this owns the whole deadline: `wait` gets a signal that aborts once the
+ * budget ran out or the operation was cancelled, and a budget that runs out
+ * fails with what `timedOut` builds from how long the trigger took,
+ * undefined while it is still pending. A caller that must not miss what the
+ * trigger starts listens for it before calling this. What the trigger throws
+ * leaves as a `TriggerFailure`.
  */
 export async function afterTrigger<T>(
   trigger: () => Promise<void>,
-  wait: Promise<T>,
+  wait: (signal: AbortSignal) => Promise<T>,
   budget: OperationBudget,
   timedOut: (triggerMs: number | undefined) => Error,
 ): Promise<T> {
   const started = Date.now();
   let triggerMs: number | undefined;
-  const triggered = (async (): Promise<void> => {
+  const abandoned = new AbortController();
+  const signal = AbortSignal.any([budget.signal, abandoned.signal]);
+  const waited = (async (): Promise<T> => {
     try {
       await trigger();
     } catch (cause) {
       throw new TriggerFailure(cause);
     }
     triggerMs = Date.now() - started;
+    return wait(signal);
   })();
-  const [result] = await withTimeout(raceAbort(Promise.all([wait, triggered]), budget.signal, 'trigger wait'), budget.timeoutMs, () => timedOut(triggerMs));
-  return result;
+  try {
+    return await withTimeout(raceAbort(waited, budget.signal, 'trigger wait'), budget.timeoutMs, () => timedOut(triggerMs));
+  } catch (cause) {
+    abandoned.abort();
+    throw cause;
+  }
 }

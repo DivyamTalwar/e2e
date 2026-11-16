@@ -4,6 +4,7 @@
  * no download follows keeps its own error, without waiting for one.
  */
 
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
@@ -30,6 +31,19 @@ describe('navigations that turn into downloads', () => {
     expect((failure as Error).message).toContain('Download is starting');
     expect(download.suggestedFilename).toBe('hello.txt');
     expect(await page.browser.url()).toBe(start);
+  });
+
+  it('saves the file of a wait whose timeout is a fraction of a millisecond', async () => {
+    const attachment = page.serve('/fraction', (_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename=fraction.txt' });
+      response.end('Hello fraction');
+    });
+    await page.browser.goto(page.serve('/before-fraction', '<p>start</p>'));
+    const download = await page.browser.waitForDownload(async () => {
+      await page.browser.goto(attachment).catch(() => undefined);
+    }, { timeout: 2500.5 });
+    expect(download.suggestedFilename).toBe('fraction.txt');
+    expect(readFileSync(download.absolutePath, 'utf8')).toBe('Hello fraction');
   });
 
   it('keeps the abort of a navigation to a No Content response, at once', async () => {

@@ -9,17 +9,11 @@
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { EngineError, raceAbort, TestError } from '@e2e-dev/core/engine';
+import { EngineError, TestError } from '@e2e-dev/core/engine';
 import type { LeaseDownloads } from '../provider.ts';
 import { afterTrigger, type OperationBudget } from './budget.ts';
 import type { BidiConnection } from './connection.ts';
 import type { BidiSession } from './session.ts';
-
-/** One finished download: the name the server suggested and where the browser wrote it. */
-export interface FinishedDownload {
-  readonly suggestedFilename: string;
-  readonly filepath: string;
-}
 
 /** A download saved into the attempt's `downloads` folder: its path under the attempt's artifacts, and on disk. */
 export interface SavedDownload {
@@ -41,23 +35,6 @@ export class AttemptDownloads {
     this.dir = remote === undefined ? mkdtempSync(path.join(os.tmpdir(), 'e2e-bidi-downloads-')) : remote.dir;
   }
 
-  /**
-   * Copies one finished download to `file`: from this machine, or read off
-   * the remote browser's disk through its provider, a read `signal` bounds:
-   * one that does not finish fails the wait.
-   */
-  async save(download: FinishedDownload, file: string, signal: AbortSignal): Promise<void> {
-    if (this.remote === undefined) {
-      copyFileSync(download.filepath, file);
-      return;
-    }
-    const bytes = await raceAbort(this.remote.read(download.filepath, signal), signal, 'download read').catch((cause: unknown) => {
-      if (!signal.aborted) throw cause;
-      throw new TestError('ACTION_FAILED', `download ${download.suggestedFilename} did not finish: ${this.remote!.provider} read it back too slowly`);
-    });
-    writeFileSync(file, bytes);
-  }
-
   /** Points the user context's downloads at this attempt's directory. */
   async allow(userContext: string): Promise<void> {
     await this.connection.send('browser.setDownloadBehavior', {
@@ -67,18 +44,30 @@ export class AttemptDownloads {
   }
 
   /**
-   * Runs `trigger` and resolves with the first `count` downloads it starts,
-   * in start order, once each has finished and the trigger returned
-   * (`afterTrigger`). A canceled one fails the wait. Past the budget it stops
-   * listening and fails, whatever the trigger is still doing, and nothing it
-   * saw is kept. Refused before the trigger runs when no download can be
-   * read back.
+   * Runs `trigger` and saves the first `count` downloads it starts in a
+   * context `ours` admits, in start order, each at the path `place` gives
+   * its name, once each has finished and the trigger returned
+   * (`afterTrigger`): copied from this machine, or read off the remote
+   * browser's disk through its provider. One budget bounds the trigger, the
+   * downloads, and reading each back; past it the wait stops listening and
+   * fails, whatever the trigger is still doing, naming what it still waited
+   * for. A canceled download fails the wait. Refused before the trigger
+   * runs when no download can be read back.
    */
-  async collect(count: number, trigger: () => Promise<void>, budget: OperationBudget, ours: (context: string) => boolean): Promise<FinishedDownload[]> {
+  async collect(
+    count: number,
+    trigger: () => Promise<void>,
+    budget: OperationBudget,
+    ours: (context: string) => boolean,
+    place: (suggestedFilename: string) => { readonly relative: string; readonly absolute: string },
+  ): Promise<SavedDownload[]> {
     if (this.unserved !== undefined) throw new EngineError('UNSUPPORTED_CAPABILITY', this.unserved, { retryable: false });
+    const { remote } = this;
     const { timeoutMs } = budget;
     const started: { readonly id: string; readonly suggestedFilename: string }[] = [];
     const ended = new Map<string, string | null>();
+    /** What a wait that runs out while the provider reads a download back says. */
+    let slowRead: string | undefined;
     let settled: () => void = () => undefined;
     const done = new Promise<void>((resolve) => (settled = resolve));
     const check = (): void => {
@@ -94,8 +83,27 @@ export class AttemptDownloads {
       check();
     });
     try {
-      await afterTrigger(trigger, done, budget, (triggerMs) => {
+      return await afterTrigger(trigger, async (signal) => {
+        await done;
+        const finished = started.map(({ id, suggestedFilename }) => {
+          const filepath = ended.get(id);
+          if (filepath == null) throw new TestError('ACTION_FAILED', `download ${suggestedFilename} was canceled`);
+          return { suggestedFilename, filepath };
+        });
+        const saved: SavedDownload[] = [];
+        for (const { suggestedFilename, filepath } of finished) {
+          const { relative, absolute } = place(suggestedFilename);
+          if (remote === undefined) copyFileSync(filepath, absolute);
+          else {
+            slowRead = `download ${suggestedFilename} did not finish: ${remote.provider} read it back too slowly`;
+            writeFileSync(absolute, await remote.read(filepath, signal));
+          }
+          saved.push({ path: relative, absolutePath: absolute, suggestedFilename });
+        }
+        return saved;
+      }, budget, (triggerMs) => {
         if (triggerMs === undefined) return new TestError('ACTION_FAILED', `the download trigger did not resolve within ${timeoutMs}ms`);
+        if (slowRead !== undefined) return new TestError('ACTION_FAILED', slowRead);
         return new TestError('ACTION_FAILED', started.length < count
           ? `${count === 1 ? 'no download' : `${started.length} of ${count} downloads`} started within ${timeoutMs}ms; the trigger resolved after ${triggerMs}ms`
           : `${count === 1 ? 'the download' : `${count} downloads`} did not finish within ${timeoutMs}ms`);
@@ -104,11 +112,6 @@ export class AttemptDownloads {
       offBegin();
       offEnd();
     }
-    return started.map(({ id, suggestedFilename }) => {
-      const filepath = ended.get(id);
-      if (filepath == null) throw new TestError('ACTION_FAILED', `download ${suggestedFilename} was canceled`);
-      return { suggestedFilename, filepath };
-    });
   }
 
   /** Deletes the attempt's local download directory; files a wait saved are already copied out, and a remote one is the provider's. */
@@ -120,18 +123,8 @@ export class AttemptDownloads {
 /**
  * Runs `trigger` and saves the first `count` downloads it starts in the
  * attempt's tab into the attempt's `downloads` folder, in start order
- * (`browser.waitForDownload`). One budget bounds the trigger, the downloads,
- * and reading each back.
+ * (`browser.waitForDownload`).
  */
-export async function saveDownloads(session: BidiSession, count: number, trigger: () => Promise<void>, budget: OperationBudget): Promise<SavedDownload[]> {
-  const endsAt = Date.now() + budget.timeoutMs;
-  const finished = await session.downloads.collect(count, trigger, budget, (context) => session.onPage(context));
-  const reading = AbortSignal.any([budget.signal, AbortSignal.timeout(Math.max(1, endsAt - Date.now()))]);
-  const saved: SavedDownload[] = [];
-  for (const download of finished) {
-    const { relative, absolute } = session.artifacts.reserve('downloads', download.suggestedFilename, '');
-    await session.downloads.save(download, absolute, reading);
-    saved.push({ path: relative, absolutePath: absolute, suggestedFilename: download.suggestedFilename });
-  }
-  return saved;
+export function saveDownloads(session: BidiSession, count: number, trigger: () => Promise<void>, budget: OperationBudget): Promise<SavedDownload[]> {
+  return session.downloads.collect(count, trigger, budget, (context) => session.onPage(context), (name) => session.artifacts.reserve('downloads', name, ''));
 }
