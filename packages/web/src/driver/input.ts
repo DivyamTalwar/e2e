@@ -64,7 +64,8 @@ const operationDispatches = new AsyncLocalStorage<(delta: number) => void>();
 /**
  * One operation's own dispatch count, so whether it sent input that may have
  * reached the app is read off its own sends: input or an evaluate another
- * operation runs meanwhile does not count.
+ * operation runs meanwhile does not count, nor does a send of its own that
+ * the page swallowed (`BidiInput.sendSuppressible`).
  */
 export class DispatchScope {
   private count = 0;
@@ -98,7 +99,12 @@ export class BidiInput {
 
   constructor(private readonly target: InputTarget) {}
 
-  /** Input sends and page mutations so far, a suppressible send counting until its verdict takes it back: an action that fails after this moved may have reached the app. */
+  /**
+   * Input sends and page mutations so far. It never decreases: the pointer
+   * move and the modifier keys of a click the page swallowed still reached
+   * the app, so a ref located before one is checked again
+   * (`BidiRefs.claimFresh`).
+   */
   get dispatches(): number {
     return this.total;
   }
@@ -110,13 +116,13 @@ export class BidiInput {
 
   /** Counts a change the driver or the test's code made in the page (a fill, a select, an evaluate), which may have reached the app. */
   mutated(): void {
-    this.count(1);
+    this.count();
   }
 
-  /** Adds `delta` to the attempt's count and to the count of the operation running it (`DispatchScope`). */
-  private count(delta: number): void {
-    this.total += delta;
-    operationDispatches.getStore()?.(delta);
+  /** Counts one input send or page mutation, for the attempt and for the operation running it (`DispatchScope`). */
+  private count(): void {
+    this.total += 1;
+    operationDispatches.getStore()?.(1);
   }
 
   /** Forgets everything held and where the mouse was, with the tab that held them. */
@@ -135,7 +141,7 @@ export class BidiInput {
    */
   async send(actions: readonly Input.SourceActions[], signal?: AbortSignal): Promise<void> {
     const { sent, after } = await this.prepare(actions, signal);
-    this.count(1);
+    this.count();
     await this.perform(sent);
     this.state = after;
   }
@@ -146,43 +152,39 @@ export class BidiInput {
    * the sources are ready to go out, so input refused or cancelled before
    * that leaves none armed, and its verdict is read whatever came after, which
    * ends it. Nothing is sent once the arm failed or `signal` aborted. The
-   * input counts as dispatched from the moment it goes out until the verdict
-   * takes that back; a send or verdict that fails, or never settles, leaves
-   * it counted. A failure throws once the verdict is read, unless the
+   * operation counts the input as dispatched from the moment it goes out
+   * until the verdict takes that back; a send or verdict that fails, or never
+   * settles, leaves it counted. The attempt's count keeps a swallowed send
+   * (`dispatches`). A failure throws once the verdict is read, unless the
    * browsing context went away under input that went out (one that closes its
    * own tab): that input was taken.
    */
   async sendSuppressible<V>(actions: readonly Input.SourceActions[], signal: AbortSignal, watch: InputWatch<V>): Promise<V> {
     const { sent, after } = await this.prepare(actions, signal);
     let dispatched = false;
-    let swallowed = false;
+    let failure: { cause: unknown } | undefined;
     try {
-      let failure: { cause: unknown } | undefined;
-      try {
-        await watch.arm();
-        signal.throwIfAborted();
-        dispatched = true;
-        this.count(1);
-        await this.perform(sent);
-        this.state = after;
-      } catch (cause) {
-        failure = { cause };
-      }
-      let read: V;
-      try {
-        read = await watch.verdict();
-      } catch (cause) {
-        throw failure === undefined ? cause : failure.cause;
-      }
-      if (failure !== undefined) {
-        if (!dispatched || !(failure.cause instanceof BidiError && failure.cause.error === 'no such frame')) throw failure.cause;
-        this.state = after;
-      }
-      swallowed = watch.suppressed(read);
-      return read;
-    } finally {
-      if (swallowed) this.count(-1);
+      await watch.arm();
+      signal.throwIfAborted();
+      dispatched = true;
+      this.count();
+      await this.perform(sent);
+      this.state = after;
+    } catch (cause) {
+      failure = { cause };
     }
+    let read: V;
+    try {
+      read = await watch.verdict();
+    } catch (cause) {
+      throw failure === undefined ? cause : failure.cause;
+    }
+    if (failure !== undefined) {
+      if (!dispatched || !(failure.cause instanceof BidiError && failure.cause.error === 'no such frame')) throw failure.cause;
+      this.state = after;
+    }
+    if (watch.suppressed(read)) operationDispatches.getStore()?.(-1);
+    return read;
   }
 
   /** Presses one key of the contract grammar (`pressStroke`). */
@@ -221,7 +223,7 @@ export class BidiInput {
     signal.throwIfAborted();
     await this.checkInViewport([point]);
     const cdp = await this.cdp();
-    this.count(1);
+    this.count();
     await cdp.send('Input.dispatchDragEvent', { type, x: point.x, y: point.y, data });
     this.state.pointer = { x: point.x, y: point.y };
   }
@@ -235,7 +237,7 @@ export class BidiInput {
     signal?.throwIfAborted();
     const cdp = await this.cdp();
     signal?.throwIfAborted();
-    this.count(1);
+    this.count();
     for (const command of commands) {
       await cdp.send(command.method, command.params);
       const held = holdsAfter(command);

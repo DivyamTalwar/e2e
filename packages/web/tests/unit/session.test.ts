@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ContextTree } from '../../src/driver/context-tree.ts';
 import { clickSources, moveSources, pressDownSources, swipeSources, typeSource } from '../../src/driver/input-sources.ts';
 import { fixtureKeyStroke, strokeSource, type KeyPhase } from '../../src/driver/keyboard.ts';
+import { DispatchScope } from '../../src/driver/input.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
 import type { UserContextMode } from '../../src/driver/user-context.ts';
@@ -149,18 +150,19 @@ describe('BidiInput.send', () => {
     expect(fake.commands('input.performActions')).toHaveLength(2);
   });
 
-  it('counts input the page suppressed as not dispatched, and input it saw or a failed send as dispatched', async () => {
+  it('takes input the page suppressed back from the operation that sent it, and never from the attempt', async () => {
     let fail = false;
     const fake = new FakeBidi().on('input.performActions', () => (fail ? { error: 'unknown error', message: 'gone' } : { result: {} }));
     const held = await session(fake);
     const watch = (verdict: string | null) => ({ arm: async () => undefined, verdict: async () => verdict, suppressed: (seen: string | null): boolean => seen === 'covered' });
-    await held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), watch('covered'));
-    expect(held.input.dispatches).toBe(0);
-    await held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), watch(null));
-    expect(held.input.dispatches).toBe(1);
+    const click = (verdict: string | null) => held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), watch(verdict));
+    const [swallowed, seen, failed] = [new DispatchScope(), new DispatchScope(), new DispatchScope()];
+    await swallowed.run(() => click('covered'));
+    await seen.run(() => click(null));
     fail = true;
-    await expect(held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), watch('covered'))).rejects.toThrow('gone');
-    expect(held.input.dispatches).toBe(2);
+    await expect(failed.run(() => click('covered'))).rejects.toThrow('gone');
+    expect([swallowed.dispatched, seen.dispatched, failed.dispatched]).toEqual([false, true, true]);
+    expect(held.input.dispatches).toBe(3);
   });
 
   it('takes input whose tab closed under it (a click that closes its own tab) as dispatched, not failed', async () => {
@@ -239,6 +241,14 @@ describe('BidiSession.refs', () => {
     expect(held.refs.claimFresh({ id: '1' } as NodeRef)).toBe(false);
     await held.input.send(moveSources(1, 1));
     expect(held.refs.claimFresh({ id: '2' } as NodeRef)).toBe(false);
+  });
+
+  it('claims no located ref as fresh after a click the page swallowed, whose pointer move still reached it', async () => {
+    const fake = new FakeBidi().on('input.performActions', { result: {} });
+    const held = await session(fake);
+    held.refs.storeLocated('1', { element: { sharedId: 'e' } as ElementRef, context: 'tab', locator: { kind: 'selector', selector: '#a' } });
+    await held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), { arm: async () => undefined, verdict: async () => null, suppressed: () => true });
+    expect(held.refs.claimFresh({ id: '1' } as NodeRef)).toBe(false);
   });
 });
 

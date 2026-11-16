@@ -217,11 +217,11 @@ async function settle<T extends object>(
  * Waits until the element can take a pointer action, then clicks it with
  * the page watching where the input lands (`armHitInterceptor`): input an
  * overlay raised as the pointer arrived is suppressed in the page before any
- * listener of the app sees it, counts as never dispatched, and the click is
- * tried again until the deadline. Input no event of the element's document
- * saw may have reached another document, so it is reported as may have
- * committed, never replayed. A page that went away under the click counts as
- * reached.
+ * listener of the app sees it, the operation counts it as never dispatched,
+ * and the click is tried again until the deadline. Input no event of the
+ * element's document saw may have reached another document, so it is
+ * reported as may have committed, never replayed. A page that went away
+ * under the click counts as reached.
  */
 async function click(session: BidiSession, target: NodeTarget, deadline: Deadline, options: ClickOptions, signal: AbortSignal, atControl = false): Promise<void> {
   const aim = pointerAim(session, target, true, atControl);

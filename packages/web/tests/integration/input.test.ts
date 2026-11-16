@@ -4,8 +4,8 @@
  * a swipe leaves the mouse on what it scrolled, a drag carries pressure and
  * reaches a target in a rotated frame, a pointer target outside the
  * viewport is refused as never sent, a tap cancelled while it aims leaves
- * no click watch behind, and a ref reused after input checks its locator
- * again.
+ * no click watch behind, and a ref reused after input, the hover of a
+ * swallowed click included, checks its locator again.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -148,6 +148,24 @@ describe('input', () => {
     await page.setContent('<button id=a onclick="document.body.append(Object.assign(document.createElement(\'button\'), { className: \'twin\', textContent: \'twin\' }))" class=twin>twin</button>');
     const [twin] = await page.locate(bySelector('.twin'));
     await page.engine.perform!(twin!.ref, { kind: 'tap' }, page.op());
+    await expect(page.engine.perform!(twin!.ref, { kind: 'tap' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', message: expect.stringContaining('now matches 2 elements') });
+  });
+
+  it('counts the hover of a click an overlay swallowed as input, so a ref located before it is checked again', async () => {
+    // The pointer arriving on the button adds a twin of the located element and raises an overlay that takes the press.
+    await page.setContent(`<button class=twin>twin</button>
+      <button id=b style="position:absolute;left:300px;top:300px;width:100px;height:40px">b</button>
+      <div id=cover style="position:absolute;left:300px;top:300px;width:100px;height:40px;display:none"></div>
+      <script>
+        b.addEventListener('mousemove', () => {
+          document.body.append(Object.assign(document.createElement('button'), { className: 'twin', textContent: 'twin' }));
+          cover.style.display = 'block';
+        }, { once: true });
+      </script>`);
+    await page.browser.mouse.move(600, 600);
+    const [twin] = await page.locate(bySelector('.twin'));
+    const [covered] = await page.locate(bySelector('#b'));
+    await expect(page.engine.perform!(covered!.ref, { kind: 'tap' }, page.op(2_000))).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('<div#cover> intercepts pointer events') });
     await expect(page.engine.perform!(twin!.ref, { kind: 'tap' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', message: expect.stringContaining('now matches 2 elements') });
   });
 
