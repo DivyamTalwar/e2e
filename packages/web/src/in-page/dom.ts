@@ -57,12 +57,14 @@ export function createDom(key: string) {
   /**
    * The element's parent in the flat tree: the slot it is assigned to (in a
    * recorded closed root too, whose slots still list what they hold), else
-   * its parent element, else the host of the shadow root it is in.
+   * its parent element, else the host of the shadow root it is in. A slot
+   * assigned to another slot is that slot's child, so the lists are read
+   * unflattened.
    */
   const parentOf = (at: Element): Element | null => {
     if (at.assignedSlot !== null) return at.assignedSlot;
     const closed = at.parentElement === null ? undefined : recorded()?.get(at.parentElement);
-    for (const slot of closed?.querySelectorAll('slot') ?? []) if (slot.assignedElements({ flatten: true }).includes(at)) return slot;
+    for (const slot of closed?.querySelectorAll('slot') ?? []) if (slot.assignedElements().includes(at)) return slot;
     const root = at.getRootNode();
     return at.parentElement ?? (root instanceof ShadowRoot ? root.host : null);
   };
