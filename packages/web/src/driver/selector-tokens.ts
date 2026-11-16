@@ -5,8 +5,7 @@
  * hex escape's terminating space never reads as a separator.
  */
 
-/** A CSS combinator between two compounds; `' '` is the descendant one. */
-export type CssCombinator = ' ' | '>' | '+' | '~';
+import type { CssCombinator, CssStep } from '../in-page/select-chain.ts';
 
 /** One lexical unit of a selector, with its source text. */
 export type SelectorToken =
@@ -18,9 +17,6 @@ export type SelectorToken =
   | { readonly kind: 'string'; readonly text: string }
   | { readonly kind: 'group'; readonly text: string }
   | { readonly kind: 'text'; readonly text: string };
-
-/** One compound of a complex CSS selector and the combinator joining it to the compound before it, null for the first. */
-export type CssStep = { readonly compound: string; readonly combinator: CssCombinator | null };
 
 const WHITESPACE = /[ \t\n\r\f]/;
 const HEX = /[0-9a-fA-F]/;

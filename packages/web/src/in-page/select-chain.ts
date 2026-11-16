@@ -4,7 +4,11 @@
  * keeps (`readers.ts`).
  */
 
-import type { CssStep } from '../driver/selector-tokens.ts';
+/** A CSS combinator between two compounds; `' '` is the descendant one. */
+export type CssCombinator = ' ' | '>' | '+' | '~';
+
+/** One compound of a complex CSS selector and the combinator joining it to the compound before it, null for the first. */
+export type CssStep = { readonly compound: string; readonly combinator: CssCombinator | null };
 
 /** One `>>` chain part as the page reads it: CSS as its complex selectors (`cssChains`), or an XPath expression. */
 export type PagePart =
