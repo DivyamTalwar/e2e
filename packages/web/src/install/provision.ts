@@ -3,7 +3,7 @@
  * Firefox builds in a per-user cache, downloaded on first use.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -173,7 +173,7 @@ export async function installBrowsers(names: readonly BrowserName[], context: In
   const platform = requirePlatform();
   const host = mirrorOrigin(context.env);
   await withCacheLock(cacheDir, context, async (owner) => {
-    if (context.withDeps === true) installSystemDeps(names, context.log);
+    if (context.withDeps === true) await installSystemDeps(names, context.log);
     for (const name of new Set(names)) {
       if (isBrowserInstalled(name, context.env, context.headed)) continue;
       const { browser, buildId } = buildOf(name, context.headed);
@@ -211,21 +211,37 @@ const APT_PACKAGES: Readonly<Record<BrowserName, readonly string[]>> = {
 };
 
 /**
+ * Runs `file` to completion and resolves to its exit code, null when it
+ * could not start or a signal ended it. It never blocks the event loop: the
+ * caller holds the install lock, whose heartbeat is a timer.
+ */
+function run(file: string, args: readonly string[], stdio: 'inherit' | 'ignore'): Promise<number | null> {
+  return new Promise((resolve) => {
+    const child = spawn(file, args, { stdio, env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' } });
+    child.once('error', () => resolve(null));
+    child.once('exit', resolve);
+  });
+}
+
+/**
  * Installs the system packages `names` load, with apt on Debian and Ubuntu
  * (as root, else through sudo); elsewhere there is nothing to do. A package
  * Ubuntu 24.04 renamed with a `t64` suffix also takes its older name, and a
  * font the distribution does not carry is skipped.
  */
-function installSystemDeps(names: readonly BrowserName[], log: (line: string) => void): void {
+async function installSystemDeps(names: readonly BrowserName[], log: (line: string) => void): Promise<void> {
   if (process.platform !== 'linux' || !existsSync('/usr/bin/apt-get')) return;
   const root = process.getuid?.() === 0;
-  const run = (args: string[]) => spawnSync(root ? args[0]! : 'sudo', root ? args.slice(1) : args, { stdio: 'inherit', env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' } });
-  if (run(['apt-get', 'update']).status !== 0) throw new InfrastructureError('BROWSER_INSTALL_FAILED', 'apt-get update failed');
-  const fonts = APT_TOOLS.filter((name) => spawnSync('apt-get', ['install', '--simulate', '--no-install-recommends', name], { stdio: 'ignore' }).status === 0);
+  const apt = (args: readonly string[]) => (root ? run('apt-get', args, 'inherit') : run('sudo', ['apt-get', ...args], 'inherit'));
+  if ((await apt(['update'])) !== 0) throw new InfrastructureError('BROWSER_INSTALL_FAILED', 'apt-get update failed');
+  const fonts: string[] = [];
+  for (const name of APT_TOOLS) {
+    if ((await run('apt-get', ['install', '--simulate', '--no-install-recommends', name], 'ignore')) === 0) fonts.push(name);
+  }
   const packages = [...new Set([...fonts, ...names.flatMap((name) => APT_PACKAGES[name])])];
   const wanted = packages.map((name) => (name.endsWith('t64') ? `${name} | ${name.slice(0, -3)}` : name)).join(', ');
   log(`Installing system packages: ${packages.join(' ')}`);
-  if (run(['apt-get', 'satisfy', '-y', '--no-install-recommends', wanted]).status !== 0) {
+  if ((await apt(['satisfy', '-y', '--no-install-recommends', wanted])) !== 0) {
     throw new InfrastructureError('BROWSER_INSTALL_FAILED', 'apt-get could not install the browsers\' system packages');
   }
 }
