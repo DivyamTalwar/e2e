@@ -2,8 +2,10 @@
  * The part of an attempt's network that lives as long as one user context:
  * the subscription, collectors, and intercepts installed for it, its tabs,
  * and one record per request it has in flight, decided, or still loading a
- * body. A reset or restore replaces the user context, and with it the whole
- * binding, so nothing of the old context's requests reaches the new one.
+ * body. Each request one of its intercepts holds is handed to the decisions
+ * with its record (`network-decisions.ts`). A reset or restore replaces the
+ * user context, and with it the whole binding, so nothing of the old
+ * context's requests reaches the new one.
  */
 
 import type { Network } from 'webdriver-bidi-protocol';
@@ -11,6 +13,8 @@ import { raceAbort } from '@e2e-dev/core/engine';
 import type { ContextTree } from './context-tree.ts';
 import { BidiError, releaseQuietly } from '../errors.ts';
 import type { BidiConnection, BidiEventParams } from './connection.ts';
+import { RequestDecisions, type DecisionOptions, type DecisionRecord, type DecisionScope, type NetworkRoute } from './network-decisions.ts';
+import { bytesOf, headerRecord, stripHash } from './network-wire.ts';
 
 /** A finished response as a response wait reports it. */
 export interface ObservedResponse {
@@ -22,52 +26,14 @@ export interface ObservedResponse {
   body(): Promise<Buffer>;
 }
 
-/** What the attempt wants of the network, whatever the user context it is bound to. */
-export interface NetworkWants {
-  /** Whether every request is held whether or not a route is set: configured headers to add. */
-  readonly headers: boolean;
-  /** How many routes are registered. */
-  readonly routes: number;
-  /** Whether requests in flight are counted, for a `networkidle` wait. */
-  readonly tracking: boolean;
-  /** Whether basic-auth challenges are held, to answer with the credentials or refuse. */
-  readonly challenges: boolean;
-}
-
-/** What a binding installs, derived from the attempt's wants and the binding's blank-served tabs (`interceptionPolicy`). */
-interface InterceptionPolicy {
-  /** Whether the request events are needed: held requests, held challenges, or an idle count. */
-  readonly events: boolean;
-  /** Whether request bodies are collected, for routes to read. */
-  readonly requestBodies: boolean;
-  /** Whether every request of the attempt's tabs is held. */
-  readonly hold: boolean;
-  /** Whether basic-auth challenges are held. */
-  readonly auth: boolean;
-}
-
-/** How a redirect hop of a request goes on: the route's header overrides, the method it was continued with, and the site headers the driver added to the previous hop. */
-export interface RedirectPolicy {
-  readonly overrides?: Readonly<Record<string, string>>;
-  readonly method: string;
-  readonly injected?: Readonly<Record<string, string>>;
-}
-
 /** Everything the binding keeps of one request, from its first event until its last hop settles, its tab closes, or every wait that matched it read its body. */
-interface RequestRecord {
+interface RequestRecord extends DecisionRecord {
   /** The browsing context it came from, whose closing retires it. */
   context: string;
   /** Whether it counts as in flight for `networkidle`: a request of the attempt's tab that is no EventSource stream, between a hop's start and its settling. */
   counted: boolean;
   /** Whether its last hop settled. */
   settled: boolean;
-  /** Where its latest hop went. */
-  url?: string;
-  redirect?: RedirectPolicy;
-  /** The body a route fulfilled it with, which a response wait reads since the browser keeps none. */
-  fulfilledBody?: Buffer;
-  /** Whether its basic-auth challenge was answered once. */
-  authAnswered?: boolean;
   /** Response waits that matched it and have not finished reading its body. */
   waits: number;
   /** Told how its hop in flight ends, with what failed the load if anything did: one for each response wait that matched the hop. */
@@ -84,16 +50,16 @@ interface InstalledIntercept {
 
 type InterceptPhase = 'beforeRequestSent' | 'authRequired';
 
-/** How a binding is set up, constant for its life. */
-export interface NetworkBindingOptions {
+/** What an attempt's network applies, on whatever user context it is bound to. */
+export interface NetworkOptions extends DecisionOptions {
   /** Whether no other client drives the browser, so one intercept covers every tab from its first request. */
   readonly exclusive: boolean;
-  /** The browsing-context tree, which tells a tab that closed from one still open. */
+  /** The browsing-context tree, which tells a tab that closed from one still open, and whose subtree of a closed context has its requests retired with it. */
   readonly contexts: ContextTree;
   /** Whether an event belongs to the attempt. */
-  readonly ours: (event: { readonly context: string | null }) => boolean;
-  /** Starts the request event listeners for this binding; returns their removals. */
-  readonly listen: (binding: NetworkBinding) => (() => void)[];
+  readonly ours: (event: { readonly userContext?: string | null; readonly context: string | null }) => boolean;
+  /** Whether a context is the attempt's tab or a frame in it, which a response wait and the idle count listen to. */
+  readonly onPage: (context: string | null) => boolean;
 }
 
 /** The window of no requests in flight Playwright's `networkidle` waits for. */
@@ -101,14 +67,8 @@ const NETWORK_IDLE_MS = 500;
 /** The largest body a collector keeps, per request or response. */
 const MAX_COLLECTED_BODY = 20 * 1024 * 1024;
 
-/** The one rule of what a binding installs: requests are held for configured headers, routes, or a blank-served tab; the events are needed for those, an idle count, or held challenges. */
-function interceptionPolicy(wants: NetworkWants, blankTabs: number): InterceptionPolicy {
-  const hold = wants.headers || wants.routes > 0 || blankTabs > 0;
-  return { events: hold || wants.tracking || wants.challenges, requestBodies: wants.routes > 0, hold, auth: wants.challenges };
-}
-
 /** One user context's network state and the browser resources installed for it. */
-export class NetworkBinding {
+export class NetworkBinding implements DecisionScope {
   /** The context's top-level tabs; intercepts cover exactly the ones still open, so a browser shared with other sessions keeps its own requests. */
   private readonly tops = new Set<string>();
   /** Top-level tabs whose every document request is answered with a blank page (`serveBlank`), before any route. */
@@ -121,42 +81,59 @@ export class NetworkBinding {
   private subscription: string | undefined;
   private requestCollector: string | undefined;
   private collector: Promise<string> | undefined;
+  /** The listeners of the request events, once something needs them. */
   private listeners: (() => void)[] = [];
+  /** The listeners that tell how every request ended, and that the connection closed. */
   private readonly offSettle: (() => void)[];
   /** Fails each response wait that has matched no response yet. */
   private readonly waits = new Set<(failure: Error) => void>();
+  private readonly decisions: RequestDecisions;
   private closed = false;
 
+  /** `routes` are the attempt's, oldest first, which it adds to and removes from in place. */
   constructor(
     private readonly connection: BidiConnection,
     readonly userContext: string,
-    private readonly options: NetworkBindingOptions,
+    private readonly options: NetworkOptions,
+    private readonly routes: readonly NetworkRoute[],
   ) {
+    this.decisions = new RequestDecisions(connection, this, options, routes);
     this.offSettle = [
       connection.on('network.responseCompleted', (event) => this.settle(event, null)),
       connection.on('network.fetchError', (event) => this.settle(event, new Error(event.errorText))),
+      connection.onClose(() => this.endWaits(new Error('the BiDi connection closed before the response finished loading'))),
     ];
   }
 
   /**
-   * Brings what is installed in line with what `wants` and the blank-served
-   * tabs need (`interceptionPolicy`): the subscription and its listeners,
-   * the request and response collectors, and the intercepts, each checked on
-   * its own, so a step that failed before is installed by the next call, one
-   * already in place is kept, and an intercept or request collector nothing
-   * needs any more is removed.
+   * Brings what is installed in line with what the attempt needs now. Every
+   * request of its tabs is held for configured headers, a route, or a
+   * blank-served tab, and basic-auth challenges for credentials or a browser
+   * that would prompt; the request events are needed for either, and for the
+   * idle count once the attempt is `tracking`; request bodies are collected
+   * for routes to read. The subscription and its listeners, the request and
+   * response collectors, and the intercepts are each checked on their own,
+   * so a step that failed before is installed by the next call, one already
+   * in place is kept, and an intercept or request collector nothing needs
+   * any more is removed.
    */
-  async reconcile(wants: NetworkWants): Promise<void> {
+  async reconcile(tracking: boolean): Promise<void> {
     if (this.closed) return;
-    const policy = interceptionPolicy(wants, this.blank.size);
-    if (policy.events) {
-      if (this.listeners.length === 0) this.listeners = this.options.listen(this);
+    const hold = this.options.protectedApp.sendsHeaders || this.routes.length > 0 || this.blank.size > 0;
+    const auth = this.options.protectedApp.answersChallenges || this.options.traits.promptsForAuth;
+    if (hold || auth || tracking) {
+      if (this.listeners.length === 0) {
+        this.listeners = [
+          this.connection.on('network.beforeRequestSent', (event) => this.onRequest(event)),
+          this.connection.on('network.authRequired', (event) => this.onAuth(event)),
+        ];
+      }
       this.subscription ??= (await this.connection.send('session.subscribe', {
         events: ['network.beforeRequestSent', 'network.authRequired'],
         userContexts: [this.userContext],
       })).subscription;
     }
-    if (policy.requestBodies) {
+    if (this.routes.length > 0) {
       this.requestCollector ??= (await this.connection.send('network.addDataCollector', {
         dataTypes: ['request'],
         maxEncodedDataSize: MAX_COLLECTED_BODY,
@@ -167,8 +144,8 @@ export class NetworkBinding {
       this.requestCollector = undefined;
     }
     await this.collectResponses();
-    await this.ensureIntercept('beforeRequestSent', policy.hold);
-    await this.ensureIntercept('authRequired', policy.auth);
+    await this.ensureIntercept('beforeRequestSent', hold);
+    await this.ensureIntercept('authRequired', auth);
   }
 
   /** Covers top-level tab `tab` with the intercepts from the next `reconcile`; false for a tab that already closed. */
@@ -194,14 +171,24 @@ export class NetworkBinding {
     this.blank.delete(tab);
   }
 
-  /** Whether `context`'s document requests are answered with a blank page. */
-  isBlank(context: string): boolean {
-    return this.blank.has(context);
+  /** Whether one of the binding's intercepts holds the request `event` reports. */
+  private holds(event: { readonly isBlocked: boolean; readonly intercepts?: readonly string[] }): boolean {
+    return event.isBlocked && (event.intercepts ?? []).some((intercept) => this.intercepts.has(intercept));
   }
 
-  /** Whether one of the binding's intercepts holds the request `event` reports. */
-  holds(event: { readonly isBlocked: boolean; readonly intercepts?: readonly string[] }): boolean {
-    return event.isBlocked && (event.intercepts ?? []).some((intercept) => this.intercepts.has(intercept));
+  /**
+   * A request started a hop. The attempt's own, from a frame, is recorded;
+   * one an intercept of the binding holds is decided, with its record when
+   * it has one.
+   */
+  private onRequest(event: BidiEventParams<'network.beforeRequestSent'>): void {
+    const record = event.context !== null && this.options.ours(event) ? this.started(event, event.context) : undefined;
+    if (this.holds(event)) this.decisions.decide(event, record, event.context !== null && this.blank.has(event.context));
+  }
+
+  /** A basic-auth challenge one of the binding's intercepts holds is answered, with its request's record when the request is the attempt's. */
+  private onAuth(event: BidiEventParams<'network.authRequired'>): void {
+    if (this.holds(event)) this.decisions.answerChallenge(event, this.options.ours(event) ? this.record(event.request.request, event.context ?? '') : undefined);
   }
 
   /**
@@ -274,48 +261,19 @@ export class NetworkBinding {
     return record;
   }
 
-  /** A hop of the attempt's request `request` from `context` to `url` started; it counts as in flight when `counted`. */
-  started(request: string, context: string, counted: boolean, url: string): void {
-    if (this.closed) return;
-    const record = this.record(request, context);
-    record.context = context;
-    record.url = url;
-    record.settled = false;
-    record.counted = counted;
-  }
-
-  /** The redirect policy of `request`, kept for its next hop. */
-  redirectPolicy(request: string): RedirectPolicy | undefined {
-    return this.requests.get(request)?.redirect;
-  }
-
-  /** Keeps how `request`'s redirect hops go on, until its last hop settles. */
-  keepRedirectPolicy(request: string, policy: RedirectPolicy): void {
-    const record = this.requests.get(request);
-    if (record !== undefined) record.redirect = policy;
-  }
-
-  /** Keeps the body a route fulfilled `request` with, for a response wait to read. */
-  fulfilled(request: string, body: Buffer): void {
-    const record = this.requests.get(request);
-    if (record !== undefined) record.fulfilledBody = body;
-  }
-
   /**
-   * Where `request`'s latest hop went, as its `beforeRequestSent` said:
-   * Firefox names a challenge from a redirect's target with the URL the
-   * request started at.
+   * The record of the attempt's request whose hop `event` starts in
+   * `context`: where the hop goes, and whether it counts as in flight, as a
+   * request of the attempt's tab does unless it is an EventSource stream,
+   * which never settles.
    */
-  currentUrl(request: string): string | undefined {
-    return this.requests.get(request)?.url;
-  }
-
-  /** Marks `request`'s basic-auth challenge answered; whether it already was, which means the credentials were refused. */
-  answerAuth(request: string, context: string): boolean {
-    const record = this.record(request, context);
-    const answered = record.authAnswered === true;
-    record.authAnswered = true;
-    return answered;
+  private started(event: BidiEventParams<'network.beforeRequestSent'>, context: string): RequestRecord {
+    const record = this.record(event.request.request, context);
+    record.context = context;
+    record.url = event.request.url;
+    record.settled = false;
+    record.counted = this.options.onPage(context) && headerRecord(event.request.headers)['accept'] !== 'text/event-stream';
+    return record;
   }
 
   /** The body the request collector kept for `request`; undefined when there is no collector or it kept none (too large, a stream). */
@@ -394,8 +352,9 @@ export class NetworkBinding {
    * and reading it waits for the load to finish, then takes the body from
    * the collector so the browser keeps it no longer.
    */
-  async waitForResponse(matches: (url: string) => boolean, onPage: (context: string | null) => boolean, signal: AbortSignal): Promise<ObservedResponse> {
+  async waitForResponse(matches: (url: string) => boolean, signal: AbortSignal): Promise<ObservedResponse> {
     const connection = this.connection;
+    const { onPage } = this.options;
     if (this.closed) throw new Error('waitForResponse: the network ended');
     let claimed: RequestRecord | undefined;
     let fail: (failure: Error) => void = () => undefined;
@@ -444,7 +403,7 @@ export class NetworkBinding {
   }
 
   /** Ends every response wait still pending with `failure`, as when the connection closes: one that matched no response yet, and one whose response is still loading. */
-  endWaits(failure: Error): void {
+  private endWaits(failure: Error): void {
     for (const fail of this.waits) fail(failure);
     for (const record of this.requests.values()) {
       for (const ended of record.loads.splice(0)) ended(failure);
@@ -496,22 +455,6 @@ function hasBody(request: Network.RequestData): boolean {
   return request.bodySize !== 0 && !(request.bodySize === null && ['GET', 'HEAD'].includes(request.method));
 }
 
-/** A collector's bytes as a buffer. */
-function bytesOf(bytes: Network.BytesValue): Buffer {
-  return bytes.type === 'string' ? Buffer.from(bytes.value) : Buffer.from(bytes.value, 'base64');
-}
-
-/** BiDi headers as a record, names lowercased; a repeated name keeps its values joined, as Playwright reports them. */
-export function headerRecord(headers: readonly Network.Header[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const header of headers) {
-    const name = header.name.toLowerCase();
-    const value = bytesText(header.value);
-    out[name] = out[name] === undefined ? value : `${out[name]}, ${value}`;
-  }
-  return out;
-}
-
 /** `headers` without the cookie headers, which a response wait leaves out as Playwright's `response.headers()` does. */
 function withoutCookies(headers: Record<string, string>): Record<string, string> {
   const { 'set-cookie': _setCookie, cookie: _cookie, ...rest } = headers;
@@ -539,17 +482,6 @@ function mayRedirect(response: Network.ResponseData): boolean {
 /** Whether `response` carries a `Location` header. */
 function namesLocation(response: Network.ResponseData): boolean {
   return response.headers.some((header) => header.name.toLowerCase() === 'location');
-}
-
-/** A BiDi bytes value as text. */
-export function bytesText(value: Network.BytesValue): string {
-  return value.type === 'string' ? value.value : Buffer.from(value.value, 'base64').toString();
-}
-
-/** A URL without its fragment, which no request carries to the server and Playwright never reports. */
-export function stripHash(url: string): string {
-  const hash = url.indexOf('#');
-  return hash === -1 ? url : url.slice(0, hash);
 }
 
 /** Errors that mean what a removal removes is already gone: the browser dropped it, or the browser itself is gone. */

@@ -7,7 +7,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { ContextTree } from '../../src/driver/context-tree.ts';
-import { AttemptNetwork, type NetworkRoute } from '../../src/driver/network.ts';
+import { AttemptNetwork } from '../../src/driver/network.ts';
+import type { NetworkRoute } from '../../src/driver/network-decisions.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
 import { FakeBidi, settle } from '../helpers/bidi-fake.ts';

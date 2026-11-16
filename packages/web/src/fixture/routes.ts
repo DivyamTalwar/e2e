@@ -13,7 +13,7 @@ import { types } from 'node:util';
 import { raceAbort, rejectUnknownOptions, TestError, validateJsonValue, withTimeout, type EngineFixtureContext, type JsonValue } from '@e2e-dev/core/engine';
 import { headerProblem } from '../protected-app.ts';
 import type { Browser, WebResponse, WebRoute } from './types.ts';
-import type { ContinueDecision, FulfillDecision, RouteDecisions } from '../driver/network.ts';
+import type { ContinueDecision, FulfillDecision, RouteDecisions } from '../driver/network-decisions.ts';
 import { message } from '../errors.ts';
 
 /**

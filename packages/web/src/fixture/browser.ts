@@ -44,7 +44,7 @@ import { deleteCookies, readCookies, writeCookies } from '../driver/cookies.ts';
 import { saveDownloads, type SavedDownload } from '../driver/downloads.ts';
 import { moveSources, pressDownSources, releaseSources, wheelSources } from '../driver/input-sources.ts';
 import { fixtureKeyStroke } from '../driver/keyboard.ts';
-import type { InterceptedRequest } from '../driver/network.ts';
+import type { InterceptedRequest } from '../driver/network-decisions.ts';
 import { readResponseBody, runRouteHandler, waitedResponse, webResponse } from './routes.ts';
 import type { BidiSession } from '../driver/session.ts';
 import { goto, reload, traverse } from '../driver/steering.ts';
