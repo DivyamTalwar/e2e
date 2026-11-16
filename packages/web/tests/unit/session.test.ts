@@ -213,6 +213,110 @@ describe('BidiSession.refs', () => {
   });
 });
 
+/** The contexts `fake` was asked to close, in order. */
+function closedTabs(fake: FakeBidi): unknown[] {
+  return fake.commands('browsingContext.close').map((command) => command.params['context']);
+}
+
+/** The tab commands `fake` got, in order, each with its context. */
+function tabCommands(fake: FakeBidi): string[] {
+  return fake.sent
+    .filter((command) => ['browsingContext.create', 'browsingContext.setViewport', 'browsingContext.activate'].includes(command.method))
+    .map((command) => `${command.method.replace('browsingContext.', '')} ${String(command.params['context'] ?? '')}`.trim());
+}
+
+describe('BidiSession tabs', () => {
+  it('opens its first tab at the viewport without activating it, and a tab opened beside it at the front', async () => {
+    const fake = new FakeBidi();
+    const held = await session(fake);
+    expect(tabCommands(fake)).toEqual(['create', 'setViewport tab']);
+    const beside = await held.newTab();
+    expect(tabCommands(fake).slice(2)).toEqual(['create', 'setViewport tab-2', 'activate tab-2']);
+    expect(held.context).toBe('tab-2');
+    expect(held.tabs.list().map((tab) => tab.context)).toEqual(['tab', 'tab-2']);
+    expect(held.tabs.active()).toBe(beside);
+  });
+
+  it('answers its own tab to a newTab before any tab is open, opened once', async () => {
+    const fake = new FakeBidi()
+      .on('browser.createUserContext', { result: { userContext: 'mine' } })
+      .on('network.addDataCollector', { result: { collector: 'c' } })
+      .on('browsingContext.create', { result: { context: 'tab' } });
+    const opening = unopened(fake);
+    await opening.openUserContext(new AbortController().signal);
+    const [context, tab] = await Promise.all([opening.ensureContext(), opening.newTab()]);
+    expect(context).toBe('tab');
+    expect(opening.tabs.list()).toEqual([tab]);
+    expect(fake.commands('browsingContext.create')).toHaveLength(1);
+  });
+
+  it('closes a tab it created that it cannot show, and opens another on the next use', async () => {
+    let refuse = true;
+    const fake = new FakeBidi().on('browsingContext.setViewport', () => (refuse ? { error: 'unknown error', message: 'no viewport' } : { result: {} }));
+    const opened = ['tab', 'tab-2'];
+    fake
+      .on('browser.createUserContext', { result: { userContext: 'mine' } })
+      .on('network.addDataCollector', { result: { collector: 'c' } })
+      .on('browsingContext.create', () => ({ result: { context: opened.shift() } }));
+    const opening = unopened(fake);
+    await opening.openUserContext(new AbortController().signal);
+    await expect(opening.ensureContext()).rejects.toThrow('no viewport');
+    expect(closedTabs(fake)).toEqual(['tab']);
+    expect(opening.context).toBeUndefined();
+    expect(opening.tabs.list()).toEqual([]);
+    refuse = false;
+    await expect(opening.ensureContext()).resolves.toBe('tab-2');
+    expect(opening.tabs.list().map((tab) => tab.context)).toEqual(['tab-2']);
+  });
+
+  it('closes a tab a newTab created that it cannot show, and keeps showing the tab before it', async () => {
+    const fake = new FakeBidi();
+    const held = await session(fake);
+    fake.on('browsingContext.activate', { error: 'unknown error', message: 'no focus' });
+    await expect(held.newTab()).rejects.toThrow('no focus');
+    expect(closedTabs(fake)).toEqual(['tab-2']);
+    expect(held.context).toBe('tab');
+    expect(held.tabs.list().map((tab) => tab.context)).toEqual(['tab']);
+  });
+
+  it('closes a tab it created when the network cannot cover it', async () => {
+    const tree = new ContextTree();
+    const fake = new FakeBidi()
+      .on('browser.createUserContext', { result: { userContext: 'mine' } })
+      .on('network.addDataCollector', { result: { collector: 'c' } })
+      .on('session.subscribe', { result: { subscription: 's' } })
+      .on('network.addIntercept', { error: 'unknown error', message: 'no intercept' })
+      .on('browsingContext.create', () => {
+        tree.created('tab', 'mine', null);
+        return { result: { context: 'tab' } };
+      });
+    const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };
+    const attempt = { protectedApp: new ProtectedApp(new Set(['http://app.test']), { 'x-preview': 'on' }, undefined) };
+    const shared = new BidiSession({ connection: fake.connection, exclusive: false, traits: BROWSER_TRAITS.chromium } as never, settings as never, attempt as never, tree);
+    await shared.openUserContext(new AbortController().signal);
+    await expect(shared.ensureContext()).rejects.toThrow('no intercept');
+    expect(closedTabs(fake)).toEqual(['tab']);
+    expect(shared.tabs.list()).toEqual([]);
+  });
+
+  it('leaves a tab it adopted open when it cannot show it, and adopts it again on the next use', async () => {
+    let refuse = true;
+    const fake = new FakeBidi()
+      .on('network.addDataCollector', { result: { collector: 'c' } })
+      .on('browsingContext.getTree', { result: { contexts: [{ context: 'theirs', userContext: 'default' }] } })
+      .on('browsingContext.setViewport', () => (refuse ? { error: 'unknown error', message: 'no viewport' } : { result: {} }));
+    const attached = unopened(fake, 'chromium', 'adopt-tab');
+    await expect(attached.openUserContext(new AbortController().signal)).rejects.toThrow('no viewport');
+    expect(closedTabs(fake)).toEqual([]);
+    expect(attached.tabs.list()).toEqual([]);
+    refuse = false;
+    await expect(attached.ensureContext()).resolves.toBe('theirs');
+    expect(attached.tabs.list().map((tab) => tab.context)).toEqual(['theirs']);
+    expect(fake.commands('browsingContext.create')).toEqual([]);
+    expect(fake.commands('browsingContext.activate')).toEqual([]);
+  });
+});
+
 describe('BidiSession.close', () => {
   it('removes a user context that a reset opened after the attempt closed', async () => {
     let created: (reply: { result: unknown }) => void = () => undefined;

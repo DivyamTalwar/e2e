@@ -14,15 +14,15 @@ import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
 import { ErrorLatch } from '../../src/errors.ts';
 import { AttemptTabs } from '../../src/driver/tabs.ts';
 
-/** The parts of a session the event router reads, owning `userContext`'s contexts. */
-function attempt(owners: ContextTree, userContext: string) {
+/** The parts of a session the event router reads, owning `userContext`'s contexts, with its tab `tab` shown. */
+async function attempt(owners: ContextTree, userContext: string) {
   const latch = new ErrorLatch();
   const log: AppLogEntry[] = [];
   const added: string[] = [];
   const lines: string[] = [];
   const visited: string[] = [];
   const session = {
-    context: 'tab' as string | undefined,
+    context: undefined as string | undefined,
     tabs: undefined as unknown as AttemptTabs,
     contextClosed: (context: string) => void session.tabs.destroyed(context),
     navigations: { inFlight: false },
@@ -41,7 +41,7 @@ function attempt(owners: ContextTree, userContext: string) {
     record: async () => undefined,
     close: async () => undefined,
   });
-  session.tabs.own('tab', true);
+  await session.tabs.own('tab');
   return { session: session as unknown as BidiSession, state: session, log, added, latch, lines, visited };
 }
 
@@ -54,7 +54,7 @@ describe('routeEvents', () => {
   it('answers a prompt in the attempt’s context through its dialog router', async () => {
     const fake = new FakeBidi();
     const owners = new ContextTree();
-    const { session } = attempt(owners, 'mine');
+    const { session } = await attempt(owners, 'mine');
     routeEvents(fake.connection, owners, () => session);
     fake.emit('browsingContext.contextCreated', { context: 'tab', userContext: 'mine', parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
     let seen = '';
@@ -71,7 +71,7 @@ describe('routeEvents', () => {
   it('leaves a prompt in another session’s context alone', async () => {
     const fake = new FakeBidi();
     const owners = new ContextTree();
-    const { session } = attempt(owners, 'mine');
+    const { session } = await attempt(owners, 'mine');
     routeEvents(fake.connection, owners, () => session);
     fake.emit('browsingContext.contextCreated', { context: 'theirs', userContext: 'other', parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
     fake.emit('browsingContext.userPromptOpened', prompt('theirs'));
@@ -82,7 +82,7 @@ describe('routeEvents', () => {
   it('dismisses an unhandled prompt and fails the next step naming it', async () => {
     const fake = new FakeBidi();
     const owners = new ContextTree();
-    const { session, latch } = attempt(owners, 'mine');
+    const { session, latch } = await attempt(owners, 'mine');
     routeEvents(fake.connection, owners, () => session);
     fake.emit('browsingContext.contextCreated', { context: 'tab', userContext: 'mine', parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
     fake.emit('browsingContext.userPromptOpened', prompt('tab', 'alert'));
@@ -91,10 +91,10 @@ describe('routeEvents', () => {
     expect(() => latch.throwPending()).toThrow('unhandled alert dialog: Really delete everything?');
   });
 
-  it('gives a frame its parent’s owner, covers a tab the app opens, and logs only the attempt’s pages', () => {
+  it('gives a frame its parent’s owner, covers a tab the app opens, and logs only the attempt’s pages', async () => {
     const fake = new FakeBidi();
     const owners = new ContextTree();
-    const { session, log, added } = attempt(owners, 'mine');
+    const { session, log, added } = await attempt(owners, 'mine');
     const off = routeEvents(fake.connection, owners, () => session);
     fake.emit('browsingContext.contextCreated', { context: 'tab', userContext: 'mine', parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
     fake.emit('browsingContext.contextCreated', { context: 'frame', parent: 'tab', url: 'about:blank', children: null, clientWindow: 'w' });
@@ -113,7 +113,7 @@ describe('routeEvents', () => {
   it('tells where the app went in event order, never the driver’s own navigations, names each frame and tab once as it joins the tabs, and visits every document it starts or lands at', async () => {
     const fake = new FakeBidi();
     const owners = new ContextTree();
-    const { session, state, lines, visited } = attempt(owners, 'mine');
+    const { session, state, lines, visited } = await attempt(owners, 'mine');
     fake.on('script.callFunction', (params) => ({
       result: { type: 'success', realm: 'r', result: { type: 'string', value: (params['target'] as { context: string }).context === 'frame' ? 'pay' : '' } },
     }));

@@ -91,9 +91,10 @@ export class BidiSession {
   readonly artifacts: ArtifactPaths;
   /** The viewport `browser.setViewport` set for the rest of the attempt; the configured one until then. */
   private viewport: ViewportSize | null;
-  /** The tab the attempt shows: the one its tabs publish (`TabHost.publish`), or its own once that opened. */
+  /** The tab the attempt shows, which only its tabs publish (`TabHost.publish`). */
   private shown: string | undefined;
-  private creating: Promise<string> | undefined;
+  /** The attempt's first tab while it opens, which concurrent first uses share. */
+  private creating: Promise<AttemptTab> | undefined;
   /** The tab the attempt found open and adopted (`existingTab`), which it never closes. */
   private adopted: string | undefined;
   private readonly ended = new AbortController();
@@ -137,9 +138,9 @@ export class BidiSession {
       : new ProviderVideo(attempt.recorder, attempt.artifactsDir, this.lifetime);
     this.tabs = new AttemptTabs({
       shown: () => this.context,
-      prepare: async (context) => {
+      prepare: async (context, front) => {
         if (this.viewport !== null) await this.connection.send('browsingContext.setViewport', { context, viewport: this.viewport });
-        await this.connection.send('browsingContext.activate', { context });
+        if (front) await this.connection.send('browsingContext.activate', { context });
       },
       publish: (context) => {
         this.retireContext();
@@ -234,12 +235,15 @@ export class BidiSession {
   }
 
   /**
-   * The attempt's tab, created on first use at the attempt's viewport, with
+   * The attempt's tab, opened on first use at the attempt's viewport, with
    * the network covering it and a video segment started when recording.
-   * Concurrent first uses share one creation.
    */
-  ensureContext(): Promise<string> {
-    if (this.context !== undefined) return Promise.resolve(this.context);
+  async ensureContext(): Promise<string> {
+    return this.context ?? (await this.firstTab()).context;
+  }
+
+  /** The attempt's first tab, which concurrent first uses open once. */
+  private firstTab(): Promise<AttemptTab> {
     this.creating ??= this.createContext().finally(() => {
       this.creating = undefined;
     });
@@ -248,36 +252,34 @@ export class BidiSession {
 
   /**
    * Opens the attempt's tab in its user context, or adopts the one already
-   * open there when the settings ask for it, at the attempt's viewport.
+   * open there when the settings ask for it.
    */
-  private async createContext(): Promise<string> {
+  private async createContext(): Promise<AttemptTab> {
     const userContext = this.userContext.id;
     if (userContext === '') throw invalidState('the attempt has no user context to open a tab in');
     this.adopted = this.settings.userContext === 'adopt-tab' ? await this.existingTab(userContext) : undefined;
-    const context = await this.openTab(userContext, this.adopted);
-    if (this.viewport !== null) await this.connection.send('browsingContext.setViewport', { context, viewport: this.viewport });
-    this.shown = context;
-    this.tabs.own(context, true);
-    this.input.reset();
-    await this.video.contextOpened(context);
-    return context;
+    return this.openTab(userContext, this.adopted);
   }
 
   /**
-   * A tab in `userContext` that the network covers: `adopted`, the tab the
-   * attempt found open there, else a new one. One that opened after the
-   * attempt replaced its user context is closed again, unless adopted, and
-   * refused.
+   * Opens a tab in `userContext` and shows it: `adopted`, the tab the
+   * attempt found open there, else a new one. The network covers it before
+   * it joins the attempt's tabs, which show it (`AttemptTabs.own`). Until
+   * it is shown a tab created here is this call's to close: when a step
+   * fails, or the attempt replaced its user context while the tab opened,
+   * it is closed again, and an adopted one is left as it was found.
    */
-  private async openTab(userContext: string, adopted: string | undefined): Promise<string> {
+  private async openTab(userContext: string, adopted: string | undefined): Promise<AttemptTab> {
     const connection = this.connection;
     const context = adopted ?? (await connection.send('browsingContext.create', { type: this.browser.traits.newContext, userContext })).context;
-    if (userContext !== this.userContext.id) {
+    try {
+      if (userContext !== this.userContext.id) throw new EngineError('NODE_STALE', 'the attempt replaced its user context while a tab opened', { retryable: true });
+      await this.network.addContext(context);
+      return await this.tabs.own(context);
+    } catch (cause) {
       if (context !== adopted) await releaseQuietly(connection.send('browsingContext.close', { context }));
-      throw new EngineError('NODE_STALE', 'the attempt replaced its user context while a tab opened', { retryable: true });
+      throw cause;
     }
-    await this.network.addContext(context);
-    return context;
   }
 
   /**
@@ -285,19 +287,8 @@ export class BidiSession {
    * and storage, and shows it (`browser.newTab`); before the attempt has a
    * tab, that is its own.
    */
-  async newTab(): Promise<AttemptTab> {
-    if (this.context === undefined) {
-      const own = await this.ensureContext();
-      return this.tabs.find(own) ?? this.tabs.own(own, true);
-    }
-    const tab = this.tabs.own(await this.openTab(this.userContext.id, undefined), false);
-    try {
-      await this.tabs.show(tab);
-    } catch (cause) {
-      await releaseQuietly(this.tabs.close(tab));
-      throw cause;
-    }
-    return tab;
+  newTab(): Promise<AttemptTab> {
+    return this.context === undefined ? this.firstTab() : this.openTab(this.userContext.id, undefined);
   }
 
   /**

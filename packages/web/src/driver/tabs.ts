@@ -31,8 +31,8 @@ export interface AttemptTab {
 export interface TabHost {
   /** The context shown now. */
   shown(): string | undefined;
-  /** Sets up `context` to be shown: the attempt's viewport, and the browser's focus. */
-  prepare(context: string): Promise<void>;
+  /** Sets up `context` to be shown: the attempt's viewport, and with `front` the browser's focus. */
+  prepare(context: string, front: boolean): Promise<void>;
   /** Makes `context` the shown one at once, or none; every ref and frame of the one shown before is forgotten. */
   publish(context: string | undefined): void;
   /** Moves the recording to `context`, ending the one before; `closed` when that one closed on its own. */
@@ -96,10 +96,23 @@ export class AttemptTabs {
     return this.work;
   }
 
-  /** Records a tab the attempt opened itself (its own tab, `browser.newTab`). */
-  own(context: string, shown: boolean): AttemptTab {
-    const tab: AttemptTab = { context, opener: undefined, shownAt: shown ? ++this.shown : 0, closed: false };
+  /**
+   * Records a tab the attempt opened itself (its own tab, `browser.newTab`)
+   * and shows it. With no tab shown it is the attempt's first, and stays
+   * where the browser opened it or its user left it; one opened beside the
+   * shown tab takes its place at the front, as a tab shown later does. A
+   * tab that cannot be shown leaves the tabs again, and its failure is
+   * thrown.
+   */
+  async own(context: string): Promise<AttemptTab> {
+    const tab: AttemptTab = { context, opener: undefined, shownAt: 0, closed: false };
     this.open.push(tab);
+    try {
+      await this.inTurn(() => this.reveal(tab, this.host.shown() !== undefined), true);
+    } catch (cause) {
+      this.destroyed(context);
+      throw cause;
+    }
     return tab;
   }
 
@@ -136,7 +149,7 @@ export class AttemptTabs {
     const tab: AttemptTab = { context, opener: pending.opener, shownAt: 0, closed: false };
     this.open.push(tab);
     if (this.waiters.size > 0) {
-      const shown = this.inTurn(() => this.reveal(tab));
+      const shown = this.inTurn(() => this.reveal(tab, true));
       for (const waiter of this.waiters) waiter(tab, shown);
     }
     return tab;
@@ -160,7 +173,7 @@ export class AttemptTabs {
     this.host.publish(next?.context);
     if (next !== undefined) next.shownAt = ++this.shown;
     void this.inTurn(async () => {
-      if (next !== undefined && this.host.shown() === next.context) await this.host.prepare(next.context);
+      if (next !== undefined && this.host.shown() === next.context) await this.host.prepare(next.context, true);
       await this.host.record(next !== undefined && this.host.shown() === next.context ? next.context : undefined, true);
     });
     return true;
@@ -184,7 +197,7 @@ export class AttemptTabs {
     // Checked again in turn: a change queued before this one may be the tab closing.
     await this.inTurn(async () => {
       open();
-      await this.reveal(tab);
+      await this.reveal(tab, true);
     }, true);
   }
 
@@ -281,10 +294,10 @@ export class AttemptTabs {
     return tab;
   }
 
-  /** Shows `tab` once it is set up, then moves the recording to it; a tab that closed meanwhile is left alone. */
-  private async reveal(tab: AttemptTab): Promise<void> {
+  /** Shows `tab` once it is set up, at the `front` of the browser or where it is, then moves the recording to it; a tab that closed meanwhile is left alone. */
+  private async reveal(tab: AttemptTab, front: boolean): Promise<void> {
     if (this.host.shown() === tab.context) return;
-    await this.host.prepare(tab.context);
+    await this.host.prepare(tab.context, front);
     if (tab.closed) return;
     this.host.publish(tab.context);
     tab.shownAt = ++this.shown;

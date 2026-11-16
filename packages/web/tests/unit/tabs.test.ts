@@ -7,8 +7,8 @@
 import { describe, expect, it } from 'vitest';
 import { AttemptTabs } from '../../src/driver/tabs.ts';
 
-/** Tabs over a host that records what it was asked to show, record, and close. */
-function tabsOn() {
+/** Tabs over a host that records what it was asked to show, record, and close, with the attempt's own tab `own` shown. */
+async function tabsOn() {
   let shown: string | undefined;
   const recorded: { context: string | undefined; closed: boolean }[] = [];
   const closed: string[] = [];
@@ -22,13 +22,13 @@ function tabsOn() {
       tabs.destroyed(context);
     },
   });
-  shown = tabs.own('own', true).context;
+  await tabs.own('own');
   return { tabs, shown: () => shown, recorded, closed };
 }
 
 describe('AttemptTabs', () => {
-  it('joins a tab the app opened with its first document, never with the blank one a failed navigation left', () => {
-    const { tabs } = tabsOn();
+  it('joins a tab the app opened with its first document, never with the blank one a failed navigation left', async () => {
+    const { tabs } = await tabsOn();
     tabs.appOpened('download', 'own');
     tabs.navigationStarted('download', 'http://app.test/export.csv');
     tabs.navigationFailed('download');
@@ -43,7 +43,7 @@ describe('AttemptTabs', () => {
   });
 
   it('shows the nearest open opener when the shown tab closes, else the tab shown most recently', async () => {
-    const { tabs, shown, recorded } = tabsOn();
+    const { tabs, shown, recorded } = await tabsOn();
     tabs.appOpened('middle', 'own');
     const middle = tabs.loaded('middle', 'http://app.test/middle')!;
     tabs.appOpened('last', 'middle');
@@ -60,7 +60,7 @@ describe('AttemptTabs', () => {
   });
 
   it('refuses an index no tab is at, and closing the last open tab, as ACTION_FAILED', async () => {
-    const { tabs, closed } = tabsOn();
+    const { tabs, closed } = await tabsOn();
     await expect(tabs.showAt(1)).rejects.toMatchObject({ code: 'ACTION_FAILED', message: 'there is no tab 2: 1 tab is open' });
     await expect(tabs.closeAt(0)).rejects.toMatchObject({ code: 'ACTION_FAILED', message: 'tab 1 is the only open tab' });
     tabs.appOpened('popup', 'own');
@@ -71,7 +71,7 @@ describe('AttemptTabs', () => {
   });
 
   it('shows the next tab the app opens to a popup wait, and names the page one is still loading', async () => {
-    const { tabs, shown } = tabsOn();
+    const { tabs, shown } = await tabsOn();
     const popup = tabs.nextPopup();
     tabs.appOpened('slow', 'own');
     tabs.navigationStarted('slow', 'http://app.test/slow');
