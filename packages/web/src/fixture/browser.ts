@@ -17,7 +17,6 @@
  * open.
  */
 
-import type { Network, Storage } from 'webdriver-bidi-protocol';
 import type { Expectable, JsonValue } from '@e2e-dev/core';
 import {
   Deadline,

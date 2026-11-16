@@ -9,6 +9,7 @@
 import type { Network } from 'webdriver-bidi-protocol';
 import { EngineError, type EngineState } from '@e2e-dev/core/engine';
 import { releaseQuietly } from '../errors.ts';
+import { storeCookie, storedCookies } from './cookies.ts';
 import { SCRATCH_PARAM, type BidiSession } from './session.ts';
 import type { PageJson } from './script.ts';
 
@@ -150,7 +151,7 @@ async function writeOriginStorage(origin: StoredOrigin): Promise<void> {
 
 /** The user context's cookies and the storage of every web origin the attempt's documents were at. */
 export async function captureState(session: BidiSession): Promise<EngineState> {
-  const { cookies } = await session.connection.send('storage.getCookies', { partition: session.partition() });
+  const cookies = await storedCookies(session.connection, session.userContext);
   const origins: StoredOrigin[] = [];
   await atEachOrigin(session, [...session.visited], async (origin, context) => {
     const stored = await session.run(readOriginStorage, [], context);
@@ -168,9 +169,7 @@ export async function restoreState(session: BidiSession, state: EngineState, sig
   }
   const { cookies, origins } = state.data;
   await session.replaceUserContext(signal);
-  for (const { size: _size, ...cookie } of cookies) {
-    await session.connection.send('storage.setCookie', { cookie, partition: session.partition() });
-  }
+  for (const { size: _size, ...cookie } of cookies) await storeCookie(session.connection, session.userContext, cookie);
   const byOrigin = new Map(origins.map((origin) => [origin.origin, origin]));
   await atEachOrigin(session, [...byOrigin.keys()], async (origin, context) => {
     await session.run(writeOriginStorage, [byOrigin.get(origin)!], context);

@@ -8,7 +8,6 @@
  */
 
 import path from 'node:path';
-import type { Storage } from 'webdriver-bidi-protocol';
 import {
   EngineError,
   raceAbort,

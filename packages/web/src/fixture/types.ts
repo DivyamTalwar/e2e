@@ -6,8 +6,11 @@
  */
 
 import type { ActionOptions, Expectable, JsonValue, Locator, Screen, TextMatch } from '@e2e-dev/core';
+import type { Cookie, CookieFilter } from '../driver/cookies.ts';
 import type { DialogHandler } from '../driver/dialogs.ts';
 import type { WebMedia } from '../options.ts';
+
+export type { Cookie, CookieFields, CookieFilter } from '../driver/cookies.ts';
 
 /**
  * One of `json`, `body`, or `path`, or none for an empty body. `path` names a
@@ -72,35 +75,6 @@ export interface WebResponse {
   json<T = unknown>(): Promise<T>;
   /** Waits for the body and reads it as text; rejects with `ACTION_FAILED` when the body could not be read. */
   text(): Promise<string>;
-}
-
-export interface CookieFields {
-  /** Cookie name. */
-  name: string;
-  /** Cookie value. */
-  value: string;
-  /** Unix timestamp in whole seconds. */
-  expires?: number;
-  /** HttpOnly flag. */
-  httpOnly?: boolean;
-  /** Secure flag. */
-  secure?: boolean;
-  /** SameSite attribute. */
-  sameSite?: 'Strict' | 'Lax' | 'None';
-}
-
-/** `url`, or `domain` with an optional `path`, never both. */
-export type Cookie = CookieFields &
-  (
-    | { url: string; domain?: never; path?: never }
-    | { url?: never; domain: string; path?: string }
-  );
-
-/** Cookie filters are combined; strings match exactly, RegExp matches the field. */
-export interface CookieFilter {
-  name?: string | RegExp;
-  domain?: string | RegExp;
-  path?: string | RegExp;
 }
 
 export interface BrowserExpectation {

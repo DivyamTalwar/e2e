@@ -6,7 +6,7 @@
 
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import type { Emulation, Storage } from 'webdriver-bidi-protocol';
+import type { Emulation } from 'webdriver-bidi-protocol';
 import { EngineError, obj, TestError, withTimeout, type AppLogEntry, type EngineSnapshot, type NodeRef, type ViewportPoint, type ViewportSize } from '@e2e-dev/core/engine';
 import { CLOSED_SHADOW_ROOTS_INIT_SCRIPT } from '../in-page/closed-shadow.ts';
 import { MODAL_ORDER_INIT_SCRIPT } from '../in-page/modal-dialogs.ts';
@@ -737,11 +737,6 @@ export class BidiSession {
     };
     for (const info of contexts) walk(info);
     return out;
-  }
-
-  /** The cookie partition of this user context. */
-  partition(): Storage.StorageKeyPartitionDescriptor {
-    return { type: 'storageKey', userContext: this.userContext };
   }
 
   /** Reserves one artifact path under the attempt directory: a counter keeps names unique, the label readable. */

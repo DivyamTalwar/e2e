@@ -1,12 +1,41 @@
 /**
- * The attempt's cookies as the `browser` fixture reads, sets, and clears
- * them: the fixture's cookie shapes over `storage.*` in the attempt's user
- * context.
+ * A user context's cookie jar over `storage.*`: the cookies as the browser
+ * holds them, and as the `browser` fixture reads, sets, and clears them.
  */
 
 import type { Network, Storage } from 'webdriver-bidi-protocol';
-import type { Cookie, CookieFields, CookieFilter } from '../fixture/types.ts';
+import type { BidiConnection } from './connection.ts';
 import type { BidiSession } from './session.ts';
+
+/** What every cookie carries, whichever way it names its site. */
+export interface CookieFields {
+  /** Cookie name. */
+  name: string;
+  /** Cookie value. */
+  value: string;
+  /** Unix timestamp in whole seconds. */
+  expires?: number;
+  /** HttpOnly flag. */
+  httpOnly?: boolean;
+  /** Secure flag. */
+  secure?: boolean;
+  /** SameSite attribute. */
+  sameSite?: 'Strict' | 'Lax' | 'None';
+}
+
+/** `url`, or `domain` with an optional `path`, never both. */
+export type Cookie = CookieFields &
+  (
+    | { url: string; domain?: never; path?: never }
+    | { url?: never; domain: string; path?: string }
+  );
+
+/** Cookie filters are combined; strings match exactly, RegExp matches the field. */
+export interface CookieFilter {
+  name?: string | RegExp;
+  domain?: string | RegExp;
+  path?: string | RegExp;
+}
 
 /** Where one cookie is set: on the URL it names, or on its domain and path. */
 export type CookieTarget = { readonly url: string } | { readonly domain: string; readonly path: string };
@@ -16,14 +45,12 @@ const FILTER_FIELDS = ['name', 'domain', 'path'] as const;
 
 /** The attempt's cookies, as the fixture reports them. */
 export async function readCookies(session: BidiSession): Promise<Cookie[]> {
-  return (await storedCookies(session)).map(toCookie);
+  return (await storedCookies(session.connection, session.userContext)).map(toCookie);
 }
 
 /** Stores each of `cookies` on its target in `targets` (`cookieTargets`), in the attempt's user context. */
 export async function writeCookies(session: BidiSession, cookies: readonly CookieFields[], targets: readonly CookieTarget[]): Promise<void> {
-  for (const [index, cookie] of cookies.entries()) {
-    await session.connection.send('storage.setCookie', { cookie: partialCookie(cookie, targets[index]!), partition: session.partition() });
-  }
+  for (const [index, cookie] of cookies.entries()) await storeCookie(session.connection, session.userContext, partialCookie(cookie, targets[index]!));
 }
 
 /**
@@ -34,18 +61,28 @@ export async function writeCookies(session: BidiSession, cookies: readonly Cooki
 export async function deleteCookies(session: BidiSession, filter: CookieFilter | undefined): Promise<void> {
   const filters = FILTER_FIELDS.every((field) => typeof filter?.[field] !== 'object')
     ? [Object.fromEntries(FILTER_FIELDS.flatMap((field) => (filter?.[field] === undefined ? [] : [[field, filter[field]]])))]
-    : (await storedCookies(session))
+    : (await storedCookies(session.connection, session.userContext))
         .filter((cookie) => FILTER_FIELDS.every((field) => {
           const wanted = filter?.[field];
           return wanted === undefined || (typeof wanted === 'string' ? cookie[field] === wanted : new RegExp(wanted.source, wanted.flags).test(cookie[field]));
         }))
         .map(({ name, domain, path }) => ({ name, domain, path }));
-  for (const each of filters) await session.connection.send('storage.deleteCookies', { filter: each, partition: session.partition() });
+  for (const each of filters) await session.connection.send('storage.deleteCookies', { filter: each, partition: partition(session.userContext) });
 }
 
-/** The cookies of the attempt's user context, as the browser holds them. */
-async function storedCookies(session: BidiSession): Promise<Network.Cookie[]> {
-  return (await session.connection.send('storage.getCookies', { partition: session.partition() })).cookies;
+/** The cookies of `userContext`, as the browser holds them. */
+export async function storedCookies(connection: BidiConnection, userContext: string): Promise<Network.Cookie[]> {
+  return (await connection.send('storage.getCookies', { partition: partition(userContext) })).cookies;
+}
+
+/** Stores one cookie in `userContext`'s jar. */
+export async function storeCookie(connection: BidiConnection, userContext: string, cookie: Storage.PartialCookie): Promise<void> {
+  await connection.send('storage.setCookie', { cookie, partition: partition(userContext) });
+}
+
+/** The cookie partition of a user context. */
+function partition(userContext: string): Storage.StorageKeyPartitionDescriptor {
+  return { type: 'storageKey', userContext };
 }
 
 /** A fixture cookie as the browser stores it on `target`: a URL gives its host, its directory as the path, and `secure` for `https:`. */

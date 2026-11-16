@@ -13,6 +13,7 @@ import { raceAbort } from '@e2e-dev/core/engine';
 import type { ContextTree } from './context-tree.ts';
 import { BidiError, releaseQuietly } from '../errors.ts';
 import type { BidiConnection, BidiEventParams } from './connection.ts';
+import { storeCookie } from './cookies.ts';
 import { RequestDecisions, type DecisionOptions, type DecisionRecord, type DecisionScope, type NetworkRoute } from './network-decisions.ts';
 import { bytesOf, hasBody, headerRecord, stripHash } from './network-wire.ts';
 
@@ -296,7 +297,7 @@ export class NetworkBinding implements DecisionScope {
   async storeCookies(cookies: readonly Storage.PartialCookie[], signal: AbortSignal): Promise<void> {
     for (const cookie of cookies) {
       if (this.closed) return;
-      await raceAbort(() => this.connection.send('storage.setCookie', { cookie, partition: { type: 'storageKey', userContext: this.userContext } }), signal, 'route.fetch cookies');
+      await raceAbort(() => storeCookie(this.connection, this.userContext, cookie), signal, 'route.fetch cookies');
     }
   }
 
