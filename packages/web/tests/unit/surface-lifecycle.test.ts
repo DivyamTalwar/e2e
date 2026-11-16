@@ -135,4 +135,22 @@ describe('a video segment that cannot start', () => {
     await engine.endAttempt!(cleanup());
     await engine.dispose!(cleanup());
   });
+
+  it('lets a tab open when the window’s size cannot be read for its segment, and fails stopVideo instead', async () => {
+    const fake = fakeBrowser();
+    const answer = { result: { type: 'success', result: { type: 'undefined' }, realm: 'r' } };
+    fake.peer.on('script.callFunction', (params) => (String(params['functionDeclaration']).includes('innerWidth') ? { error: 'unknown error', message: 'the window has no size' } : answer));
+    fake.peer.on('browsingContext.startScreencast', { result: { screencast: 'cast' } });
+    connectCdp.mockImplementation(async () => ({ ...fake.browser, traits: BROWSER_TRAITS.firefox }));
+    const leases = provider('worker', []);
+    const engine = web({ browser: leases, viewport: null });
+    await engine.init!(info(await prepared(leases)));
+    await engine.startAttempt!(attempt('a1'));
+    await engine.artifacts!.startVideo!(op());
+    await expect(engine.session!.open!('https://app.test/', op())).resolves.toBeUndefined();
+    await expect(engine.artifacts!.stopVideo!(op())).rejects.toMatchObject({ code: 'ENGINE_FAILURE', message: expect.stringContaining('the window has no size') });
+    expect(fake.peer.commands('browsingContext.startScreencast')).toEqual([]);
+    await engine.endAttempt!(cleanup());
+    await engine.dispose!(cleanup());
+  });
 });

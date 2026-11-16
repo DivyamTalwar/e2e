@@ -25,7 +25,7 @@ import { AttemptUserContext, type UserContextSettings } from './user-context.ts'
 import { viewportSize } from '../in-page/document.ts';
 import { BidiVideo } from './video.ts';
 import { ProviderVideo } from './provider-video.ts';
-import { DriverVideo, type AttemptVideo } from './attempt-video.ts';
+import type { AttemptVideo } from './attempt-video.ts';
 import type { LeaseRecording } from '../provider.ts';
 import type { BidiConnection } from './connection.ts';
 import type { PageArgument, PageValue } from './script.ts';
@@ -131,10 +131,7 @@ export class BidiSession {
       downloads: this.downloads,
     });
     this.video = attempt.recorder === undefined
-      ? new DriverVideo(
-          () => new BidiVideo(browser.connection, browser.traits, attempt.artifactsDir, settings.screencast, settings.env),
-          { shown: () => this.context, viewport: () => this.viewportSize() },
-        )
+      ? new BidiVideo(browser.connection, browser.traits, attempt.artifactsDir, settings.screencast, settings.env, { shown: () => this.context, viewport: () => this.viewportSize() })
       : new ProviderVideo(attempt.recorder, attempt.artifactsDir, this.lifetime);
     this.tabs = new AttemptTabs({
       shown: () => this.context,

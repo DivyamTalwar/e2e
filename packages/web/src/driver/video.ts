@@ -11,7 +11,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, copyFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { EngineError, type VideoFile } from '@e2e-dev/core/engine';
+import { EngineError, type VideoFile, type ViewportSize } from '@e2e-dev/core/engine';
+import type { AttemptVideo } from './attempt-video.ts';
 import { ChromiumCdp } from './cdp.ts';
 import { classify, isStale, message, releaseQuietly, unlessStale } from '../errors.ts';
 import type { BrowserTraits } from '../browsers.ts';
@@ -27,6 +28,14 @@ export interface VideoOptions {
   readonly quality?: number;
 }
 
+/** The tab the driver records, as the session shows it. */
+export interface RecordedTab {
+  /** The tab shown now, if any. */
+  shown(): string | undefined;
+  /** The shown tab's viewport in CSS pixels, which a segment of it is sized to unless a size is configured. */
+  viewport(): Promise<ViewportSize>;
+}
+
 /** One segment being recorded, and how to finish it. */
 interface Segment {
   readonly relative: string;
@@ -36,18 +45,20 @@ interface Segment {
 }
 
 /**
- * The attempt's video: one segment per tab it shows, and
- * the first segment it lost. A segment that fails to start or to finish
- * never fails the step that opened or closed its tab: `stop` reports it,
- * where the harness applies the video policy.
+ * The attempt's video as the driver records it: one segment per tab it
+ * shows, and the first segment it lost. Until a recording is asked for
+ * nothing is recorded and no tab is sized for a segment. A segment that
+ * fails to start or to finish never fails the step that opened or closed
+ * its tab: `stop` reports it, where the harness applies the video policy.
  */
-export class BidiVideo {
+export class BidiVideo implements AttemptVideo {
+  readonly closeStep = 'video stop';
   private armed = false;
   private current: Segment | undefined;
   private count = 0;
   private finished: VideoFile[] = [];
   private lost: EngineError | undefined;
-  /** The ffmpeg that encodes Chromium's segments, found once by the first `arm`. */
+  /** The ffmpeg that encodes Chromium's segments, found once by the first `start`. */
   private ffmpeg: string | undefined;
   /** Bumped by every `stop`, so a segment whose start outlived the stop ends at once instead of recording on. */
   private generation = 0;
@@ -61,25 +72,33 @@ export class BidiVideo {
     private readonly options: VideoOptions,
     /** The run's environment, which names the ffmpeg to encode with. */
     private readonly env: Readonly<Record<string, string | undefined>>,
+    private readonly tab: RecordedTab,
   ) {}
 
   /**
-   * Starts recording `context`, unless a segment already records, and arms
-   * the recorder for every tab opened after. Fails, leaving the recorder
-   * disarmed, when Chromium gets no ffmpeg to encode with (it downloads one
-   * on first use) or the segment cannot start.
+   * Starts recording the shown tab, unless a segment already records, and
+   * arms the recorder for every tab the attempt shows until it stops; with
+   * no tab shown it only arms. Fails, leaving the recorder disarmed, when
+   * Chromium gets no ffmpeg to encode with (it downloads one on first use)
+   * or the segment cannot start. A start that finishes after `signal`
+   * aborted is stopped again and fails.
    */
-  async arm(context: string | undefined, viewport: { width: number; height: number }): Promise<void> {
+  async start(signal: AbortSignal): Promise<void> {
     if (this.traits.screencast === 'cdp') this.ffmpeg ??= await ensureFfmpeg({ ...this.env });
     const generation = this.generation;
-    if (this.current === undefined && context !== undefined) await this.tracked(this.begin(context, viewport, true));
+    const context = this.tab.shown();
+    if (this.current === undefined && context !== undefined) await this.tracked(this.begin(context, true));
     if (generation === this.generation) this.armed = true;
+    if (signal.aborted) {
+      await releaseQuietly(this.stop());
+      signal.throwIfAborted();
+    }
   }
 
-  /** A tab the attempt opened: the next segment, when armed. A segment that cannot start is reported by `stop`, never here. */
-  async contextOpened(context: string, viewport: { width: number; height: number }): Promise<void> {
+  /** The attempt shows `context`: the next segment, when armed. A segment that cannot start is reported by `stop`, never here. */
+  async contextOpened(context: string): Promise<void> {
     if (!this.armed) return;
-    await this.tracked(this.begin(context, viewport, false)).catch((cause: unknown) => {
+    await this.tracked(this.begin(context, false)).catch((cause: unknown) => {
       this.lost ??= new EngineError('ENGINE_FAILURE', `video segment for a new tab could not start: ${message(cause)}`, { retryable: false, cause });
     });
   }
@@ -121,8 +140,18 @@ export class BidiVideo {
     return this.finished.splice(0);
   }
 
-  /** Ends any segment in progress and starts the next on `context`; `arming` starts it before the recorder is armed. */
-  private async begin(context: string, viewport: { width: number; height: number }, arming: boolean): Promise<void> {
+  /** Stops the recording with the attempt; a segment it lost is reported, as `stop` reports it. */
+  async close(): Promise<void> {
+    await this.stop();
+  }
+
+  /**
+   * Ends any segment in progress and starts the next on `context`, the
+   * shown tab, at the configured size, else the viewport read off it;
+   * `arming` starts it before the recorder is armed.
+   */
+  private async begin(context: string, arming: boolean): Promise<void> {
+    const size = this.options.size ?? (await this.tab.viewport());
     await this.end();
     const generation = this.generation;
     this.count += 1;
@@ -130,7 +159,6 @@ export class BidiVideo {
     const relative = path.posix.join('video', `${name}.webm`);
     const absolute = path.join(this.artifactsDir, relative);
     mkdirSync(path.dirname(absolute), { recursive: true });
-    const size = this.options.size ?? viewport;
     const startedAt = new Date().toISOString();
     const finish = this.traits.screencast === 'bidi'
       ? await this.bidiSegment(context, size, absolute)
