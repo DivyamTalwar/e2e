@@ -30,23 +30,31 @@ function request(context: string, id: string) {
   };
 }
 
-/** A session of user context `mine` on `fake`, its tab `tab` open, its events routed through a tree that knows `tab` and its frames `frame` and `inner`. */
+/**
+ * A session on `fake` in the user context `mine` it opened there, its tab
+ * `tab` open, its events routed through a tree that knows `tab` and its
+ * frames `frame` and `inner`. The tab it opens next is `next`.
+ */
 async function attempt(fake: FakeBidi) {
+  const tabs = ['tab', 'next'];
   fake
     .on('session.subscribe', { result: { subscription: 'subscription' } })
     .on('network.addDataCollector', { result: { collector: 'collector' } })
-    .on('browsingContext.getTree', { result: { contexts: [info('tab', null)] } });
+    .on('browsingContext.getTree', { result: { contexts: [info('tab', null)] } })
+    .on('browser.createUserContext', { result: { userContext: 'mine' } })
+    .on('browsingContext.create', () => {
+      const context = tabs.shift()!;
+      fake.emit('browsingContext.contextCreated', info(context, null));
+      return { result: { context } };
+    });
   const contexts = new ContextTree();
-  const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [] };
+  const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };
   const session = new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS.chromium } as never, settings as never, { protectedApp: new ProtectedApp(new Set(), undefined, undefined) } as never, contexts);
-  session.userContext = 'mine';
   routeEvents(fake.connection, contexts, () => session);
-  fake.emit('browsingContext.contextCreated', info('tab', null));
+  await session.openUserContext(new AbortController().signal);
+  await session.ensureContext();
   fake.emit('browsingContext.contextCreated', info('frame', 'tab'));
   fake.emit('browsingContext.contextCreated', info('inner', 'frame'));
-  session.context = 'tab';
-  await session.network.bind('mine');
-  await session.network.addContext('tab');
   await session.network.track();
   return session;
 }
@@ -114,9 +122,7 @@ describe('request retirement', () => {
     fake.emit('network.beforeRequestSent', request('inner', 'stuck'));
     await busy(session);
     await session.closeContext(new AbortController().signal);
-    fake.emit('browsingContext.contextCreated', info('next', null));
-    session.context = 'next';
-    await session.network.addContext('next');
+    await session.ensureContext();
     await idle(session);
   });
 });

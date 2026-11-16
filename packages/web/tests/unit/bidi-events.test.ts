@@ -30,7 +30,7 @@ function attempt(owners: ContextTree, userContext: string) {
     latch,
     dialogs: new DialogRouter(latch),
     attempt: { appLog: (entry: AppLogEntry) => log.push(entry), navigation: (line: string) => lines.push(line) },
-    visit: async (url: string) => void visited.push(url),
+    userContext: { visit: async (url: string) => void visited.push(url) },
     network: { addContext: async (context: string) => void added.push(context), removeContext: async () => undefined, retire: () => undefined },
     owns: (context: string | null | undefined) => context != null && owners.owner(context) === userContext,
   };

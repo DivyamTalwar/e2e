@@ -21,7 +21,7 @@ const POLL_MS = 50;
 export function goto(session: BidiSession, url: string, waitUntil: WaitUntil, signal: AbortSignal): Promise<void> {
   return session.navigations.own(async () => {
     const context = await session.ensureContext();
-    await session.visit(url);
+    await session.userContext.visit(url);
     if (waitUntil === 'networkidle') await session.network.track();
     const wait = waitUntil === 'load' || waitUntil === 'networkidle' ? 'complete' : waitUntil === 'domcontentloaded' ? 'interactive' : 'none';
     signal.throwIfAborted();

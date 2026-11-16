@@ -4,28 +4,23 @@
  * it, with the primitives every other module drives the page through.
  */
 
-import type { Emulation } from 'webdriver-bidi-protocol';
-import { EngineError, obj, withTimeout, type AppLogEntry, type EngineSnapshot, type NodeRef, type ViewportPoint, type ViewportSize } from '@e2e-dev/core/engine';
-import { CLOSED_SHADOW_ROOTS_INIT_SCRIPT } from '../in-page/closed-shadow.ts';
-import { MODAL_ORDER_INIT_SCRIPT } from '../in-page/modal-dialogs.ts';
+import { EngineError, withTimeout, type AppLogEntry, type EngineSnapshot, type NodeRef, type ViewportPoint, type ViewportSize } from '@e2e-dev/core/engine';
 import { DialogRouter } from './dialogs.ts';
-import type { ConfiguredInitScripts } from '../init-scripts.ts';
-import type { WebMedia, WebScreencastOptions } from '../options.ts';
+import type { WebScreencastOptions } from '../options.ts';
 import type { ProtectedApp } from '../protected-app.ts';
 import { BidiInput } from './input.ts';
 import { ArtifactPaths } from './artifact-paths.ts';
 import type { ContextTree } from './context-tree.ts';
 import { AttemptDownloads } from './downloads.ts';
-import { BidiError, cancelled, ErrorLatch, invalidState, releaseQuietly, unlessStale } from '../errors.ts';
+import { BidiError, ErrorLatch, invalidState, releaseQuietly, unlessStale } from '../errors.ts';
 import { FrameRegistry, type NodeTarget } from './frames.ts';
 import type { BidiBrowser } from './launch.ts';
 import { AttemptNetwork } from './network.ts';
 import { OwnNavigations } from './own-navigations.ts';
 import { PageCalls } from './page-calls.ts';
 import { AttemptTabs, type AttemptTab } from './tabs.ts';
+import { AttemptUserContext, type UserContextSettings } from './user-context.ts';
 import { viewportSize } from '../in-page/document.ts';
-import { HIT_INTERCEPTOR_INIT_SCRIPT } from '../in-page/hit-interceptor.ts';
-import { BUILTINS_INIT_SCRIPT, READERS_INIT_SCRIPT } from '../in-page/readers.ts';
 import { BidiVideo } from './video.ts';
 import { ProviderVideo } from './provider-video.ts';
 import { DriverVideo, type AttemptVideo } from './attempt-video.ts';
@@ -36,30 +31,15 @@ import type { PageArgument, PageValue } from './script.ts';
 /** How long one step of closing an attempt may take before the next runs. */
 const CLOSE_STEP_MS = 10_000;
 
-/**
- * Refuses service worker registration, as Playwright's `serviceWorkers:
- * 'block'` does when headers are configured: a worker's requests bypass
- * request interception, so they would leave without the headers.
- */
-const BLOCK_SERVICE_WORKERS = "if (navigator.serviceWorker) navigator.serviceWorker.register = async () => { console.warn('Service Worker registration blocked by e2e'); };";
-
 /** What every attempt of a worker is configured with. */
-export interface SessionSettings {
+export interface SessionSettings extends UserContextSettings {
   readonly viewport: ViewportSize | null;
-  readonly initScripts: ConfiguredInitScripts;
   readonly screencast: WebScreencastOptions;
-  readonly userAgent: string | undefined;
-  readonly locale: string | undefined;
-  readonly timezoneId: string | undefined;
-  readonly media: WebMedia;
   readonly testIdAttribute: string;
   readonly site: string | undefined;
   readonly projectRoot: string;
-  readonly permissions: readonly string[];
   /** Whether the browser runs on another machine (a provider's lease), whose filesystem local paths do not reach. */
   readonly remoteFiles: boolean;
-  /** The user context an attempt runs in (`BrowserSource.userContext`). */
-  readonly userContext: UserContextMode;
   /** The run's environment, which names the tools the driver spawns (ffmpeg). */
   readonly env: Readonly<Record<string, string | undefined>>;
 }
@@ -80,24 +60,6 @@ export interface AttemptSettings {
   readonly downloadLimit?: string | undefined;
   /** How the browser's provider records the attempt, in place of the driver's own recording (`BrowserSource.recorder`); undefined when it records none. */
   readonly recorder: ((signal: AbortSignal) => Promise<LeaseRecording>) | undefined;
-}
-
-/**
- * Which user context an attempt runs in: a fresh one it creates and
- * removes, the browser's default one (which a per-attempt lease's `prepare`
- * may have signed in), or the default one on the tab already open there,
- * which the attempt adopts and leaves open (`attachBrowser`).
- */
-export type UserContextMode = 'fresh' | 'default' | 'adopt-tab';
-
-/** The browser's own user context, which a lease's `prepare` signed in and which outlives every attempt. */
-const DEFAULT_USER_CONTEXT = 'default';
-
-/** A user context the attempt set up, with the preload scripts scoped to it, and the tab it had. */
-interface ScopedUserContext {
-  readonly userContext: string;
-  readonly preloads: readonly string[];
-  readonly context: string | undefined;
 }
 
 /**
@@ -179,7 +141,8 @@ class BidiRefs {
  * scoped to it.
  */
 export class BidiSession {
-  userContext = '';
+  /** The user context the attempt runs in, with what is scoped to it. */
+  readonly userContext: AttemptUserContext;
   /** The tab the attempt shows, which every read and action is on. */
   context: string | undefined;
   /** The attempt's open tabs, in the order they opened. */
@@ -194,8 +157,6 @@ export class BidiSession {
   readonly dialogs = new DialogRouter(this.latch);
   readonly network: AttemptNetwork;
   readonly downloads: AttemptDownloads;
-  /** The media features in effect: the configured ones, updated by `emulateMedia`. */
-  private media: WebMedia;
   /** The attempt's recording: the provider's when it records the browser, else the driver's own. */
   readonly video: AttemptVideo;
   /** The navigations the driver itself has in flight in the tab. */
@@ -205,21 +166,7 @@ export class BidiSession {
   private creating: Promise<string> | undefined;
   /** The tab the attempt found open and adopted (`existingTab`), which it never closes. */
   private adopted: string | undefined;
-  /** User contexts this attempt created and has not yet seen removed, tried again by every later removal and by `close`. */
-  private readonly unremoved = new Set<string>();
-  /**
-   * Bumped by every user context the attempt starts to set up and by
-   * `close`: one that lands for an earlier generation (a reset given up on,
-   * superseded, or outlived by the attempt) removes itself instead of
-   * replacing the one in use.
-   */
-  private generation = 0;
   private readonly ended = new AbortController();
-  private preloads: string[] = [];
-  private readonly addedScripts: string[] = [];
-  private readonly granted = new Map<string, Promise<void>>();
-  /** The web origins the attempt's documents have been at, whose storage a saved session keeps. */
-  readonly visited = new Set<string>();
   /** Where the attempt's screenshots and downloads are written. */
   readonly artifacts: ArtifactPaths;
 
@@ -229,7 +176,6 @@ export class BidiSession {
     readonly attempt: AttemptSettings,
     private readonly contexts: ContextTree,
   ) {
-    this.media = settings.media;
     this.artifacts = new ArtifactPaths(attempt.artifactsDir);
     this.page = new PageCalls(browser.connection, () => this.requireContext());
     this.viewport = settings.viewport;
@@ -248,6 +194,14 @@ export class BidiSession {
       lifetime: this.lifetime,
     });
     this.downloads = new AttemptDownloads(browser.connection, attempt.remoteDownloads, attempt.downloadLimit);
+    this.userContext = new AttemptUserContext({
+      connection: browser.connection,
+      traits: browser.traits,
+      settings,
+      protectedApp: attempt.protectedApp,
+      downloads: this.downloads,
+      ownTab: () => (this.context === this.adopted ? undefined : this.context),
+    });
     this.video = attempt.recorder === undefined
       ? new DriverVideo(
           () => new BidiVideo(browser.connection, browser.traits, attempt.artifactsDir, settings.screencast, settings.env),
@@ -286,7 +240,7 @@ export class BidiSession {
 
   /** Whether `context` belongs to this attempt's user context. */
   owns(context: string | null | undefined): boolean {
-    return context != null && this.contexts.owner(context) === this.userContext;
+    return context != null && this.contexts.owner(context) === this.userContext.id;
   }
 
   /** Whether `context` is the attempt's tab or a frame in it: what a page-scoped wait listens to, not a tab the app opened. */
@@ -300,162 +254,37 @@ export class BidiSession {
    * navigates. `signal` aborting, or `close`, before it lands removes it.
    */
   async openUserContext(signal: AbortSignal): Promise<void> {
-    await this.installUserContext(signal);
-    await this.network.bind(this.userContext);
+    await this.userContext.open(signal);
+    await this.network.bind(this.userContext.id);
     if (this.settings.userContext === 'adopt-tab') await this.ensureContext();
   }
 
   /**
    * Replaces the user context with a clean one, the test's routes and added
-   * init scripts carried over. The new one is set up in full before it
-   * takes the old one's place in one step, and only then is the old one
-   * removed, so no step ever runs between the two. One whose `signal`
-   * aborted, or that a later replacement or `close` overtook, removes itself
-   * and leaves the user context in use as it was.
+   * init scripts carried over (`AttemptUserContext.replace`). Once the new
+   * one is in use, the tabs of the old one are forgotten, its recording
+   * ends, and the network binds to the new one, before the old one is
+   * removed. One whose `signal` aborted, or that a later replacement or
+   * `close` overtook, leaves all of that as it was.
    */
   async replaceUserContext(signal: AbortSignal): Promise<void> {
-    const previous = await this.installUserContext(signal);
-    this.tabs.clear();
-    this.retireContext();
-    await this.video.contextClosing();
-    await this.network.bind(this.userContext);
-    await this.dropUserContext(previous);
+    await this.userContext.replace(signal, async () => {
+      this.tabs.clear();
+      this.retireContext();
+      await this.video.contextClosing();
+      await this.network.bind(this.userContext.id);
+    });
   }
 
-  /**
-   * Creates a user context (the browser's own one when the settings ask for
-   * it) and applies everything scoped to it: the preloaded scripts,
-   * downloads, the emulated user agent, locale (and the `accept-language`
-   * Playwright's locale sends), time zone, and media. Every step settles
-   * before a failure is thrown, and a failed or overtaken setup removes what
-   * it made. Once set up, it is published in place of the attempt's user
-   * context, whose scope is returned.
-   */
-  private async installUserContext(signal: AbortSignal): Promise<ScopedUserContext> {
-    const generation = ++this.generation;
-    const connection = this.connection;
-    signal.throwIfAborted();
-    const { userContext } = this.settings.userContext === 'fresh' ? await connection.send('browser.createUserContext', {}) : { userContext: DEFAULT_USER_CONTEXT };
-    const preloads: string[] = [];
-    const overtaken = (): boolean => signal.aborted || generation !== this.generation;
-    try {
-      if (overtaken()) throw cancelled('the attempt closed or gave up while its user context opened');
-      const scoped = { userContexts: [userContext] as [string] };
-      const sources = [
-        wrapScript(BUILTINS_INIT_SCRIPT),
-        wrapScript(READERS_INIT_SCRIPT),
-        wrapScript(CLOSED_SHADOW_ROOTS_INIT_SCRIPT),
-        wrapScript(MODAL_ORDER_INIT_SCRIPT),
-        wrapScript(HIT_INTERCEPTOR_INIT_SCRIPT),
-        ...(this.attempt.protectedApp.sendsHeaders ? [wrapScript(BLOCK_SERVICE_WORKERS)] : []),
-        ...[...this.settings.initScripts.forAttempt(), ...this.addedScripts].map(wrapAppScript),
-      ];
-      const { userAgent, locale, timezoneId } = this.settings;
-      const steps = await Promise.allSettled([
-        ...sources.map(async (source) => {
-          preloads.push((await connection.send('script.addPreloadScript', { functionDeclaration: source, ...scoped })).script);
-        }),
-        this.downloads.allow(userContext),
-        userAgent === undefined ? undefined : connection.send('emulation.setUserAgentOverride', { userAgent, ...scoped }),
-        locale === undefined ? undefined : connection.send('emulation.setLocaleOverride', { locale, ...scoped }),
-        locale === undefined ? undefined : connection.send('network.setExtraHeaders', { headers: [{ name: 'accept-language', value: { type: 'string', value: locale } }], ...scoped }),
-        timezoneId === undefined ? undefined : connection.send('emulation.setTimezoneOverride', { timezone: timezoneId, ...scoped }),
-        this.applyMedia(userContext),
-      ]);
-      const failed = steps.find((step) => step.status === 'rejected');
-      if (failed !== undefined) throw failed.reason;
-      if (overtaken()) throw cancelled('the attempt closed or gave up while its user context opened');
-    } catch (cause) {
-      await releaseQuietly(this.dropUserContext({ userContext, preloads, context: undefined }));
-      throw cause;
-    }
-    const previous = { userContext: this.userContext, preloads: this.preloads, context: this.context };
-    this.userContext = userContext;
-    this.preloads = preloads;
-    this.granted.clear();
-    this.visited.clear();
-    return previous;
-  }
-
-  /** Ends the recording of the attempt's tab, forgets its user context, and removes it with its preload scripts. */
+  /** Ends the recording of the attempt's tab, forgets its tabs, and removes its user context with its preload scripts. */
   private async closeUserContext(): Promise<void> {
     await this.video.contextClosing();
-    const current = { userContext: this.userContext, preloads: this.preloads, context: this.context };
-    this.userContext = '';
-    this.preloads = [];
     this.tabs.clear();
     try {
-      await this.dropUserContext(current);
+      await this.userContext.close();
     } finally {
       this.retireContext();
     }
-  }
-
-  /**
-   * Removes a user context the attempt no longer uses, which closes its
-   * tabs, then its preload scripts: removing a script from a live tab races
-   * the tab's close inside the Chromium mapper. The browser's own user
-   * context stays; only the tab the attempt opened there is closed.
-   */
-  private async dropUserContext(dropped: ScopedUserContext): Promise<void> {
-    if (dropped.userContext === DEFAULT_USER_CONTEXT) {
-      if (dropped.context !== undefined && dropped.context !== this.adopted) await releaseQuietly(this.connection.send('browsingContext.close', { context: dropped.context }));
-    } else if (dropped.userContext !== '') this.unremoved.add(dropped.userContext);
-    try {
-      await this.removeUserContexts();
-    } finally {
-      await Promise.all(dropped.preloads.map((script) => releaseQuietly(this.connection.send('script.removePreloadScript', { script }))));
-    }
-  }
-
-  /** Removes every user context still owed removal; one that fails stays owed, and the first failure is thrown. */
-  private async removeUserContexts(): Promise<void> {
-    const pending = [...this.unremoved];
-    const results = await Promise.allSettled(pending.map((userContext) => this.connection.send('browser.removeUserContext', { userContext })));
-    pending.forEach((userContext, index) => {
-      const result = results[index]!;
-      if (result.status === 'fulfilled' || (result.reason instanceof BidiError && result.reason.error === 'no such user context')) this.unremoved.delete(userContext);
-    });
-    const failed = results.find((result, index) => result.status === 'rejected' && this.unremoved.has(pending[index]!));
-    if (failed !== undefined) throw (failed as PromiseRejectedResult).reason;
-  }
-
-  /**
-   * Changes the attempt's media features from the next paint on
-   * (`browser.emulateMedia`). A browser that does not emulate reduced motion
-   * (Firefox overrides only `prefers-color-scheme` over BiDi) refuses a
-   * reduced-motion change; `web({ reducedMotion })` still applies at launch.
-   */
-  async emulateMedia(media: WebMedia): Promise<void> {
-    if (!this.browser.traits.emulatesReducedMotion && media.reducedMotion !== undefined) {
-      throw new EngineError('UNSUPPORTED_CAPABILITY', 'browser.emulateMedia({ reducedMotion }) is not supported on Firefox, which overrides only prefers-color-scheme over WebDriver BiDi; set web({ reducedMotion }) instead', { retryable: false });
-    }
-    this.media = { ...this.media, ...media };
-    await this.applyMedia();
-  }
-
-  /**
-   * Applies the media features (`emulation.setMediaFeaturesOverride`); a
-   * browser that does not emulate reduced motion takes it as a launch
-   * preference.
-   */
-  private async applyMedia(userContext = this.userContext): Promise<void> {
-    if (this.media.colorScheme === undefined && this.media.reducedMotion === undefined) return;
-    const features: Emulation.MediaFeatures = obj({
-      'prefers-color-scheme': this.media.colorScheme === 'no-preference' ? null : this.media.colorScheme,
-      'prefers-reduced-motion': this.browser.traits.emulatesReducedMotion ? this.media.reducedMotion : undefined,
-    });
-    await this.connection.send('emulation.setMediaFeaturesOverride', { features, userContexts: [userContext] });
-  }
-
-  /** Adds an init script for every document of this user context from now on, and of every one that replaces it. */
-  async addInitScript(source: string): Promise<void> {
-    const { script } = await this.connection.send('script.addPreloadScript', {
-      functionDeclaration: wrapAppScript(source),
-      userContexts: [this.userContext],
-    });
-    this.addedScripts.push(source);
-    this.preloads.push(script);
   }
 
   /** The attempt's tab; `INVALID_STATE` before the first open. */
@@ -484,14 +313,14 @@ export class BidiSession {
    */
   private async createContext(): Promise<string> {
     const connection = this.connection;
-    const userContext = this.userContext;
+    const userContext = this.userContext.id;
     if (userContext === '') throw invalidState('the attempt has no user context to open a tab in');
     this.adopted = this.settings.userContext === 'adopt-tab' ? await this.openTab(userContext) : undefined;
     const context = this.adopted ?? (await connection.send('browsingContext.create', {
       type: this.browser.traits.newContext,
       userContext,
     })).context;
-    if (userContext !== this.userContext) {
+    if (userContext !== this.userContext.id) {
       if (context !== this.adopted) await releaseQuietly(connection.send('browsingContext.close', { context }));
       throw new EngineError('NODE_STALE', 'the attempt replaced its user context while a tab opened', { retryable: true });
     }
@@ -514,9 +343,9 @@ export class BidiSession {
       const own = await this.ensureContext();
       return this.tabs.find(own) ?? this.tabs.own(own, true);
     }
-    const userContext = this.userContext;
+    const userContext = this.userContext.id;
     const { context } = await this.connection.send('browsingContext.create', { type: this.browser.traits.newContext, userContext });
-    if (userContext !== this.userContext) {
+    if (userContext !== this.userContext.id) {
       await releaseQuietly(this.connection.send('browsingContext.close', { context }));
       throw new EngineError('NODE_STALE', 'the attempt replaced its user context while a tab opened', { retryable: true });
     }
@@ -596,7 +425,7 @@ export class BidiSession {
     this.retireContext();
     const { contexts } = await this.connection.send('browsingContext.getTree', { maxDepth: 0 });
     signal.throwIfAborted();
-    const tabs = contexts.filter((info) => info.userContext === this.userContext).map((info) => info.context);
+    const tabs = contexts.filter((info) => info.userContext === this.userContext.id).map((info) => info.context);
     await Promise.all(tabs.map(async (context) => {
       await this.network.removeContext(context);
       await unlessStale(this.connection.send('browsingContext.close', { context }), undefined);
@@ -636,28 +465,6 @@ export class BidiSession {
     this.input.mutated();
   }
 
-  /**
-   * Records a document of the attempt starting to load `url`: its origin is
-   * remembered for a saved session, and granted the configured permissions,
-   * once per origin and user context (BiDi grants per origin). Concurrent
-   * calls for one origin share its grant.
-   */
-  visit(url: string): Promise<void> {
-    if (!URL.canParse(url)) return Promise.resolve();
-    const { origin, protocol } = new URL(url);
-    if (protocol !== 'http:' && protocol !== 'https:') return Promise.resolve();
-    this.visited.add(origin);
-    if (this.settings.permissions.length === 0) return Promise.resolve();
-    let grant = this.granted.get(origin);
-    if (grant === undefined) {
-      const userContext = this.userContext;
-      grant = Promise.all(this.settings.permissions.map((name) =>
-        this.connection.send('permissions.setPermission', { descriptor: { name }, state: 'granted', origin, userContext }))).then(() => undefined);
-      this.granted.set(origin, grant);
-    }
-    return grant;
-  }
-
   /** The viewport in CSS pixels: the attempt's, else the window's. */
   async viewportSize(): Promise<ViewportSize> {
     if (this.viewport !== null) return this.viewport;
@@ -690,7 +497,7 @@ export class BidiSession {
    * replacement user context still opening removes itself when it lands.
    */
   async close(): Promise<void> {
-    this.generation += 1;
+    this.userContext.overtake();
     this.ended.abort();
     const gone = this.connection.isClosed;
     const step = (label: string, work: () => unknown): (() => Promise<unknown>) => () =>
@@ -698,26 +505,13 @@ export class BidiSession {
     const results = await settleEach([
       step(this.video.closeStep, () => this.video.close(CLOSE_STEP_MS)),
       step('user context removal', () => (gone ? undefined : this.closeUserContext())),
-      step('earlier user contexts', () => (gone ? undefined : this.removeUserContexts())),
+      step('earlier user contexts', () => (gone ? undefined : this.userContext.removeOwed())),
       step('network release', () => this.network.dispose()),
       () => this.downloads.dispose(),
     ]);
     const failed = results.find((result) => result.status === 'rejected');
     if (failed !== undefined) throw failed.reason;
   }
-}
-
-/** The query parameter that marks a scratch document a saved-state read or write opens, which the app's init scripts skip. */
-export const SCRATCH_PARAM = '__e2e_state_scratch';
-
-/** A driver script's source as a preload script's function declaration. */
-function wrapScript(source: string): string {
-  return `() => {\n${source}\n}`;
-}
-
-/** An app init script's source as a preload script's function declaration: it runs in every document but a saved-state scratch one, which it must not change. */
-function wrapAppScript(source: string): string {
-  return `() => {\nif (new URLSearchParams(location.search).has(${JSON.stringify(SCRATCH_PARAM)})) return;\n${source}\n}`;
 }
 
 /** Runs each step in order whatever the earlier ones did, and settles with every outcome. */

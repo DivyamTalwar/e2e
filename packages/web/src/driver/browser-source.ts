@@ -26,7 +26,8 @@ import { cancelled, releaseQuietly } from '../errors.ts';
 import { routeEvents, SESSION_EVENTS } from './events.ts';
 import { connectBidiOverCdp, launchBidiBrowser, type BidiBrowser } from './launch.ts';
 import type { BrowserName } from '../browsers.ts';
-import type { BidiSession, UserContextMode } from './session.ts';
+import type { BidiSession } from './session.ts';
+import type { UserContextMode } from './user-context.ts';
 import type { WebMedia } from '../options.ts';
 import { browserCheck, ensureBrowsersInstalled } from '../install/provision.ts';
 

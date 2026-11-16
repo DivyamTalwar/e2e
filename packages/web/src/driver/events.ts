@@ -95,7 +95,7 @@ export function routeEvents(connection: BidiConnection, contexts: ContextTree, c
   const navigated = (event: { readonly context: string; readonly url: string; readonly navigation?: string | null }): void => {
     const session = ours(event.context);
     if (session === undefined || NO_PLACE.has(event.url) || event.url.startsWith('data:')) return;
-    void session.visit(event.url).catch((cause: unknown) => session.latch.latch(asError(cause)));
+    void session.userContext.visit(event.url).catch((cause: unknown) => session.latch.latch(asError(cause)));
     if (contexts.top(event.context) !== event.context) {
       went(session, frameName(connection, event.context).then((name) => `frame${name === '' ? '' : ` "${name}"`} loaded ${event.url}`));
       return;
@@ -128,7 +128,7 @@ export function routeEvents(connection: BidiConnection, contexts: ContextTree, c
     connection.on('browsingContext.navigationStarted', (event) => {
       const session = ours(event.context);
       if (session === undefined) return;
-      void session.visit(event.url).catch((cause: unknown) => session.latch.latch(asError(cause)));
+      void session.userContext.visit(event.url).catch((cause: unknown) => session.latch.latch(asError(cause)));
       session.tabs.navigationStarted(event.context, event.url);
     }),
     connection.on('browsingContext.navigationFailed', (event) => {

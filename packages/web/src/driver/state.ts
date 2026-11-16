@@ -10,7 +10,8 @@ import type { Network } from 'webdriver-bidi-protocol';
 import { EngineError, type EngineState } from '@e2e-dev/core/engine';
 import { releaseQuietly } from '../errors.ts';
 import { storeCookie, storedCookies } from './cookies.ts';
-import { SCRATCH_PARAM, type BidiSession } from './session.ts';
+import type { BidiSession } from './session.ts';
+import { SCRATCH_PARAM } from './user-context.ts';
 import type { PageJson } from './script.ts';
 
 const STATE_FORMAT = 'bidi-storage-state';
@@ -151,9 +152,9 @@ async function writeOriginStorage(origin: StoredOrigin): Promise<void> {
 
 /** The user context's cookies and the storage of every web origin the attempt's documents were at. */
 export async function captureState(session: BidiSession): Promise<EngineState> {
-  const cookies = await storedCookies(session.connection, session.userContext);
+  const cookies = await storedCookies(session.connection, session.userContext.id);
   const origins: StoredOrigin[] = [];
-  await atEachOrigin(session, [...session.visited], async (origin, context) => {
+  await atEachOrigin(session, [...session.userContext.visited], async (origin, context) => {
     const stored = await session.page.run(readOriginStorage, [], context);
     if (typeof stored === 'string') throw new EngineError('UNSUPPORTED_CAPABILITY', `state capture: ${origin}: ${stored}`, { retryable: false });
     if (stored.localStorage.length > 0 || stored.indexedDB.length > 0) origins.push(stored);
@@ -169,7 +170,7 @@ export async function restoreState(session: BidiSession, state: EngineState, sig
   }
   const { cookies, origins } = state.data;
   await session.replaceUserContext(signal);
-  for (const { size: _size, ...cookie } of cookies) await storeCookie(session.connection, session.userContext, cookie);
+  for (const { size: _size, ...cookie } of cookies) await storeCookie(session.connection, session.userContext.id, cookie);
   const byOrigin = new Map(origins.map((origin) => [origin.origin, origin]));
   await atEachOrigin(session, [...byOrigin.keys()], async (origin, context) => {
     await session.page.run(writeOriginStorage, [byOrigin.get(origin)!], context);
@@ -187,7 +188,7 @@ async function atEachOrigin(session: BidiSession, origins: readonly string[], wo
   const connection = session.connection;
   const { context } = await connection.send('browsingContext.create', {
     type: session.browser.traits.newContext,
-    userContext: session.userContext,
+    userContext: session.userContext.id,
     background: true,
   });
   try {

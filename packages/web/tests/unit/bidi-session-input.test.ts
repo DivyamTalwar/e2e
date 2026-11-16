@@ -233,7 +233,7 @@ describe('BidiSession.close', () => {
     await closing.openUserContext(new AbortController().signal);
     fake.on('browser.removeUserContext', { error: 'unknown error', message: 'busy' });
     await expect(closing.replaceUserContext(new AbortController().signal)).rejects.toThrow('busy');
-    expect(closing.userContext).toBe('second');
+    expect(closing.userContext.id).toBe('second');
     fake.on('browser.removeUserContext', { result: {} });
     await closing.close();
     expect(fake.commands('browser.removeUserContext').map((command) => command.params['userContext'])).toEqual(['first', 'first', 'second']);

@@ -45,12 +45,12 @@ const FILTER_FIELDS = ['name', 'domain', 'path'] as const;
 
 /** The attempt's cookies, as the fixture reports them. */
 export async function readCookies(session: BidiSession): Promise<Cookie[]> {
-  return (await storedCookies(session.connection, session.userContext)).map(toCookie);
+  return (await storedCookies(session.connection, session.userContext.id)).map(toCookie);
 }
 
 /** Stores each of `cookies` on its target in `targets` (`cookieTargets`), in the attempt's user context. */
 export async function writeCookies(session: BidiSession, cookies: readonly CookieFields[], targets: readonly CookieTarget[]): Promise<void> {
-  for (const [index, cookie] of cookies.entries()) await storeCookie(session.connection, session.userContext, partialCookie(cookie, targets[index]!));
+  for (const [index, cookie] of cookies.entries()) await storeCookie(session.connection, session.userContext.id, partialCookie(cookie, targets[index]!));
 }
 
 /**
@@ -61,13 +61,13 @@ export async function writeCookies(session: BidiSession, cookies: readonly Cooki
 export async function deleteCookies(session: BidiSession, filter: CookieFilter | undefined): Promise<void> {
   const filters = FILTER_FIELDS.every((field) => typeof filter?.[field] !== 'object')
     ? [Object.fromEntries(FILTER_FIELDS.flatMap((field) => (filter?.[field] === undefined ? [] : [[field, filter[field]]])))]
-    : (await storedCookies(session.connection, session.userContext))
+    : (await storedCookies(session.connection, session.userContext.id))
         .filter((cookie) => FILTER_FIELDS.every((field) => {
           const wanted = filter?.[field];
           return wanted === undefined || (typeof wanted === 'string' ? cookie[field] === wanted : new RegExp(wanted.source, wanted.flags).test(cookie[field]));
         }))
         .map(({ name, domain, path }) => ({ name, domain, path }));
-  for (const each of filters) await session.connection.send('storage.deleteCookies', { filter: each, partition: partition(session.userContext) });
+  for (const each of filters) await session.connection.send('storage.deleteCookies', { filter: each, partition: partition(session.userContext.id) });
 }
 
 /** The cookies of `userContext`, as the browser holds them. */

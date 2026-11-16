@@ -109,7 +109,7 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     },
     async addInitScript(script: unknown, ...rest: unknown[]) {
       const source = await testInitScriptSource(script, rest.length === 0 ? undefined : { arg: rest[0] }, (file) => surface.projectPath(file));
-      await run('addInitScript', (session) => session.addInitScript(source));
+      await run('addInitScript', (session) => session.userContext.addInitScript(source));
     },
     route(pattern, handler) {
       const wirePattern = toTextPattern(pattern);
@@ -158,7 +158,7 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     },
     emulateMedia(media) {
       const requested = requireMedia(media);
-      return run('emulateMedia', (session) => session.emulateMedia(requested));
+      return run('emulateMedia', (session) => session.userContext.emulateMedia(requested));
     },
     // Async so the harness records the registration as a `browser.onDialog` step.
     async onDialog(handler) {
