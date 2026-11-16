@@ -214,7 +214,7 @@ export async function resolveFrames(session: BidiSession, selectors: readonly st
   let hidden = false;
   const boxes: FrameBox[] = [];
   for (const selector of selectors) {
-    const found = await session.reader('selectFrame', [pageParts(selector), options], context);
+    const found = await session.page.reader('selectFrame', [pageParts(selector), options], context);
     if (typeof found === 'string') throw unparsedSelector(selector, found);
     if (found.count === 0) throw new EngineError('FRAME_NOT_FOUND', `no frame matches ${selector}`, { retryable: true });
     if (found.only === undefined) throw new EngineError('FRAME_AMBIGUOUS', `${found.count} frames match ${selector}`, { retryable: false });

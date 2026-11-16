@@ -16,7 +16,6 @@ import { createLocatorMatch } from './locator-match.ts';
 import { createSemanticReader } from './read-semantics.ts';
 import type { RawNodeData, RawObservedNode, TreeLimits } from './read-node.ts';
 import { selectChain, type PagePart } from './select-chain.ts';
-import type { PageArgument, Wire } from '../driver/script.ts';
 
 /** Where `BUILTINS_INIT_SCRIPT` keeps the builtins a page had before its own scripts ran. */
 const BUILTINS_KEY = 'e2e.builtins';
@@ -246,16 +245,10 @@ function createReaders(
 }
 
 /** The readers a document keeps, by name. */
-type Readers = ReturnType<typeof createReaders>;
+export type Readers = ReturnType<typeof createReaders>;
 
 /** The name of a reader a document keeps (`readerCall`). */
 export type ReaderName = keyof Readers;
-
-/** What reader `K` takes, as it crosses the wire. */
-export type ReaderArgs<K extends ReaderName> = Wire<Parameters<Readers[K]>> & readonly PageArgument[];
-
-/** What reader `K` answers, as it crosses the wire. */
-export type ReaderResult<K extends ReaderName> = Wire<ReturnType<Readers[K]>>;
 
 /**
  * The readers over the semantic reader, its name computation, a locate's

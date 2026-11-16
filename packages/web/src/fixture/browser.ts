@@ -59,7 +59,7 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
   const navigate = (api: string, options: { timeout?: number } | undefined, work: (session: BidiSession, budget: OperationBudget) => Promise<void>): Promise<void> =>
     surface.guard(context.operation(stepTimeout(options?.timeout, api) ?? context.timeouts.test), 'navigation', work, { traced: true });
   const currentUrl = (deadline?: Deadline): Promise<string> => surface.guard(context.operation(deadline?.remaining()), 'url', (session) => session.currentUrl());
-  const currentTitle = (deadline?: Deadline): Promise<string> => surface.guard(context.operation(deadline?.remaining()), 'title', (session) => session.run(documentTitle, []));
+  const currentTitle = (deadline?: Deadline): Promise<string> => surface.guard(context.operation(deadline?.remaining()), 'title', (session) => session.page.run(documentTitle, []));
   const expectation = createBrowserExpectation({
     currentUrl,
     currentTitle,
@@ -78,7 +78,7 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
     if (known !== undefined) return known;
     const handle = context.fixture<BrowserTab>('tab', {
       url: () => run('url', (session) => session.currentUrl(tab.context)),
-      title: () => run('title', (session) => session.run(documentTitle, [], tab.context)),
+      title: () => run('title', (session) => session.page.run(documentTitle, [], tab.context)),
       isActive: () => surface.activeTab() === tab,
       isClosed: () => tab.closed,
       activate: () => run('tab', (session) => session.tabs.show(tab)),

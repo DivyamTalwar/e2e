@@ -111,7 +111,7 @@ async function documentReady(session: BidiSession, context: string, wait: 'compl
   if (wait === 'none') return;
   for (;;) {
     signal.throwIfAborted();
-    const state = await session.run(readyState, [], context).catch((cause: unknown) => {
+    const state = await session.page.run(readyState, [], context).catch((cause: unknown) => {
       if (isStale(cause)) return 'loading';
       throw cause;
     });
@@ -153,7 +153,7 @@ export function traverse(session: BidiSession, delta: number, timeoutMs: number,
 /** The tab's history entry once its document reads complete; undefined while it loads or is being replaced. */
 async function landedEntry(session: BidiSession): Promise<string | undefined> {
   try {
-    return (await session.run(historyEntry, [])) ?? undefined;
+    return (await session.page.run(historyEntry, [])) ?? undefined;
   } catch (cause) {
     if (isStale(cause)) return undefined;
     throw cause;

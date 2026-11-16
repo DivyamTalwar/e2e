@@ -154,7 +154,7 @@ export async function captureState(session: BidiSession): Promise<EngineState> {
   const cookies = await storedCookies(session.connection, session.userContext);
   const origins: StoredOrigin[] = [];
   await atEachOrigin(session, [...session.visited], async (origin, context) => {
-    const stored = await session.run(readOriginStorage, [], context);
+    const stored = await session.page.run(readOriginStorage, [], context);
     if (typeof stored === 'string') throw new EngineError('UNSUPPORTED_CAPABILITY', `state capture: ${origin}: ${stored}`, { retryable: false });
     if (stored.localStorage.length > 0 || stored.indexedDB.length > 0) origins.push(stored);
   });
@@ -172,7 +172,7 @@ export async function restoreState(session: BidiSession, state: EngineState, sig
   for (const { size: _size, ...cookie } of cookies) await storeCookie(session.connection, session.userContext, cookie);
   const byOrigin = new Map(origins.map((origin) => [origin.origin, origin]));
   await atEachOrigin(session, [...byOrigin.keys()], async (origin, context) => {
-    await session.run(writeOriginStorage, [byOrigin.get(origin)!], context);
+    await session.page.run(writeOriginStorage, [byOrigin.get(origin)!], context);
   });
 }
 

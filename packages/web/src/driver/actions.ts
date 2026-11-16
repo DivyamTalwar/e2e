@@ -91,7 +91,7 @@ export async function perform(session: BidiSession, ref: NodeRef, action: Locato
     case 'selectOption': {
       const by = typeof action.value === 'string' ? { label: action.value } : action.value;
       await waitVisibleEnabled(session, target, deadline, signal);
-      return mutateWhenReady(session, deadline, signal, 'selectOption: ', () => session.run(selectOption, [target.element, by], target.context));
+      return mutateWhenReady(session, deadline, signal, 'selectOption: ', () => session.page.run(selectOption, [target.element, by], target.context));
     }
     case 'setInputFiles':
       return setInputFiles(session, target, action.paths, deadline, signal);
@@ -99,14 +99,14 @@ export async function perform(session: BidiSession, ref: NodeRef, action: Locato
       return dragTo(session, target, session.refs.lookup(action.target), deadline, signal);
     case 'swipe': {
       // A wheel the element already takes goes at once; only one something blocks waits for it to become actionable.
-      const aimed = await session.run(wheelAim, [target.element], target.context);
+      const aimed = await session.page.run(wheelAim, [target.element], target.context);
       if (aimed.aim !== 'blocked') {
         const { box } = aimed;
         const at = aimed.aim === 'pointer' ? session.pointer : { x: box.x + box.width / 2, y: box.y + box.height / 2 };
         return wheel(session, at, box.width > 0 ? box : await session.viewportSize(), action.direction, action.momentum ?? 'none', signal);
       }
       const point = await pointerPoint(session, target, deadline, false, signal);
-      const box = await session.run(boxSize, [target.element], target.context);
+      const box = await session.page.run(boxSize, [target.element], target.context);
       if (box === null) throw new EngineError('NOT_ACTIONABLE', 'element has no visible bounding box', { retryable: false });
       return wheel(session, point, box.width > 0 ? box : await session.viewportSize(), action.direction, action.momentum ?? 'none', signal);
     }
@@ -140,7 +140,7 @@ export async function performAt(session: BidiSession, point: ViewportPoint, acti
 export async function typeText(session: BidiSession, text: string, replace: boolean, signal: AbortSignal): Promise<void> {
   const documents = await session.documentContexts(session.requireContext());
   const editable = await Promise.all(documents.map((context) =>
-    unlessStale(session.run(focusTakesKeys, [], context), false)));
+    unlessStale(session.page.run(focusTakesKeys, [], context), false)));
   if (!editable.includes(true)) {
     throw new EngineError(
       'NOT_ACTIONABLE',
@@ -177,7 +177,7 @@ export async function typeInto(session: BidiSession, text: string, signal: Abort
     signal.throwIfAborted();
     session.mutated();
     for (const context of await session.documentContexts(session.requireContext())) {
-      if (await unlessStale(session.run(insertFocusedText, [segment], context), false)) break;
+      if (await unlessStale(session.page.run(insertFocusedText, [segment], context), false)) break;
     }
   }
   await flush();
@@ -228,11 +228,11 @@ async function click(session: BidiSession, target: NodeTarget, deadline: Deadlin
   await settle(deadline, signal, async () => {
     const point = await aim();
     if (point.kind !== 'ok') return point;
-    await session.run(armHitInterceptor, [target.element], target.context);
+    await session.page.run(armHitInterceptor, [target.element], target.context);
     const verdict = await session.input.sendSuppressible(
       clickSources(point.x, point.y, options),
       signal,
-      () => unlessStale(session.run(hitInterceptorResult, [], target.context), { kind: 'ok' }),
+      () => unlessStale(session.page.run(hitInterceptorResult, [], target.context), { kind: 'ok' }),
       (seen) => seen.kind === 'not-yet',
     );
     if (verdict.kind === 'unseen') {
@@ -251,7 +251,7 @@ async function click(session: BidiSession, target: NodeTarget, deadline: Deadlin
  * within the deadline.
  */
 async function clickControl(session: BidiSession, target: NodeTarget, deadline: Deadline, options: ClickOptions, signal: AbortSignal, verb: 'tap' | 'check' | 'uncheck'): Promise<void> {
-  const { label } = await settle(deadline, signal, () => session.run(labelStandIn, [target.element], target.context), `${verb} did not become actionable in time: `);
+  const { label } = await settle(deadline, signal, () => session.page.run(labelStandIn, [target.element], target.context), `${verb} did not become actionable in time: `);
   if (label === null) return click(session, target, deadline, options, signal);
   return click(session, { element: label, context: target.context }, deadline, options, signal, true);
 }
@@ -260,7 +260,7 @@ async function clickControl(session: BidiSession, target: NodeTarget, deadline: 
 async function scrollIntoView(session: BidiSession, target: NodeTarget, deadline: Deadline, signal: AbortSignal): Promise<void> {
   await settle(deadline, signal, async () => {
     await scrollFrames(session, target);
-    return session.run(scrollIntoViewIfNeeded, [target.element], target.context);
+    return session.page.run(scrollIntoViewIfNeeded, [target.element], target.context);
   });
 }
 
@@ -268,7 +268,7 @@ async function scrollIntoView(session: BidiSession, target: NodeTarget, deadline
 async function focusOn(session: BidiSession, target: NodeTarget, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
   session.mutated();
-  await session.run(focus, [target.element], target.context);
+  await session.page.run(focus, [target.element], target.context);
 }
 
 /**
@@ -278,7 +278,7 @@ async function focusOn(session: BidiSession, target: NodeTarget, signal: AbortSi
  */
 async function scrollFrames(session: BidiSession, target: NodeTarget): Promise<void> {
   for (const frame of session.frames.chain(target.context)) {
-    await session.run(actionPoint, [frame.element, { stable: false }], frame.context);
+    await session.page.run(actionPoint, [frame.element, { stable: false }], frame.context);
   }
 }
 
@@ -286,14 +286,14 @@ async function scrollFrames(session: BidiSession, target: NodeTarget): Promise<v
 async function waitVisibleEnabled(session: BidiSession, target: NodeTarget, deadline: Deadline, signal: AbortSignal): Promise<void> {
   await settle(deadline, signal, async () => {
     const enabled = await readEnabled(session, target);
-    return enabled.kind === 'ok' ? session.run(elementShown, [target.element], target.context) : enabled;
+    return enabled.kind === 'ok' ? session.page.run(elementShown, [target.element], target.context) : enabled;
   });
 }
 
 /** Whether the element is enabled, as the shared reader reads it, in the page functions' terms. */
 async function readEnabled(session: BidiSession, target: NodeTarget): Promise<Outcome> {
   const options = { testIdAttribute: session.settings.testIdAttribute, secureFieldSelector: SECURE_FIELD_SELECTOR };
-  const disabled = await session.reader('disabled', [target.element, options], target.context);
+  const disabled = await session.page.reader('disabled', [target.element, options], target.context);
   if (disabled === null) return { kind: 'detached' };
   return disabled ? { kind: 'not-yet', reason: 'element is not enabled' } : { kind: 'ok' };
 }
@@ -309,7 +309,7 @@ async function settledPoint(session: BidiSession, target: NodeTarget, enabled: b
     const ready = await readEnabled(session, target);
     if (ready.kind !== 'ok') return ready;
   }
-  return session.run(actionPoint, [target.element, { ...(align === undefined ? {} : { align }), ...(atControl ? { atControl } : {}) }], target.context);
+  return session.page.run(actionPoint, [target.element, { ...(align === undefined ? {} : { align }), ...(atControl ? { atControl } : {}) }], target.context);
 }
 
 /** The element's actionable point in the top-level viewport (`pointerAim`), polled until the deadline. */
@@ -348,8 +348,8 @@ function pointerAim(session: BidiSession, target: NodeTarget, enabled: boolean, 
       projected = project(inverse!, projected);
     }
     const checks = [
-      session.run(hitBlocker, [target.element, projected.x, projected.y], target.context),
-      ...chain.map((frame, index) => session.run(hitBlocker, [frame.element, inDocuments[index]!.x, inDocuments[index]!.y], frame.context)),
+      session.page.run(hitBlocker, [target.element, projected.x, projected.y], target.context),
+      ...chain.map((frame, index) => session.page.run(hitBlocker, [frame.element, inDocuments[index]!.x, inDocuments[index]!.y], frame.context)),
     ];
     const blocked = (await Promise.all(checks)).find((hit) => hit.kind !== 'ok');
     if (blocked === undefined) return { kind: 'ok', ...top };
@@ -361,7 +361,7 @@ function pointerAim(session: BidiSession, target: NodeTarget, enabled: boolean, 
 /** Replaces the field's content with `value` in one edit, as a paste would, once it is visible, enabled, and editable (not still, nor in view: no pointer is involved); see the page's `fill`. */
 async function fill(session: BidiSession, target: NodeTarget, value: string, deadline: Deadline, signal: AbortSignal): Promise<void> {
   await waitVisibleEnabled(session, target, deadline, signal);
-  return mutateWhenReady(session, deadline, signal, '', () => session.run(fillElement, [target.element, value], target.context));
+  return mutateWhenReady(session, deadline, signal, '', () => session.page.run(fillElement, [target.element, value], target.context));
 }
 
 /**
@@ -392,7 +392,7 @@ async function mutateWhenReady(session: BidiSession, deadline: Deadline, signal:
  * clicked like any control, and its script decides what the click does.
  */
 async function setChecked(session: BidiSession, target: NodeTarget, checked: boolean, deadline: Deadline, signal: AbortSignal): Promise<void> {
-  const before = await session.run(checkState, [target.element], target.context);
+  const before = await session.page.run(checkState, [target.element], target.context);
   if (before === 'detached') throw detached();
   if (before.checked === null) throw new EngineError('NOT_ACTIONABLE', 'Not a checkbox or radio button', { retryable: false });
   if (before.checked === checked) return;
@@ -403,7 +403,7 @@ async function setChecked(session: BidiSession, target: NodeTarget, checked: boo
   await clickControl(session, target, deadline, {}, signal, checked ? 'check' : 'uncheck');
   let first = true;
   await settle(deadline, signal, async () => {
-    const after = await unlessStale(session.run(checkState, [target.element], target.context), 'detached');
+    const after = await unlessStale(session.page.run(checkState, [target.element], target.context), 'detached');
     if (after === 'detached' && !first) {
       throw new EngineError('NOT_ACTIONABLE', `${checked ? 'check' : 'uncheck'} clicked the control but its checked state did not change before the control was replaced`, { retryable: false });
     }
@@ -448,7 +448,7 @@ async function setInputFiles(session: BidiSession, target: NodeTarget, paths: re
   const directory = await uploadKind(files);
   const remote = session.settings.remoteFiles ? await remoteUpload(files, directory) : undefined;
   const send = async (context: string, element: ElementRef): Promise<void> => {
-    const takesDirectory = await session.run(directoryInput, [element], context);
+    const takesDirectory = await session.page.run(directoryInput, [element], context);
     if (directory && !takesDirectory) throw new TestError('INVALID_ARGUMENT', 'File input does not support directories, pass individual files instead');
     if (!directory && takesDirectory) throw new TestError('INVALID_ARGUMENT', '[webkitdirectory] input requires passing a path to a directory');
     signal.throwIfAborted();
@@ -457,10 +457,10 @@ async function setInputFiles(session: BidiSession, target: NodeTarget, paths: re
       await connection.send('input.setFiles', { context, element: { sharedId: element.sharedId }, files });
       return;
     }
-    const refused = await session.run(setFileBytes, [element, remote], context);
+    const refused = await session.page.run(setFileBytes, [element, remote], context);
     if (refused !== null) throw new TestError('INVALID_ARGUMENT', refused);
   };
-  const input = await session.run(fileInput, [target.element], target.context);
+  const input = await session.page.run(fileInput, [target.element], target.context);
   if (input instanceof ElementRef) {
     await send(target.context, input);
     return;
@@ -558,5 +558,5 @@ async function wheel(
   const [deltaX, deltaY] = wheelDelta(direction, distance);
   const point = nearestPixel(at);
   await session.input.send(swipeSources(point.x, point.y, deltaX, deltaY), signal);
-  await session.run(nextFrame, []);
+  await session.page.run(nextFrame, []);
 }

@@ -5,7 +5,7 @@
  */
 
 import type { Emulation } from 'webdriver-bidi-protocol';
-import { EngineError, obj, TestError, withTimeout, type AppLogEntry, type EngineSnapshot, type NodeRef, type ViewportPoint, type ViewportSize } from '@e2e-dev/core/engine';
+import { EngineError, obj, withTimeout, type AppLogEntry, type EngineSnapshot, type NodeRef, type ViewportPoint, type ViewportSize } from '@e2e-dev/core/engine';
 import { CLOSED_SHADOW_ROOTS_INIT_SCRIPT } from '../in-page/closed-shadow.ts';
 import { MODAL_ORDER_INIT_SCRIPT } from '../in-page/modal-dialogs.ts';
 import { DialogRouter } from './dialogs.ts';
@@ -16,21 +16,22 @@ import { BidiInput } from './input.ts';
 import { ArtifactPaths } from './artifact-paths.ts';
 import type { ContextTree } from './context-tree.ts';
 import { AttemptDownloads } from './downloads.ts';
-import { BidiError, cancelled, ErrorLatch, invalidState, releaseQuietly, ScriptError, unlessStale } from '../errors.ts';
+import { BidiError, cancelled, ErrorLatch, invalidState, releaseQuietly, unlessStale } from '../errors.ts';
 import { FrameRegistry, type NodeTarget } from './frames.ts';
 import type { BidiBrowser } from './launch.ts';
 import { AttemptNetwork } from './network.ts';
 import { OwnNavigations } from './own-navigations.ts';
+import { PageCalls } from './page-calls.ts';
 import { AttemptTabs, type AttemptTab } from './tabs.ts';
 import { viewportSize } from '../in-page/document.ts';
 import { HIT_INTERCEPTOR_INIT_SCRIPT } from '../in-page/hit-interceptor.ts';
-import { BUILTINS_INIT_SCRIPT, readerCall, readerInstallCall, READERS_INIT_SCRIPT, READERS_MISSING, type ReaderArgs, type ReaderName, type ReaderResult } from '../in-page/readers.ts';
+import { BUILTINS_INIT_SCRIPT, READERS_INIT_SCRIPT } from '../in-page/readers.ts';
 import { BidiVideo } from './video.ts';
 import { ProviderVideo } from './provider-video.ts';
 import { DriverVideo, type AttemptVideo } from './attempt-video.ts';
 import type { LeaseDownloads, LeaseRecording } from '../provider.ts';
 import type { BidiConnection } from './connection.ts';
-import { callFunction, type CallOptions, type ElementRef, type PageArgument, type PageValue, type TypedPageFunction, type Wire } from './script.ts';
+import type { PageArgument, PageValue } from './script.ts';
 
 /** How long one step of closing an attempt may take before the next runs. */
 const CLOSE_STEP_MS = 10_000;
@@ -98,9 +99,6 @@ interface ScopedUserContext {
   readonly preloads: readonly string[];
   readonly context: string | undefined;
 }
-
-/** The sandbox realm a failed read runs again in, to tell a page that broke the readers from a fault of their own. */
-const READER_PROBE_SANDBOX = 'e2e-reader-probe';
 
 /**
  * The ids the driver minted and the element behind each, with the browsing
@@ -188,8 +186,10 @@ export class BidiSession {
   readonly tabs: AttemptTabs;
   /** The tab's keyboard and mouse, the only sender of input. */
   readonly input: BidiInput;
+  /** The calls into the attempt's documents: page functions, and the readers each document keeps. */
+  readonly page: PageCalls;
   readonly refs = new BidiRefs(() => this.input.dispatches);
-  readonly frames = new FrameRegistry((frame) => this.reader('frameBox', [frame.element], frame.context));
+  readonly frames = new FrameRegistry((frame) => this.page.reader('frameBox', [frame.element], frame.context));
   readonly latch = new ErrorLatch();
   readonly dialogs = new DialogRouter(this.latch);
   readonly network: AttemptNetwork;
@@ -231,6 +231,7 @@ export class BidiSession {
   ) {
     this.media = settings.media;
     this.artifacts = new ArtifactPaths(attempt.artifactsDir);
+    this.page = new PageCalls(browser.connection, () => this.requireContext());
     this.viewport = settings.viewport;
     this.input = new BidiInput({ connection: browser.connection, traits: browser.traits, context: () => this.requireContext(), viewport: () => this.viewportSize() });
     this.network = new AttemptNetwork(browser.connection, {
@@ -602,74 +603,10 @@ export class BidiSession {
     }));
   }
 
-  /** Calls a page function in `context` (the tab by default). */
-  call(declaration: string, args: readonly PageArgument[] = [], options?: CallOptions, context?: string): Promise<PageValue> {
-    return callFunction(this.connection, context ?? this.requireContext(), declaration, args, options);
-  }
-
   /** Calls a page function the test compiled (`compileEvaluation`) with `arg` and returns its whole result; the test's code may change the page, as input would. */
   evaluate(declaration: string, arg: PageArgument | undefined): Promise<PageValue> {
     this.mutated();
-    return this.call(declaration, arg === undefined ? [] : [arg], { awaitPromise: true, maxObjectDepth: null });
-  }
-
-  /**
-   * Runs one of this driver's typed page functions in `context` (the tab by
-   * default), with its element arguments as references and its result
-   * converted back the same way; a promise it returns is awaited.
-   */
-  async run<F extends TypedPageFunction>(fn: F, args: Wire<Parameters<F>> & readonly PageArgument[], context?: string): Promise<Wire<Awaited<ReturnType<F>>>> {
-    const value = await callFunction(this.connection, context ?? this.requireContext(), fn, args, { awaitPromise: true, maxObjectDepth: null });
-    return value as Wire<Awaited<ReturnType<F>>>;
-  }
-
-  /** Calls the document's reader `name` in `context` (the tab by default) and reads its answer whole. */
-  async reader<K extends ReaderName>(name: K, args: ReaderArgs<K>, context?: string): Promise<ReaderResult<K>> {
-    return (await this.callReader(name, args, { maxObjectDepth: null }, context)) as ReaderResult<K>;
-  }
-
-  /**
-   * Calls the document's encoded reader `name` in `context` (the tab by
-   * default) and decodes its metadata: one JSON string, or, when the page's
-   * JSON cannot be trusted, the value itself, read whole in the same call.
-   */
-  async readEncoded<K extends 'tree' | 'locate'>(name: K, args: ReaderArgs<K>, context?: string): Promise<{ metadata: Exclude<ReaderResult<K>[0], string>; elements: ElementRef[] }> {
-    const [metadata, elements] = (await this.callReader(name, args, { maxObjectDepth: null }, context)) as ReaderResult<K>;
-    // oxlint-disable-next-line e2e/no-unchecked-json -- page-reported metadata; each caller checks its alignment
-    return { metadata: typeof metadata === 'string' ? JSON.parse(metadata) : metadata, elements };
-  }
-
-  /**
-   * Calls one of the document's readers through the copy its preload
-   * installed; a document without one (open before the preload) gets them
-   * with the call, and keeps them.
-   */
-  private async callReader(name: ReaderName, args: readonly PageArgument[], options: CallOptions | undefined, context: string | undefined): Promise<unknown> {
-    try {
-      const value = await this.call(readerCall(name), args, options, context);
-      if (value !== READERS_MISSING) return value;
-      return await this.call(readerInstallCall(name), args, options, context);
-    } catch (cause) {
-      throw (await this.pageBrokeReader(name, cause, args, options, context)) ?? cause;
-    }
-  }
-
-  /**
-   * The failure of a reader the page's own scripts broke, as the test's
-   * `EVALUATE_FAILED`, or undefined when something else failed. A page that
-   * replaces a built-in method the readers call (`Map.prototype.set`) breaks
-   * them in its world. Told apart by reading again in a sandbox realm, whose
-   * built-ins and DOM bindings no page script reaches: a read that throws in
-   * the page's world and passes there failed because of the page.
-   */
-  private async pageBrokeReader(name: ReaderName, cause: unknown, args: readonly PageArgument[], options: CallOptions | undefined, context: string | undefined): Promise<TestError | undefined> {
-    if (!(cause instanceof ScriptError)) return undefined;
-    try {
-      await this.call(readerInstallCall(name), args, { ...options, sandbox: READER_PROBE_SANDBOX }, context);
-    } catch {
-      return undefined;
-    }
-    return new TestError('EVALUATE_FAILED', `the ${name} read failed: the page deleted or replaced a JavaScript built-in that in-page automation code needs: ${cause.message}`, { cause });
+    return this.page.call(declaration, arg === undefined ? [] : [arg], { awaitPromise: true, maxObjectDepth: null });
   }
 
   /**
@@ -724,7 +661,7 @@ export class BidiSession {
   /** The viewport in CSS pixels: the attempt's, else the window's. */
   async viewportSize(): Promise<ViewportSize> {
     if (this.viewport !== null) return this.viewport;
-    return this.run(viewportSize, []);
+    return this.page.run(viewportSize, []);
   }
 
   /** The URL of `context` (the shown tab by default), as the browser reports it. */

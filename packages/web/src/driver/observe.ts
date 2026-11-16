@@ -62,7 +62,7 @@ const PIXEL_FALLBACK_RESERVE_MS = 2_000;
 export async function observe(session: BidiSession, timeoutMs: number, signal: AbortSignal, options?: EngineObserveOptions): Promise<EngineSnapshot> {
   const context = session.requireContext();
   const deadline = Date.now() + timeoutMs;
-  await unlessStale(session.run(domReady, [Math.min(SETTLE_TIMEOUT_MS, timeoutMs / 2)]), undefined);
+  await unlessStale(session.page.run(domReady, [Math.min(SETTLE_TIMEOUT_MS, timeoutMs / 2)]), undefined);
   const viewport = await session.viewportSize();
   if (options?.pixelFallback !== true) return observeTree(session, context, viewport, deadline, signal, options);
   const semanticDeadline = deadline - Math.min(PIXEL_FALLBACK_RESERVE_MS, (deadline - Date.now()) / 4);
@@ -144,7 +144,7 @@ export async function traceScreen(session: BidiSession, signal: AbortSignal): Pr
 /** Reads `properties` of the computed style of the element an observation's `ref` names, without input or actionability waits. */
 export async function readStyle(session: BidiSession, ref: NodeRef, properties: readonly ComputedStyleProperty[]): Promise<ComputedStyleValues> {
   const target = session.refs.lookupObserved(ref);
-  const style = await session.run(computedStyle, [target.element, [...properties]], target.context);
+  const style = await session.page.run(computedStyle, [target.element, [...properties]], target.context);
   if (style === null) throw new EngineError('NODE_STALE', 'node is detached; observe again before reading', { retryable: true });
   return style;
 }
@@ -186,7 +186,7 @@ async function resolveLocator(session: BidiSession, expression: LocatorExpressio
   const { chain, inner } = splitFrames(expression);
   const options = { testIdAttribute: session.settings.testIdAttribute, secureFieldSelector: SECURE_FIELD_SELECTOR };
   const frame = await resolveFrames(session, chain, options);
-  const { metadata: nodes, elements } = await session.readEncoded('locate', [options, JSON.stringify(inner), selectorParts(inner), frame.hidden], frame.context);
+  const { metadata: nodes, elements } = await session.page.readEncoded('locate', [options, JSON.stringify(inner), selectorParts(inner), frame.hidden], frame.context);
   if (!Array.isArray(nodes)) throw unparsedSelector(nodes.selector, nodes.reason);
   if (nodes.length !== elements.length) {
     throw new EngineError('ENGINE_FAILURE', 'located reads do not align with their elements', { retryable: false });
@@ -233,7 +233,7 @@ function selectorParts(expression: LocatorExpression): [string, PagePart[]][] {
  * truncation; an off-site one stays a boundary node by design.
  */
 async function captureTree(session: BidiSession, context: string, framePath: readonly string[], budget: number, deadline: number): Promise<CapturedTree> {
-  const { metadata: decoded, elements } = await session.readEncoded('tree', [
+  const { metadata: decoded, elements } = await session.page.readEncoded('tree', [
     { testIdAttribute: session.settings.testIdAttribute, secureFieldSelector: SECURE_FIELD_SELECTOR },
     { maxNodes: budget, idSeed: session.refs.reserveIds(budget), nameLimit: OBSERVED_NAME_LIMIT, textLimit: OBSERVED_TEXT_LIMIT },
   ], context);
@@ -281,7 +281,7 @@ async function readFrame(
   budget: number,
   deadline: number,
 ): Promise<{ box: FrameBox; captured: CapturedTree }> {
-  const box = await session.reader('frameBox', [frame.element], frame.context);
+  const box = await session.page.reader('frameBox', [frame.element], frame.context);
   return { box, captured: await captureTree(session, child, framePath, budget, deadline) };
 }
 
@@ -332,13 +332,13 @@ async function maskedCapture(session: BidiSession, viewport: ViewportSize): Prom
   try {
     let count = 0;
     for (const each of documents) {
-      count += await session.run(maskSecureFields, [SECURE_FIELD_SELECTOR, token], each);
+      count += await session.page.run(maskSecureFields, [SECURE_FIELD_SELECTOR, token], each);
       masked.push(each);
     }
     // Firefox fails a capture whose document a navigation already under way replaced mid-snapshot
     // ("Unable to capture screenshot"), so a failed capture is stale when a masked document was replaced.
     const captured = await captureUnlessNavigated(session, context, documents).then((value) => value, (cause: unknown) => ({ failed: cause }));
-    held = (await Promise.all(masked.map((each) => session.run(unmaskSecureFields, [token], each)))).every(Boolean);
+    held = (await Promise.all(masked.map((each) => session.page.run(unmaskSecureFields, [token], each)))).every(Boolean);
     masked.length = 0;
     const after = await session.documentContexts(context);
     if (!held || navigated || after.length !== documents.length || after.some((each, index) => each !== documents[index])) {
@@ -354,7 +354,7 @@ async function maskedCapture(session: BidiSession, viewport: ViewportSize): Prom
     };
   } finally {
     for (const off of offs) off();
-    await Promise.all(masked.map((each) => releaseQuietly(session.run(unmaskSecureFields, [token], each))));
+    await Promise.all(masked.map((each) => releaseQuietly(session.page.run(unmaskSecureFields, [token], each))));
   }
 }
 
