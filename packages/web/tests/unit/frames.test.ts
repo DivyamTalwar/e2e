@@ -28,20 +28,23 @@ const number = (value: number) => ({ type: 'number', value });
 /** A box of numbers as BiDi serializes it. */
 const numbers = (values: Record<string, number>) => ({ type: 'object', value: Object.entries(values).map(([key, value]) => [key, number(value)]) });
 
-/** One iframe a document holds: its element, its window when it has a document, and whether it is hidden. */
+/** One iframe a document holds: its element, its window when it has one, whether it is hidden, and whether its document has no script context of its own yet. */
 interface ScriptedFrame {
   readonly element: string;
   readonly window?: string;
   readonly hidden?: boolean;
+  readonly bare?: boolean;
 }
 
 /**
  * A session whose tab is `top`, on a peer that scripts the frame lookup per
  * context (the iframes it matches and, for exactly one, the element, whether
- * it is hidden, and a 100 by 100 content box at (10, 20)) and each iframe's
- * `contentWindow`, which it answers in a sandbox realm alone.
+ * it is hidden, and a 100 by 100 content box at (10, 20)), each iframe's
+ * `contentWindow`, which it answers in a sandbox realm alone, and the realms
+ * of each window: its own, or for a bare document only the sandbox's.
  */
 async function frames(iframes: Record<string, ScriptedFrame[]>): Promise<{ fake: FakeBidi; session: BidiSession }> {
+  const bare = new Set(Object.values(iframes).flat().filter((frame) => frame.bare === true).map((frame) => frame.window));
   const fake = new FakeBidi().on('script.callFunction', (params) => {
     const target = params['target'] as { context: string; sandbox?: string };
     const found = iframes[target.context] ?? [];
@@ -62,6 +65,10 @@ async function frames(iframes: Record<string, ScriptedFrame[]>): Promise<{ fake:
     return { result: { type: 'success', realm: 'r', result: { type: 'object', value } } };
   });
   fake
+    .on('script.getRealms', (params) => {
+      const context = String(params['context']);
+      return { result: { realms: [{ type: 'window', realm: 'r', origin: 'http://app.test', context, ...(bare.has(context) ? { sandbox: 'e2e-frames' } : {}) }] } };
+    })
     .on('browser.createUserContext', { result: { userContext: 'mine' } })
     .on('network.addDataCollector', { result: { collector: 'c' } })
     .on('browsingContext.create', { result: { context: 'top' } });
@@ -95,6 +102,9 @@ describe('resolveFrames', () => {
   it('is retryable FRAME_NOT_FOUND for no match or no document and FRAME_AMBIGUOUS for two', async () => {
     await expect(resolveFrames((await frames({})).session, ['#editor'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', retryable: true });
     await expect(resolveFrames((await frames({ top: [{ element: 'a' }] })).session, ['#editor'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', retryable: true });
+    const unloaded = await frames({ top: [{ element: 'a', window: 'a-doc', bare: true }] });
+    await expect(resolveFrames(unloaded.session, ['#editor'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', message: 'frame #editor has no document yet', retryable: true });
+    expect(unloaded.session.frames.chain('a-doc')).toEqual([]);
     await expect(resolveFrames((await frames({ top: [{ element: 'a' }, { element: 'b' }] })).session, ['iframe'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_AMBIGUOUS' });
   });
 });

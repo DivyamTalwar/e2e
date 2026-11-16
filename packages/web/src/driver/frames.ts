@@ -15,7 +15,7 @@ import { chainParts, cssChains } from './selector-tokens.ts';
 import type { FrameBox, ReadOptions, TurnedFrame } from '../in-page/readers.ts';
 import type { PagePart } from '../in-page/select-chain.ts';
 import type { BidiConnection } from './connection.ts';
-import { callFunction, WindowRef, type CallOptions, type ElementRef } from './script.ts';
+import { callFunction, WindowRef, type ElementRef } from './script.ts';
 import type { BidiSession } from './session.ts';
 
 /** An element and the browsing context whose document holds it. */
@@ -81,10 +81,39 @@ function contentWindow(element: HTMLIFrameElement): Window | null {
   return element.contentWindow;
 }
 
-/** The child browsing context of an iframe element, or undefined when it has no document; `options` names the realm that reads it. */
-export async function contentContext(connection: BidiConnection, frame: NodeTarget, options?: CallOptions): Promise<string | undefined> {
-  const window = await callFunction(connection, frame.context, contentWindow, [frame.element], options);
-  return window instanceof WindowRef ? window.context : undefined;
+/**
+ * The sandbox realm the engine reads a frame's window in. Read in the page's
+ * own world, `contentWindow` creates the script context of a document the
+ * frame has run no script in yet, its first, empty one. Chromium keeps that
+ * context for the document the frame then loads and runs no preload again,
+ * so the app's init scripts never run against that document, and the
+ * listeners a preload added hear none of its events. Read in a sandbox, the
+ * window leaves the frame's own world alone.
+ */
+const FRAME_SANDBOX = 'e2e-frames';
+
+/**
+ * The child browsing context of an iframe element, or undefined when it has
+ * no document to read yet: no window, or a window whose document has no
+ * script context of its own (`hasScriptContext`).
+ */
+export async function contentContext(connection: BidiConnection, frame: NodeTarget): Promise<string | undefined> {
+  const window = await callFunction(connection, frame.context, contentWindow, [frame.element], { sandbox: FRAME_SANDBOX });
+  if (!(window instanceof WindowRef)) return undefined;
+  return (await hasScriptContext(connection, window.context)) ? window.context : undefined;
+}
+
+/**
+ * Whether the document `context` shows has a script context of its own, the
+ * default realm of its window. Chromium gives a frame's first, empty
+ * document none until a script reaches into it or the frame's first
+ * navigation commits, and every document after it one before its content.
+ * Without one, nothing was written into the document, and a call into it
+ * would wait for the document the frame loads next.
+ */
+export async function hasScriptContext(connection: BidiConnection, context: string): Promise<boolean> {
+  const { realms } = await connection.send('script.getRealms', { context, type: 'window' });
+  return realms.some((realm) => realm.type === 'window' && realm.sandbox === undefined);
 }
 
 /** The iframe that holds each child context the surface entered, by child context. */
@@ -192,17 +221,6 @@ export interface FramedDocument {
 }
 
 /**
- * The sandbox realm a locate reads a frame's window in. Read in the page's
- * own world, `contentWindow` creates the script context of a document the
- * frame has run no script in yet, its first, empty one. The browser keeps
- * that context for the document the frame then loads, without the listeners
- * the preload scripts added to it, so the click watch sees no click there.
- * Read in a sandbox, the window leaves the frame's own world alone, and the
- * locate's read of its document waits for that document's context.
- */
-const FRAME_SANDBOX = 'e2e-frames';
-
-/**
  * The document the innermost frame of `selectors` shows, each selector
  * matched in the document of the one before it (the `selectFrame` reader):
  * `FRAME_NOT_FOUND` (retryable, a frame loads) when one matches nothing or
@@ -219,7 +237,7 @@ export async function resolveFrames(session: BidiSession, selectors: readonly st
     if (found.count === 0) throw new EngineError('FRAME_NOT_FOUND', `no frame matches ${selector}`, { retryable: true });
     if (found.only === undefined) throw new EngineError('FRAME_AMBIGUOUS', `${found.count} frames match ${selector}`, { retryable: false });
     const frame = { element: found.only.element, context };
-    const child = await contentContext(session.connection, frame, { sandbox: FRAME_SANDBOX });
+    const child = await contentContext(session.connection, frame);
     if (child === undefined) throw new EngineError('FRAME_NOT_FOUND', `frame ${selector} has no document yet`, { retryable: true });
     session.frames.enter(child, frame);
     context = child;

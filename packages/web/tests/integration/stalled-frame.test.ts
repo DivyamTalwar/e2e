@@ -7,7 +7,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { WebRoute } from '../../src/fixture/types.ts';
 import { decodePng } from '../helpers/png.ts';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 let session: WebSession;
 const held: { route: WebRoute; release: () => void }[] = [];
@@ -59,6 +59,26 @@ describe('a frame whose navigation is held', () => {
     expect(snapshot.pixels?.width).toBe(320);
     expect(snapshot.truncated).toBeUndefined();
     expect(snapshot.maskedRegionCount).toBe(0);
+  });
+
+  /**
+   * Chromium gives a frame's first, empty document no script context until
+   * something reaches into it, so the engine has no document to read there
+   * and creates none; Firefox gives it one from the start.
+   */
+  it('lists the frame with no document under it until it has one', async () => {
+    await pageWithHeldFrame();
+    const snapshot = await session.engine.observe!({ ...session.op(5_000), origin: 'agent' });
+    const frame = snapshot.root.children?.find((node) => node.role === 'iframe');
+    expect(frame?.children?.map((node) => node.role)).toEqual(onFirefox ? ['document'] : undefined);
+    expect(snapshot.truncated).toBeUndefined();
+  });
+
+  it('answers a locate through the frame without waiting for its document', async () => {
+    await pageWithHeldFrame('id="held"');
+    const located = session.engine.locate!({ kind: 'frame', selector: '#held', source: bySelector('button') }, session.op(5_000));
+    if (onFirefox) expect(await located).toEqual([]);
+    else await expect(located).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', message: 'frame #held has no document yet', retryable: true });
   });
 
   it('masks a secure field the parent wrote into the initial document', async () => {

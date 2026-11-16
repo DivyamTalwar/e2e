@@ -24,7 +24,7 @@ import {
 } from '@e2e-dev/core/engine';
 import { SECURE_FIELD_SELECTOR, type RawNodeData, type RawObservedNode } from '../in-page/read-node.ts';
 import { cancelled, isStale, releaseQuietly, unlessStale } from '../errors.ts';
-import { contentContext, inViewport, pageParts, placeInFrame, resolveFrames, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
+import { contentContext, hasScriptContext, inViewport, pageParts, placeInFrame, resolveFrames, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
 import { computedStyle, domReady } from '../in-page/document.ts';
 import { maskSecureFields, unmaskSecureFields } from '../in-page/mask.ts';
 import type { FrameBox } from '../in-page/readers.ts';
@@ -312,7 +312,9 @@ const RECAPTURE_MS = 50;
  * One masked capture; stale when a document went away under the masks, or
  * a navigation started or committed in one between masking and unmasking:
  * Firefox snapshots the document its parent process shows, which a
- * navigation can replace while scripts still run in the masked one.
+ * navigation can replace while scripts still run in the masked one. A frame
+ * document with no script context (`hasScriptContext`) holds nothing to
+ * mask, and the commit that gives it content is such a navigation.
  */
 async function maskedCapture(session: BidiSession, viewport: ViewportSize): Promise<{ pixels: ObservationPixels; maskedRegionCount: number }> {
   const context = session.requireContext();
@@ -331,7 +333,8 @@ async function maskedCapture(session: BidiSession, viewport: ViewportSize): Prom
   ];
   try {
     let count = 0;
-    for (const each of documents) {
+    const scripted = await Promise.all(documents.map((each) => hasScriptContext(session.connection, each)));
+    for (const each of documents.filter((_each, index) => scripted[index])) {
       count += await session.page.run(maskSecureFields, [SECURE_FIELD_SELECTOR, token], each);
       masked.push(each);
     }

@@ -116,7 +116,7 @@ describe('selectors as Playwright reads them', () => {
     expect((await timed(`${'div '.repeat(12)}span`)).matches).toBe(1);
   });
 
-  it('resolves a frame chain with one call per document', async () => {
+  it('resolves a frame chain in three calls per frame, none in the frame\'s own world, and reads the matches in one', async () => {
     const inner = '<section><iframe srcdoc="<button>Deep</button>"></iframe></section>';
     const frames = ['#outer', 'section >> xpath=//iframe'];
     const session = await startWebSession();
@@ -126,10 +126,14 @@ describe('selectors as Playwright reads them', () => {
       const calls = vi.spyOn(BidiConnection.prototype, 'send');
       const found = await session.locate(frames.reduceRight<LocatorExpression>((source, selector) => ({ kind: 'frame', selector, source }), bySelector('button')));
       expect(found.map((node) => ({ name: node.name, framePath: node.framePath }))).toEqual([{ name: 'Deep', framePath: frames }]);
-      const declarations = calls.mock.calls.filter(([method]) => method === 'script.callFunction').map(([, params]) => (params as { functionDeclaration: string }).functionDeclaration);
-      expect(declarations.filter((declaration) => declaration === readerCall('selectFrame'))).toHaveLength(2);
-      expect(declarations.filter((declaration) => declaration === readerCall('locate'))).toHaveLength(1);
-      expect(declarations).toHaveLength(5);
+      const readers = new Map([[readerCall('selectFrame'), 'selectFrame reader'], [readerCall('locate'), 'locate reader']]);
+      const sent = calls.mock.calls.map(([method, params]) => {
+        if (method !== 'script.callFunction') return method;
+        const { functionDeclaration, target } = params as { functionDeclaration: string; target: { sandbox?: string } };
+        return readers.get(functionDeclaration) ?? `page function in ${target.sandbox ?? 'the page\'s world'}`;
+      });
+      const perFrame = ['selectFrame reader', 'page function in e2e-frames', 'script.getRealms'];
+      expect(sent).toEqual([...perFrame, ...perFrame, 'locate reader']);
     } finally {
       vi.restoreAllMocks();
       await session.close();

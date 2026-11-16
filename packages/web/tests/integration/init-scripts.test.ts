@@ -13,12 +13,14 @@ import { secrets } from 'e2e';
 import type { EngineCleanupContext, EngineHandle } from '@e2e-dev/core/engine';
 import type { Browser } from '../../src/fixture/types.ts';
 import { web, type WebOptions } from '../../src/index.ts';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 declare global {
   interface Window {
     trail?: string[];
     seenAtBoot?: string[];
+    ranIn?: string[];
+    frameLoaded?: Promise<unknown>;
   }
 }
 
@@ -117,6 +119,52 @@ describe('init scripts', () => {
       await expect(add(() => undefined, secrets.get('key'))).rejects.toMatchObject({ code: 'POLICY_DENIED' });
     });
   });
+
+  /**
+   * A frame's first, empty document is not the one its init scripts are for.
+   * Chromium keeps the window of that document for the one the frame loads
+   * next once anything read it in the page's own world, and runs no init
+   * script again. Firefox always keeps it, whatever the engine does, so there
+   * the script has only ever seen the first document.
+   */
+  it.each(['leaves the frame alone', 'observes', 'locates through the frame'] as const)(
+    'runs an init script in the document a frame loads when the engine %s while the frame shows its first, empty one',
+    async (read) => {
+      await attempt({ initScripts: ['(window.ranIn ??= []).push(document.URL);'] }, async (browser, session) => {
+        let requested!: () => void;
+        const reached = new Promise<void>((resolve) => { requested = resolve; });
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const slow = session.serve('/slow-frame', (_request, response) => {
+          requested();
+          void held.then(() => {
+            response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+            response.end('<p>Loaded</p>');
+          });
+        });
+        await browser.goto('/');
+        await browser.evaluate((src: string) => {
+          const frame = document.createElement('iframe');
+          frame.id = 'slow';
+          frame.src = src;
+          window.frameLoaded = new Promise((resolve) => frame.addEventListener('load', resolve, { once: true }));
+          document.body.append(frame);
+          return null;
+        }, slow);
+        await reached;
+        if (read === 'observes') await session.observe();
+        if (read === 'locates through the frame') {
+          await session.engine.locate!({ kind: 'frame', selector: '#slow', source: bySelector('p') }, session.op(500)).catch(() => undefined);
+        }
+        release();
+        const ranIn = await browser.evaluate(async () => {
+          await window.frameLoaded;
+          return document.querySelector('iframe')!.contentWindow!.ranIn ?? null;
+        });
+        expect(ranIn).toEqual([onFirefox ? 'about:blank' : slow]);
+      });
+    },
+  );
 
   it('fails the run, and a worker, with INVALID_CONFIG when a configured file cannot be read', async () => {
     const surface: EngineHandle = web({ initScripts: [{ path: 'nope.js' }] });
