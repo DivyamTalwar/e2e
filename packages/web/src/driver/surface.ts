@@ -27,7 +27,7 @@ import {
 } from '@e2e-dev/core/engine';
 import type { DialogHandler } from './dialogs.ts';
 import type { ConfiguredInitScripts } from '../init-scripts.ts';
-import { credentialed, credentialOrigins, httpCredentials, lowercaseNames, configuredHeadersFor } from '../protected-app.ts';
+import { credentialOrigins, httpCredentials, ProtectedApp } from '../protected-app.ts';
 import type { WebBasicAuth, WebMedia, WebScreencastOptions } from '../options.ts';
 import { DispatchScope } from './input.ts';
 import { afterDispatch, cancelled, classify, type ErrorLatch, invalidState, releaseQuietly } from '../errors.ts';
@@ -73,6 +73,8 @@ export class BidiSurface {
   private acquiring: Acquisition | undefined;
   private session: BidiSession | undefined;
   private settings: SessionSettings | undefined;
+  /** The exact origins the configured headers and credentials go to, which `init` reads off the app. */
+  private origins: ReadonlySet<string> = new Set();
   /**
    * Aborted by `dispose`: a browser still being opened fails `CANCELLED`, and
    * one that opens after it is closed instead of published. Replaced by
@@ -111,10 +113,9 @@ export class BidiSurface {
     const stale = this.handle;
     this.handle = undefined;
     if (stale !== undefined) await releaseQuietly(stale.close());
-    const { source, headers, basicAuth: _basicAuth, credentialOrigins: extraOrigins, ...configured } = this.options;
-    const configuredHeaders = headers === undefined ? undefined : lowercaseNames(headers);
+    const { source, headers: _headers, basicAuth: _basicAuth, credentialOrigins: extraOrigins, ...configured } = this.options;
     const site = info.app.site;
-    const origins = credentialOrigins(info.app.origin, extraOrigins);
+    this.origins = credentialOrigins(info.app.origin, extraOrigins);
     this.settings = {
       ...configured,
       site,
@@ -123,9 +124,6 @@ export class BidiSurface {
       remoteFiles: source.files === 'remote',
       userContext: source.userContext,
       env: info.env,
-      holdRequests: configuredHeaders !== undefined,
-      configuredHeaders: (url) => configuredHeadersFor(url, origins, configuredHeaders),
-      credentialed: (url) => credentialed(url, origins),
     };
     source.init(info);
     await this.options.initScripts.load(info.projectRoot);
@@ -219,7 +217,7 @@ export class BidiSurface {
         appLog: context.appLog,
         navigation: context.navigation,
         screen: context.screen,
-        credentials,
+        protectedApp: new ProtectedApp(this.origins, this.options.headers, credentials),
         remoteDownloads: source.downloads(),
         downloadLimit: source.downloadLimit(),
       },
@@ -352,23 +350,17 @@ export class BidiSurface {
     return path.resolve(this.settings?.projectRoot ?? '', file);
   }
 
-  /** The headers a request that starts at `url` carries, which a route's own `fetch` sends too. */
-  configuredHeaders(url: string): Readonly<Record<string, string>> | undefined {
-    return this.settings?.configuredHeaders(url);
-  }
-
   /**
    * What a fixture binds to the attempt it serves, once: its latch, its
-   * basic-auth credentials, its lifetime, and its cookie jar. A route handler
-   * that outlives the attempt then fails, reads, and writes only its own, and
-   * its work is cancelled when the attempt closes.
+   * access to a protected app, its lifetime, and its cookie jar. A route
+   * handler that outlives the attempt then fails, reads, and writes only its
+   * own, and its work is cancelled when the attempt closes.
    */
   attemptScope(): AttemptScope {
     const session = this.requireSession();
     return {
       latch: session.latch,
-      credentials: session.attempt.credentials,
-      credentialed: session.settings.credentialed,
+      protectedApp: session.attempt.protectedApp,
       lifetime: session.lifetime,
       storeCookies: async (cookies, signal) => {
         const bound = AbortSignal.any([signal, session.lifetime]);
@@ -411,12 +403,11 @@ export interface GuardKind {
   readonly trigger?: boolean;
 }
 
-/** What `attemptScope` binds: the attempt's own latch, credentials, lifetime, and cookie jar. */
+/** What `attemptScope` binds: the attempt's own latch, protected-app access, lifetime, and cookie jar. */
 export interface AttemptScope {
   readonly latch: ErrorLatch;
-  readonly credentials: { readonly username: string; readonly password: string } | undefined;
-  /** Whether a challenge from `url` is answered with `credentials`: its origin is the app's or one in `credentialOrigins`. */
-  readonly credentialed: (url: string) => boolean;
+  /** The configured headers and the basic-auth credentials a route's own `fetch` sends. */
+  readonly protectedApp: ProtectedApp;
   /** Aborts when the attempt closes. */
   readonly lifetime: AbortSignal;
   /** Stores cookies in the attempt's jar, giving up once `signal` aborts or the attempt closes. */

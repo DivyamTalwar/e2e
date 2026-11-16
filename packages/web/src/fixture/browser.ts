@@ -257,7 +257,7 @@ async function routeFetch(surface: BidiSurface, scope: AttemptScope, context: En
   }
   const operation = context.operation();
   const signal = AbortSignal.any([operation.signal, AbortSignal.timeout(operation.timeoutMs), scope.lifetime]);
-  const headers = { ...request.headers, ...(request.cookie === undefined ? {} : { cookie: request.cookie }), ...surface.configuredHeaders(request.url) };
+  const headers = { ...request.headers, ...(request.cookie === undefined ? {} : { cookie: request.cookie }), ...scope.protectedApp.headersFor(request.url) };
   const send = (extra: Record<string, string>): Promise<Response> => fetch(request.url, {
     method: request.method,
     headers: { ...headers, ...extra },
@@ -266,8 +266,8 @@ async function routeFetch(surface: BidiSurface, scope: AttemptScope, context: En
     ...(request.body === undefined ? {} : { body: new Uint8Array(request.body) }),
   });
   let fetched = await send({});
-  const { credentials } = scope;
-  if (fetched.status === 401 && credentials !== undefined && scope.credentialed(request.url) && /^basic\b/i.test(fetched.headers.get('www-authenticate') ?? '')) {
+  const credentials = scope.protectedApp.credentialsFor(request.url);
+  if (fetched.status === 401 && credentials !== undefined && /^basic\b/i.test(fetched.headers.get('www-authenticate') ?? '')) {
     await fetched.body?.cancel();
     fetched = await send({ authorization: `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}` });
   }

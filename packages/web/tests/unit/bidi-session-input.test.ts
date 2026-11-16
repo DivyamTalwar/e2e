@@ -6,6 +6,7 @@ import { clickSources, moveSources, pressDownSources, swipeSources, typeSource }
 import { fixtureKeyStroke, strokeSource, type KeyPhase } from '../../src/driver/keyboard.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
+import { ProtectedApp } from '../../src/protected-app.ts';
 import type { NodeRef } from '@e2e-dev/core/engine';
 import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
 import type { ElementRef } from '../../src/driver/script.ts';
@@ -14,8 +15,8 @@ const SHIFT = '';
 
 /** A session on `fake` with its tab open, on a 100 by 100 viewport. */
 function session(fake: FakeBidi, browser: BrowserName = 'chromium'): BidiSession {
-  const settings = { configuredHeaders: () => undefined, holdRequests: false, media: {}, viewport: { width: 100, height: 100 }, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };
-  const attempt = { credentials: undefined };
+  const settings = { media: {}, viewport: { width: 100, height: 100 }, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };
+  const attempt = { protectedApp: new ProtectedApp(new Set(), undefined, undefined) };
   const created = new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS[browser] } as never, settings as never, attempt as never, new ContextTree());
   created.context = 'tab';
   return created;

@@ -2,7 +2,7 @@
  * Protected-preview access, scoped to exact origins: the app's own and the
  * extras `credentialOrigins` lists. The configured headers ride requests
  * that start at one of them, and basic-auth credentials answer only a
- * challenge one of them issues. Nothing here holds state.
+ * challenge one of them issues. Nothing here changes once built.
  */
 
 import type { ResolveSecretOptions, Secret } from '@e2e-dev/core/engine';
@@ -43,30 +43,56 @@ export function lowercaseNames(headers: Readonly<Record<string, string>>): Reado
  * The origin of `url` as `URL.origin` serializes it (scheme and host
  * lowercased, a default port dropped), or `undefined` when it does not parse.
  */
-function originOf(url: string | URL): string | undefined {
+function originOf(url: string): string | undefined {
   try {
-    return (typeof url === 'string' ? new URL(url) : url).origin;
+    return new URL(url).origin;
   } catch {
     return undefined;
   }
 }
 
-/** Whether a request to `url`, or a challenge from it, is one the credentials go to: its origin is one of `origins`. */
-export function credentialed(url: string | URL, origins: ReadonlySet<string>): boolean {
-  const origin = originOf(url);
-  return origin !== undefined && origins.has(origin);
-}
-
 /**
- * The configured headers a request that starts at `url` carries: all of
- * them when its origin is one of `origins`, none otherwise.
+ * One attempt's access to a protected app: the exact origins it is scoped
+ * to, the configured headers a request that starts at one of them carries,
+ * and the credentials that answer a basic-auth challenge one of them issues.
  */
-export function configuredHeadersFor(
-  url: string | URL,
-  origins: ReadonlySet<string>,
-  headers: Readonly<Record<string, string>> | undefined,
-): Readonly<Record<string, string>> | undefined {
-  return headers !== undefined && credentialed(url, origins) ? headers : undefined;
+export class ProtectedApp {
+  /** The configured headers, names lowercased. */
+  private readonly headers: Readonly<Record<string, string>> | undefined;
+
+  constructor(
+    private readonly origins: ReadonlySet<string>,
+    headers: Readonly<Record<string, string>> | undefined,
+    private readonly credentials: HttpCredential | undefined,
+  ) {
+    this.headers = headers === undefined ? undefined : lowercaseNames(headers);
+  }
+
+  /** Whether headers are configured: every request is then held to add them, and service workers, whose requests are never held, are blocked. */
+  get sendsHeaders(): boolean {
+    return this.headers !== undefined;
+  }
+
+  /** Whether credentials are configured, so basic-auth challenges are held to answer. */
+  get answersChallenges(): boolean {
+    return this.credentials !== undefined;
+  }
+
+  /** The configured headers a request that starts at `url` carries: all of them at one of the origins, none anywhere else. */
+  headersFor(url: string): Readonly<Record<string, string>> | undefined {
+    return this.covers(url) ? this.headers : undefined;
+  }
+
+  /** The credentials that answer a basic-auth challenge from `url`: the configured ones at one of the origins, none anywhere else. */
+  credentialsFor(url: string): HttpCredential | undefined {
+    return this.covers(url) ? this.credentials : undefined;
+  }
+
+  /** Whether `url`'s origin is one of the origins, by exact scheme, host, and port. */
+  private covers(url: string): boolean {
+    const origin = originOf(url);
+    return origin !== undefined && this.origins.has(origin);
+  }
 }
 
 /**

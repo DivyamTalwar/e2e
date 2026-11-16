@@ -10,6 +10,7 @@ import { ContextTree } from '../../src/driver/context-tree.ts';
 import { routeEvents } from '../../src/driver/events.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
+import { ProtectedApp } from '../../src/protected-app.ts';
 import { FakeBidi } from '../helpers/bidi-fake.ts';
 
 /** A context's info, as `getTree` lists it and its events carry it. */
@@ -36,8 +37,8 @@ async function attempt(fake: FakeBidi) {
     .on('network.addDataCollector', { result: { collector: 'collector' } })
     .on('browsingContext.getTree', { result: { contexts: [info('tab', null)] } });
   const contexts = new ContextTree();
-  const settings = { configuredHeaders: () => undefined, holdRequests: false, media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [] };
-  const session = new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS.chromium } as never, settings as never, { credentials: undefined } as never, contexts);
+  const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [] };
+  const session = new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS.chromium } as never, settings as never, { protectedApp: new ProtectedApp(new Set(), undefined, undefined) } as never, contexts);
   session.userContext = 'mine';
   routeEvents(fake.connection, contexts, () => session);
   fake.emit('browsingContext.contextCreated', info('tab', null));

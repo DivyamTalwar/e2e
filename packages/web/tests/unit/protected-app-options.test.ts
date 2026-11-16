@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { secrets } from 'e2e';
 import { web, type WebOptions } from '../../src/index.ts';
-import { credentialed, credentialOrigins, httpCredentials } from '../../src/protected-app.ts';
+import { credentialOrigins, httpCredentials, ProtectedApp } from '../../src/protected-app.ts';
 
 describe('web({ headers })', () => {
   it('rejects a header name outside the token grammar as INVALID_CONFIG', () => {
@@ -248,13 +248,25 @@ describe('basic-auth credentials', () => {
     expect([...credentialOrigins(app, ['https://API.example.com:443/', 'http://127.0.0.1:3000'])]).toEqual([app, 'https://api.example.com']);
   });
 
-  it('answers a challenge only from one of the origins, by exact scheme, host, and port', () => {
-    const origins = credentialOrigins(app, ['https://api.example.com']);
-    expect(credentialed('http://127.0.0.1:3000/login', origins)).toBe(true);
-    expect(credentialed('https://api.example.com:443/v1', origins)).toBe(true);
-    for (const url of ['http://127.0.0.1:3001/', 'https://www.api.example.com/', 'http://api.example.com/', 'not a url']) {
-      expect(credentialed(url, origins)).toBe(false);
+  it('answers a challenge, and sends the headers, only at one of the origins, by exact scheme, host, and port', () => {
+    const credentials = { username: 'ada', password: 'pa55word!' };
+    const access = new ProtectedApp(credentialOrigins(app, ['https://api.example.com']), { 'X-Preview': 'token' }, credentials);
+    for (const url of ['http://127.0.0.1:3000/login', 'https://api.example.com:443/v1']) {
+      expect(access.credentialsFor(url)).toBe(credentials);
+      expect(access.headersFor(url)).toEqual({ 'x-preview': 'token' });
     }
+    for (const url of ['http://127.0.0.1:3001/', 'https://www.api.example.com/', 'http://api.example.com/', 'not a url']) {
+      expect(access.credentialsFor(url)).toBeUndefined();
+      expect(access.headersFor(url)).toBeUndefined();
+    }
+  });
+
+  it('holds requests only for configured headers, and challenges only for configured credentials', () => {
+    const origins = credentialOrigins(app, undefined);
+    const neither = new ProtectedApp(origins, undefined, undefined);
+    expect([neither.sendsHeaders, neither.answersChallenges, neither.headersFor(app), neither.credentialsFor(app)]).toEqual([false, false, undefined, undefined]);
+    const both = new ProtectedApp(origins, {}, { username: 'ada', password: 'x' });
+    expect([both.sendsHeaders, both.answersChallenges]).toEqual([true, true]);
   });
 
   it('registers the Authorization credential a secret password becomes, padded and not, for redaction', async () => {

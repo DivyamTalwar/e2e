@@ -13,6 +13,7 @@ import { MODAL_ORDER_INIT_SCRIPT } from '../in-page/modal-dialogs.ts';
 import { DialogRouter } from './dialogs.ts';
 import type { ConfiguredInitScripts } from '../init-scripts.ts';
 import type { WebMedia, WebScreencastOptions } from '../options.ts';
+import type { ProtectedApp } from '../protected-app.ts';
 import { BidiInput } from './input.ts';
 import type { ContextTree } from './context-tree.ts';
 import { AttemptDownloads } from './downloads.ts';
@@ -59,12 +60,6 @@ export interface SessionSettings {
   readonly userContext: UserContextMode;
   /** The run's environment, which names the tools the driver spawns (ffmpeg). */
   readonly env: Readonly<Record<string, string | undefined>>;
-  /** Whether every request is held for the configured headers, and service workers blocked. */
-  readonly holdRequests: boolean;
-  /** The configured headers a request that starts at `url` carries; names lowercased. */
-  readonly configuredHeaders: (url: string) => Readonly<Record<string, string>> | undefined;
-  /** Whether a basic-auth challenge from `url` is answered: its origin is the app's or one in `credentialOrigins`. */
-  readonly credentialed: (url: string) => boolean;
 }
 
 /** What one attempt starts with. */
@@ -76,7 +71,8 @@ export interface AttemptSettings {
   readonly navigation: (line: string) => void;
   /** Hands the trace a screen read after an action; absent when the attempt keeps no trace. */
   readonly screen: ((snapshot: EngineSnapshot) => void) | undefined;
-  readonly credentials: { readonly username: string; readonly password: string } | undefined;
+  /** The configured headers and the basic-auth credentials the attempt reaches a protected app with. */
+  readonly protectedApp: ProtectedApp;
   /** The provider that serves downloads off a remote browser's disk; undefined for a local browser. */
   readonly remoteDownloads?: LeaseDownloads | undefined;
   /** Why no download can be read back, when the browser's source serves none (`BrowserSource.downloadLimit`). */
@@ -237,9 +233,7 @@ export class BidiSession {
     this.viewport = settings.viewport;
     this.input = new BidiInput({ connection: browser.connection, traits: browser.traits, context: () => this.requireContext(), viewport: () => this.viewportSize() });
     this.network = new AttemptNetwork(browser.connection, {
-      configuredHeaders: settings.configuredHeaders,
-      credentialed: settings.credentialed,
-      credentials: attempt.credentials,
+      protectedApp: attempt.protectedApp,
       ours: (event) => this.owns(event.context),
       onPage: (context) => this.onPage(context),
       contexts,
@@ -250,7 +244,6 @@ export class BidiSession {
         if (context !== this.context) return;
         for (const watch of this.navigationAborts) watch.url ??= url;
       },
-      holdAll: settings.holdRequests,
     });
     this.downloads = new AttemptDownloads(browser.connection, attempt.remoteDownloads, attempt.downloadLimit);
     this.tabs = new AttemptTabs({
@@ -346,7 +339,7 @@ export class BidiSession {
         wrapScript(CLOSED_SHADOW_ROOTS_INIT_SCRIPT),
         wrapScript(MODAL_ORDER_INIT_SCRIPT),
         wrapScript(HIT_INTERCEPTOR_INIT_SCRIPT),
-        ...(this.settings.holdRequests ? [wrapScript(BLOCK_SERVICE_WORKERS)] : []),
+        ...(this.attempt.protectedApp.sendsHeaders ? [wrapScript(BLOCK_SERVICE_WORKERS)] : []),
         ...[...this.settings.initScripts.forAttempt(), ...this.addedScripts].map(wrapAppScript),
       ];
       const { userAgent, locale, timezoneId } = this.settings;

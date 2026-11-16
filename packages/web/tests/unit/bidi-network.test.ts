@@ -9,14 +9,15 @@ import { describe, expect, it } from 'vitest';
 import { ContextTree } from '../../src/driver/context-tree.ts';
 import { AttemptNetwork, type NetworkRoute } from '../../src/driver/network.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
+import { ProtectedApp } from '../../src/protected-app.ts';
 import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
 
 const SITE = 'http://app.test';
 
-/** An attempt network over `fake`, and the failures it latched. */
+/** An attempt network over `fake`, and the failures it latched; `headers` configures one for the app's origin, `credentials` its basic auth. */
 function network(
   fake: FakeBidi,
-  options: { holdAll?: boolean; credentials?: { username: string; password: string }; browser?: BrowserName; exclusive?: boolean; ours?: (context: string | null) => boolean; onPage?: (context: string | null) => boolean } = {},
+  options: { headers?: boolean; credentials?: { username: string; password: string }; browser?: BrowserName; exclusive?: boolean; ours?: (context: string | null) => boolean; onPage?: (context: string | null) => boolean } = {},
 ) {
   const failures: Error[] = [];
   const contexts = new ContextTree();
@@ -25,9 +26,7 @@ function network(
   fake.on('network.addDataCollector', { result: { collector: 'collector-1' } });
   fake.on('session.subscribe', { result: { subscription: 'subscription-1' } });
   const net = new AttemptNetwork(fake.connection, {
-    configuredHeaders: (url) => (new URL(url).origin === new URL(SITE).origin ? { 'x-preview': 'token' } : undefined),
-    credentialed: (url) => new URL(url).origin === new URL(SITE).origin,
-    credentials: options.credentials,
+    protectedApp: new ProtectedApp(new Set([SITE]), options.headers === true ? { 'X-Preview': 'token' } : undefined, options.credentials),
     ours: (event) => options.ours?.(event.context) ?? true,
     onPage: (context) => options.onPage?.(context) ?? true,
     contexts,
@@ -35,7 +34,6 @@ function network(
     traits: BROWSER_TRAITS[options.browser ?? 'chromium'],
     onFailure: (error) => failures.push(error),
     onNavigationAbort: () => undefined,
-    holdAll: options.holdAll ?? false,
   });
   /** Opens top-level tab `tab` of user-1, as its `contextCreated` event records it, and hands it to the network. */
   const open = (tab: string): Promise<void> => {
@@ -75,7 +73,7 @@ function route(pattern: string, handle: NetworkRoute['handle']): NetworkRoute {
 describe('AttemptNetwork', () => {
   it('holds requests only for the attempt’s tabs, and starts over on a new user context', async () => {
     const fake = new FakeBidi();
-    const { net, open } = network(fake, { holdAll: true });
+    const { net, open } = network(fake, { headers: true });
     await net.bind('user-1');
     expect(fake.commands('network.addIntercept')).toEqual([]);
     await open('tab-1');
@@ -119,7 +117,7 @@ describe('AttemptNetwork', () => {
 
   it('lets an unmatched request through, adding the site headers only for the app’s site', async () => {
     const fake = new FakeBidi();
-    const { net, open } = network(fake, { holdAll: true });
+    const { net, open } = network(fake, { headers: true });
     await net.bind('user-1');
     await open('tab');
     fake.emit('network.beforeRequestSent', request('site', `${SITE}/page`));
@@ -280,7 +278,7 @@ describe('AttemptNetwork', () => {
 
   it('on a browser of its own, holds every tab with one intercept and lets another user context’s requests go untouched', async () => {
     const fake = new FakeBidi();
-    const { net, open } = network(fake, { holdAll: true, exclusive: true, ours: (context) => context !== 'foreign' });
+    const { net, open } = network(fake, { headers: true, exclusive: true, ours: (context) => context !== 'foreign' });
     await net.bind('user-1');
     await open('tab-1');
     await open('tab-2');
@@ -296,7 +294,7 @@ describe('AttemptNetwork', () => {
 
   it('decides a request an intercept it since replaced still holds', async () => {
     const fake = new FakeBidi();
-    const { net, open } = network(fake, { holdAll: true });
+    const { net, open } = network(fake, { headers: true });
     await net.bind('user-1');
     await open('tab-1');
     await open('tab-2');
@@ -357,7 +355,7 @@ describe('AttemptNetwork', () => {
 
   it('never covers a tab that opened and closed in the same burst, nor one that closed while its intercept was added', async () => {
     const fake = new FakeBidi();
-    const { net, open, close } = network(fake, { holdAll: true });
+    const { net, open, close } = network(fake, { headers: true });
     let intercepts = 0;
     fake.on('network.addIntercept', (params) => {
       if ((params['contexts'] as string[]).includes('popup')) {
@@ -388,14 +386,14 @@ describe('AttemptNetwork', () => {
 
   it('reports a removal the browser refused, and takes one it no longer has as done', async () => {
     const fake = new FakeBidi();
-    const { net, open } = network(fake, { holdAll: true, exclusive: true });
+    const { net, open } = network(fake, { headers: true, exclusive: true });
     fake.on('network.addIntercept', { result: { intercept: 'global' } });
     await net.bind('user-1');
     await open('tab');
     fake.on('network.removeIntercept', { error: 'unknown error', message: 'refused' });
     await expect(net.dispose()).rejects.toThrow('refused');
     const again = new FakeBidi();
-    const { net: second, open: secondOpen } = network(again, { holdAll: true, exclusive: true });
+    const { net: second, open: secondOpen } = network(again, { headers: true, exclusive: true });
     again.on('network.addIntercept', { result: { intercept: 'global' } });
     await second.bind('user-1');
     await secondOpen('tab');
@@ -405,7 +403,7 @@ describe('AttemptNetwork', () => {
 
   it('removes a replacement intercept whose predecessor would not go, when the network is released', async () => {
     const fake = new FakeBidi();
-    const { net, open } = network(fake, { holdAll: true });
+    const { net, open } = network(fake, { headers: true });
     await net.bind('user-1');
     await open('tab-1');
     fake.on('network.removeIntercept', (params) => (params['intercept'] === 'intercept-1' ? { error: 'unknown error', message: 'stuck' } : { result: {} }));
@@ -431,7 +429,7 @@ describe('AttemptNetwork', () => {
 
     it('keeps the configured headers a request started with on every hop, wherever it goes, for a request no route matched', async () => {
       const fake = new FakeBidi();
-      const { net, open } = network(fake, { holdAll: true });
+      const { net, open } = network(fake, { headers: true });
       await net.bind('user-1');
       await open('tab');
       fake.emit('network.beforeRequestSent', request('r', `${SITE}/start`));
@@ -444,7 +442,7 @@ describe('AttemptNetwork', () => {
 
     it('applies a route’s header overrides and the configured headers to every hop', async () => {
       const fake = new FakeBidi();
-      const { net, open } = network(fake);
+      const { net, open } = network(fake, { headers: true });
       await net.bind('user-1');
       await open('tab');
       await net.addRoute(route('**', async (held, decisions) => {
@@ -459,7 +457,7 @@ describe('AttemptNetwork', () => {
 
     it('sends nothing configured on a request that starts at another origin and redirects to the app’s', async () => {
       const fake = new FakeBidi();
-      const { net, open } = network(fake, { holdAll: true });
+      const { net, open } = network(fake, { headers: true });
       await net.bind('user-1');
       await open('tab');
       fake.emit('network.beforeRequestSent', request('r', 'https://external.test/start'));
@@ -580,7 +578,7 @@ describe('AttemptNetwork', () => {
 
   it('keeps a removal that failed while rebinding, and tries it again on dispose', async () => {
     const fake = new FakeBidi();
-    const { net, open } = network(fake, { holdAll: true, exclusive: true });
+    const { net, open } = network(fake, { headers: true, exclusive: true });
     fake.on('network.addIntercept', { result: { intercept: 'global' } });
     await net.bind('user-1');
     await open('tab');
@@ -679,7 +677,7 @@ describe('AttemptNetwork', () => {
 
   it('adds no intercept for a tab that closed while its intercept was added, and leaves no failure behind', async () => {
     const fake = new FakeBidi();
-    const { net, failures, close, contexts } = network(fake, { holdAll: true });
+    const { net, failures, close, contexts } = network(fake, { headers: true });
     fake.on('network.addIntercept', (params) => {
       if ((params['contexts'] as string[]).length === 0) return { error: 'invalid argument', message: 'contexts must not be empty' };
       void close('tab');
@@ -694,7 +692,7 @@ describe('AttemptNetwork', () => {
 
   it('removes a route in call order with an addition still queued behind a tab change', async () => {
     const fake = new FakeBidi();
-    const { net, open } = network(fake, { holdAll: true });
+    const { net, open } = network(fake, { headers: true });
     let release: () => void = () => undefined;
     let intercepts = 0;
     fake.on('network.addIntercept', async () => {

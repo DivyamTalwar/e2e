@@ -17,7 +17,7 @@ import { EngineError, type JsonValue, type TextPattern } from '@e2e-dev/core/eng
 import type { ContextTree } from './context-tree.ts';
 import { CONTENT_TYPES } from './content-types.ts';
 import type { BrowserTraits } from '../browsers.ts';
-import { lowercaseNames } from '../protected-app.ts';
+import { lowercaseNames, type ProtectedApp } from '../protected-app.ts';
 import { routePatternMatches } from './route-pattern.ts';
 import { BidiError, releaseQuietly } from '../errors.ts';
 import { NetworkBinding, alreadyGone, bytesText, headerRecord, stripHash, type NetworkWants, type ObservedResponse } from './network-binding.ts';
@@ -81,11 +81,8 @@ export interface NetworkRoute {
 
 /** What an attempt's network applies, and how it tells the attempt's events and failures. */
 export interface AttemptNetworkOptions {
-  /** The configured headers a request that starts at `url` carries; names lowercased. */
-  readonly configuredHeaders: (url: string) => Readonly<Record<string, string>> | undefined;
-  /** Whether a basic-auth challenge from `url` is answered with `credentials`. */
-  readonly credentialed: (url: string) => boolean;
-  readonly credentials: { readonly username: string; readonly password: string } | undefined;
+  /** The configured headers and the basic-auth credentials the attempt reaches a protected app with. */
+  readonly protectedApp: ProtectedApp;
   /** Whether an event belongs to the attempt. */
   readonly ours: (event: { readonly userContext?: string | null; readonly context: string | null }) => boolean;
   /** Whether a context is the attempt's tab or a frame in it, which a response wait listens to. */
@@ -118,7 +115,7 @@ export class AttemptNetwork {
 
   constructor(
     private readonly connection: BidiConnection,
-    private readonly options: AttemptNetworkOptions & { readonly holdAll: boolean },
+    private readonly options: AttemptNetworkOptions,
   ) {
     this.offClose = connection.onClose(() => this.binding?.endWaits(new Error('the BiDi connection closed before the response finished loading')));
   }
@@ -133,10 +130,10 @@ export class AttemptNetwork {
   /** Installs what the attempt's routes, headers, credentials, and waits need on the bound user context, whatever an earlier try left out, and removes what nothing needs any more. */
   private async reconcile(): Promise<void> {
     const wants: NetworkWants = {
-      holdAll: this.options.holdAll,
+      headers: this.options.protectedApp.sendsHeaders,
       routes: this.routes.length,
       tracking: this.tracking,
-      challenges: this.options.credentials !== undefined || this.options.traits.promptsForAuth,
+      challenges: this.options.protectedApp.answersChallenges || this.options.traits.promptsForAuth,
     };
     await this.binding?.reconcile(wants);
   }
@@ -418,7 +415,7 @@ export class AttemptNetwork {
    */
   private async continue(binding: NetworkBinding, request: InterceptedRequest, overrides: ContinueDecision = {}): Promise<void> {
     if (overrides.url !== undefined && !this.options.traits.continueRewritesUrl) throw firefoxUrlRewrite(request.url);
-    const site = this.options.configuredHeaders(overrides.url ?? request.url);
+    const site = this.options.protectedApp.headersFor(overrides.url ?? request.url);
     const routeHeaders = overrides.headers === undefined ? undefined : lowercaseNames(overrides.headers);
     let headers = routeHeaders === undefined ? undefined : applyHeaderOverrides(request.headers, routeHeaders, this.options.traits.continueAddsCookies);
     if (overrides.postData !== undefined && this.options.traits.continueKeepsContentLength) headers = { ...(headers ?? request.headers), 'content-length': String(Buffer.byteLength(overrides.postData)) };
@@ -493,11 +490,14 @@ export class AttemptNetwork {
   private onAuth(binding: NetworkBinding, event: BidiEventParams<'network.authRequired'>): void {
     if (!binding.holds(event)) return;
     const request = event.request.request;
-    const credentials = this.options.credentials;
     let answer: Network.ContinueWithAuthParameters;
-    if (!this.options.ours(event)) answer = { request, action: 'default' };
-    else if (credentials === undefined || !this.options.credentialed(binding.currentUrl(request) ?? event.request.url) || binding.answerAuth(request, event.context ?? '')) answer = { request, action: 'cancel' };
-    else answer = { request, action: 'provideCredentials', credentials: { type: 'password', ...credentials } };
+    if (!this.options.ours(event)) {
+      answer = { request, action: 'default' };
+    } else {
+      const credentials = this.options.protectedApp.credentialsFor(binding.currentUrl(request) ?? event.request.url);
+      const refused = credentials === undefined || binding.answerAuth(request, event.context ?? '');
+      answer = refused ? { request, action: 'cancel' } : { request, action: 'provideCredentials', credentials: { type: 'password', ...credentials } };
+    }
     void this.connection.send('network.continueWithAuth', answer).catch((cause: unknown) => this.fail(cause));
   }
 

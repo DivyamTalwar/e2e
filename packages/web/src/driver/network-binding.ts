@@ -24,8 +24,8 @@ export interface ObservedResponse {
 
 /** What the attempt wants of the network, whatever the user context it is bound to. */
 export interface NetworkWants {
-  /** Whether every request is held whether or not a route is set: site headers to add. */
-  readonly holdAll: boolean;
+  /** Whether every request is held whether or not a route is set: configured headers to add. */
+  readonly headers: boolean;
   /** How many routes are registered. */
   readonly routes: number;
   /** Whether requests in flight are counted, for a `networkidle` wait. */
@@ -99,9 +99,9 @@ const NETWORK_IDLE_MS = 500;
 /** The largest body a collector keeps, per request or response. */
 const MAX_COLLECTED_BODY = 20 * 1024 * 1024;
 
-/** The one rule of what a binding installs: requests are held for site headers, routes, or a blank-served tab; the events are needed for those, an idle count, or held challenges. */
+/** The one rule of what a binding installs: requests are held for configured headers, routes, or a blank-served tab; the events are needed for those, an idle count, or held challenges. */
 function interceptionPolicy(wants: NetworkWants, blankTabs: number): InterceptionPolicy {
-  const hold = wants.holdAll || wants.routes > 0 || blankTabs > 0;
+  const hold = wants.headers || wants.routes > 0 || blankTabs > 0;
   return { events: hold || wants.tracking || wants.challenges, requestBodies: wants.routes > 0, hold, auth: wants.challenges };
 }
 
