@@ -13,4 +13,10 @@ describe('route decision headers', () => {
     expect(Object.hasOwn(continued, '__proto__') && continued['__proto__']).toBe('kept');
     expect(Object.hasOwn(fulfilled, '__proto__') && fulfilled['__proto__']).toBe('kept');
   });
+
+  it('leaves a content-type header a header, and takes contentType only when given', () => {
+    const headers = { 'Content-Type': 'text/plain' };
+    expect(parseFulfill({ headers, json: 1 }, (file) => file)).toEqual({ status: 200, headers, json: 1 });
+    expect(parseFulfill({ headers, contentType: 'text/csv' }, (file) => file)).toEqual({ status: 200, headers, contentType: 'text/csv' });
+  });
 });

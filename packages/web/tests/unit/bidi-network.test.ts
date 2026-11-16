@@ -766,6 +766,24 @@ describe('AttemptNetwork', () => {
     expect(Object.fromEntries(sent.map((header) => [header.name, header.value.value]))).toEqual({ 'content-type': 'text/plain', 'content-length': '12' });
   });
 
+  it('derives a fulfilled type only when the response names none, and lets contentType replace either', async () => {
+    const fake = new FakeBidi();
+    const { net, open } = network(fake);
+    await net.bind('user-1');
+    await open('tab');
+    const named = { 'Content-Type': 'text/plain' };
+    const answers = [{ json: 1 }, { json: 1, headers: named }, { json: 1, headers: named, contentType: 'application/vnd.one+json' }];
+    await net.addRoute(route('**', async (held, decisions) => {
+      await decisions.fulfill({ status: 200, headers: {}, ...answers[Number(new URL(held.url).searchParams.get('answer'))] });
+    }));
+    for (const index of answers.keys()) fake.emit('network.beforeRequestSent', request(`r${index}`, `${SITE}/quote?answer=${index}`));
+    await settle();
+    await settle();
+    const types = fake.commands('network.provideResponse').map((command) =>
+      (command.params['headers'] as { name: string; value: { value: string } }[]).find((header) => header.name === 'content-type')?.value.value);
+    expect(types).toEqual(['application/json', 'text/plain', 'application/vnd.one+json']);
+  });
+
   describe('collected bodies', () => {
     it('lets the collector go of a response body no wait matched, and of a body a wait read', async () => {
       const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'read' } } });

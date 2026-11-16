@@ -149,9 +149,9 @@ const CONTINUE_KEYS = ['url', 'method', 'headers', 'postData'];
  * taken the moment `fulfill` is called. `path` resolves with `resolvePath`
  * (the project root, never `process.cwd()`) and must name a file now, so a
  * missing fixture fails the step with its own message, and `json` follows
- * the JSON-value rules `evaluate` does. A `content-type` header becomes
- * `contentType` when none is given, since the driver overwrites the header
- * with the type it derives for `json` and `path`.
+ * the JSON-value rules `evaluate` does. A `content-type` header stays a
+ * header: the driver derives a type for `json` and `path` only when the
+ * response names none, and `contentType` replaces either.
  */
 export function parseFulfill(
   response: unknown,
@@ -170,9 +170,7 @@ export function parseFulfill(
   const file = path === undefined ? undefined : resolvePath(requireString('route.fulfill', 'path', path, true));
   if (file !== undefined) requireFile(file);
   const replied = requireHeaders('route.fulfill', headers, 'response') ?? {};
-  const type = contentType === undefined
-    ? Object.entries(replied).find(([name]) => name.toLowerCase() === 'content-type')?.[1]
-    : requireString('route.fulfill', 'contentType', contentType, true);
+  const type = contentType === undefined ? undefined : requireString('route.fulfill', 'contentType', contentType, true);
   return {
     status: (status as number | undefined) ?? 200,
     headers: replied,
