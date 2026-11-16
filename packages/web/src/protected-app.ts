@@ -40,18 +40,6 @@ export function lowercaseNames(headers: Readonly<Record<string, string>>): Reado
 }
 
 /**
- * The origin of `url` as `URL.origin` serializes it (scheme and host
- * lowercased, a default port dropped), or `undefined` when it does not parse.
- */
-function originOf(url: string): string | undefined {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
  * One attempt's access to a protected app: the exact origins it is scoped
  * to, the configured headers a request that starts at one of them carries,
  * and the credentials that answer a basic-auth challenge one of them issues.
@@ -88,10 +76,9 @@ export class ProtectedApp {
     return this.covers(url) ? this.credentials : undefined;
   }
 
-  /** Whether `url`'s origin is one of the origins, by exact scheme, host, and port. */
+  /** Whether `url` parses and its origin, as `URL.origin` serializes it, is one of the origins: the same scheme, host, and port. */
   private covers(url: string): boolean {
-    const origin = originOf(url);
-    return origin !== undefined && this.origins.has(origin);
+    return URL.canParse(url) && this.origins.has(new URL(url).origin);
   }
 }
 

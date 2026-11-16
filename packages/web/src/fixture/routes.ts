@@ -88,22 +88,18 @@ export async function runRouteHandler(
  * that arrived returns a copy of its bytes on every call, a body the browser could not
  * read rejects every call with `ACTION_FAILED` naming the cause. Swallowing
  * that failure would hand the test an empty string the server never sent,
- * indistinguishable from a real empty body. `failure` names the reason the
- * browser reported on a page request (`net::ERR_CONTENT_LENGTH_MISMATCH` for
- * a connection cut short of the declared length, `net::ERR_ABORTED` for a
- * request the page aborted), and the error behind the read is the fallback,
- * as for a redirect, whose body the browser never keeps.
+ * indistinguishable from a real empty body. The cause is the error behind
+ * the read: the reason the browser reported on a page request
+ * (`net::ERR_CONTENT_LENGTH_MISMATCH` for a connection cut short of the
+ * declared length, `net::ERR_ABORTED` for a request the page aborted), or
+ * that a redirect's body is never kept.
  */
-export async function readResponseBody(
-  api: 'waitForResponse' | 'route.fetch',
-  body: () => Promise<Buffer>,
-  failure: () => string | undefined = () => undefined,
-): Promise<() => Promise<Buffer>> {
+export async function readResponseBody(api: 'waitForResponse' | 'route.fetch', body: () => Promise<Buffer>): Promise<() => Promise<Buffer>> {
   try {
     const bytes = await body();
     return () => Promise.resolve(Buffer.from(bytes));
   } catch (cause) {
-    const error = new TestError('ACTION_FAILED', `${api}: response body could not be read: ${failure() ?? message(cause)}`);
+    const error = new TestError('ACTION_FAILED', `${api}: response body could not be read: ${message(cause)}`);
     return () => Promise.reject(error);
   }
 }

@@ -20,7 +20,7 @@ import { BidiError, releaseQuietly } from '../errors.ts';
 import { lowercaseNames, type ProtectedApp } from '../protected-app.ts';
 import type { BidiConnection, BidiEventParams } from './connection.ts';
 import { CONTENT_TYPES } from './content-types.ts';
-import { bytesText, headerRecord, stripHash, wireHeaders } from './network-wire.ts';
+import { bytesText, hasBody, headerRecord, stripHash, wireHeaders } from './network-wire.ts';
 import { fetchedResponse, replayRequest, setCookieOf, type FetchedResponse } from './route-fetch.ts';
 import { routePatternMatches } from './route-pattern.ts';
 
@@ -291,7 +291,7 @@ export class RequestDecisions {
    * (https://github.com/puppeteer/puppeteer/pull/15607).
    */
   private async heldBody(request: Network.RequestData, navigation: boolean): Promise<HeldBody> {
-    if (request.bodySize === 0 || (request.bodySize === null && ['GET', 'HEAD'].includes(request.method))) return 'none';
+    if (!hasBody(request)) return 'none';
     const body = navigation && !this.options.traits.navigationBodies ? undefined : await this.scope.requestBody(request.request);
     return body ?? 'lost';
   }

@@ -14,7 +14,7 @@ import type { ContextTree } from './context-tree.ts';
 import { BidiError, releaseQuietly } from '../errors.ts';
 import type { BidiConnection, BidiEventParams } from './connection.ts';
 import { RequestDecisions, type DecisionOptions, type DecisionRecord, type DecisionScope, type NetworkRoute } from './network-decisions.ts';
-import { bytesOf, headerRecord, stripHash } from './network-wire.ts';
+import { bytesOf, hasBody, headerRecord, stripHash } from './network-wire.ts';
 
 /** A finished response as a response wait reports it. */
 export interface ObservedResponse {
@@ -93,7 +93,7 @@ export class NetworkBinding implements DecisionScope {
   /** `routes` are the attempt's, oldest first, which it adds to and removes from in place. */
   constructor(
     private readonly connection: BidiConnection,
-    readonly userContext: string,
+    private readonly userContext: string,
     private readonly options: NetworkOptions,
     private readonly routes: readonly NetworkRoute[],
   ) {
@@ -460,11 +460,6 @@ function hopLoaded(record: RequestRecord): Promise<void> {
   });
   loaded.catch(() => undefined);
   return loaded;
-}
-
-/** Whether `request` carries a body a collector may have kept. */
-function hasBody(request: Network.RequestData): boolean {
-  return request.bodySize !== 0 && !(request.bodySize === null && ['GET', 'HEAD'].includes(request.method));
 }
 
 /** `headers` without the cookie headers, which a response wait leaves out as Playwright's `response.headers()` does. */

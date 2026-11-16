@@ -1,7 +1,7 @@
 /**
  * BiDi's network values as the driver reads and writes them: a header list
- * as a record and back, a bytes value as text or a buffer, and a URL without
- * its fragment.
+ * as a record and back, a bytes value as text or a buffer, whether a request
+ * carries a body, and a URL without its fragment.
  */
 
 import type { Network } from 'webdriver-bidi-protocol';
@@ -30,6 +30,11 @@ export function bytesText(value: Network.BytesValue): string {
 /** A BiDi bytes value as a buffer. */
 export function bytesOf(bytes: Network.BytesValue): Buffer {
   return bytes.type === 'string' ? Buffer.from(bytes.value) : Buffer.from(bytes.value, 'base64');
+}
+
+/** Whether `request` carries a body a collector may have kept. */
+export function hasBody(request: Network.RequestData): boolean {
+  return request.bodySize !== 0 && !(request.bodySize === null && ['GET', 'HEAD'].includes(request.method));
 }
 
 /** A URL without its fragment, which no request carries to the server and Playwright never reports. */

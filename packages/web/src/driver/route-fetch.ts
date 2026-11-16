@@ -18,20 +18,18 @@ export interface FetchedResponse {
   body(): Promise<Buffer>;
 }
 
-/** A held request as Node sends it again: the headers the browser sent it with, and its body bytes when it has one. */
-interface ReplayedRequest {
-  readonly url: string;
-  readonly method: string;
-  readonly headers: Readonly<Record<string, string>>;
-  readonly body?: Buffer;
-}
-
 /**
- * Sends `request` from Node and resolves with its response, redirects not
- * followed. A Basic challenge is answered once with `credentials`, as the
- * browser answers its own; a second 401 is the response.
+ * Sends a held request from Node, with the headers the browser sent it with
+ * and its body bytes when it has one, and resolves with its response,
+ * redirects not followed. A Basic challenge is answered once with
+ * `credentials`, as the browser answers its own; a second 401 is the
+ * response.
  */
-export async function replayRequest(request: ReplayedRequest, credentials: HttpCredential | undefined, signal: AbortSignal): Promise<Response> {
+export async function replayRequest(
+  request: { readonly url: string; readonly method: string; readonly headers: Readonly<Record<string, string>>; readonly body?: Buffer },
+  credentials: HttpCredential | undefined,
+  signal: AbortSignal,
+): Promise<Response> {
   const send = (extra: Record<string, string>): Promise<Response> => fetch(request.url, {
     method: request.method,
     headers: { ...request.headers, ...extra },
