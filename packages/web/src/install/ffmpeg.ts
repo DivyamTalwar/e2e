@@ -10,15 +10,12 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 import { EngineError } from '@e2e-dev/core/engine';
-import { installArchive, PINS } from './builds.ts';
+import { browserPlatform, installArchive, PINS } from './builds.ts';
 import { mirrorOrigin } from './download.ts';
 import { browsersPath, installBuilds, type PinnedBuild } from './provision.ts';
 
 /** Where the pinned ffmpeg-static release is downloaded from, unless `E2E_BROWSERS_DOWNLOAD_HOST` names a mirror. */
 const FFMPEG_HOST = 'https://github.com';
-
-/** The SHA-256 of each platform's gzipped ffmpeg in the pinned release, by `${process.platform}-${process.arch}`. */
-const FFMPEG_SHA256: Readonly<Record<string, string>> = PINS.ffmpeg.sha256;
 
 /** Whether `executable` runs and lists the VP9 encoder the screencast needs. */
 function encodesVp9(executable: string): boolean {
@@ -64,21 +61,21 @@ export interface FfmpegContext {
  * The ffmpeg that encodes Chromium's screencast, downloading the pinned
  * build into the browsers cache when the system has none: from the
  * `E2E_BROWSERS_DOWNLOAD_HOST` mirror when set, checked against its
- * SHA-256, under the cache's install lock. Throws `UNSUPPORTED_CAPABILITY`
- * on a platform with no pinned build, and `BROWSER_INSTALL_FAILED` when the
- * download fails.
+ * SHA-256, under the cache's install lock. The build is the browsers'
+ * platform's, so Windows on Arm gets the x64 one beside its x64 browsers.
+ * Throws `UNSUPPORTED_CAPABILITY` on a platform with no pinned build, and
+ * `BROWSER_INSTALL_FAILED` when the download fails.
  */
 export async function ensureFfmpeg(env: NodeJS.ProcessEnv, context: FfmpegContext = {}): Promise<string> {
   const existing = ffmpegExecutable(env);
   if (existing !== undefined) return existing;
-  const key = `${process.platform}-${process.arch}`;
-  const sha256 = FFMPEG_SHA256[key];
-  if (sha256 === undefined) {
-    throw new EngineError('UNSUPPORTED_CAPABILITY', `recording video on chromium needs an ffmpeg with libvpx-vp9, and none is pinned for ${key}: set E2E_FFMPEG_PATH`, { retryable: false });
+  const platform = browserPlatform()?.node;
+  if (platform === undefined) {
+    throw new EngineError('UNSUPPORTED_CAPABILITY', `recording video on chromium needs an ffmpeg with libvpx-vp9, and none is pinned for ${process.platform}-${process.arch}: set E2E_FFMPEG_PATH`, { retryable: false });
   }
+  const sha256 = PINS.ffmpeg.sha256[platform];
   const executable = cachedFfmpeg(env);
-  const url = `${mirrorOrigin(env) ?? FFMPEG_HOST}/eugeneware/ffmpeg-static/releases/download/${PINS.ffmpeg.buildId}/ffmpeg-${key}.gz`;
-  const lock = { log: context.log ?? (() => undefined), signal: context.signal };
+  const url = `${mirrorOrigin(env) ?? FFMPEG_HOST}/eugeneware/ffmpeg-static/releases/download/${PINS.ffmpeg.buildId}/ffmpeg-${platform}.gz`;
   const ffmpeg: PinnedBuild = {
     label: 'ffmpeg',
     announcement: `Downloading ffmpeg from ${url}`,
@@ -100,6 +97,6 @@ export async function ensureFfmpeg(env: NodeJS.ProcessEnv, context: FfmpegContex
         signal: context.signal,
       }),
   };
-  await installBuilds(browsersPath(env), [ffmpeg], lock);
+  await installBuilds(browsersPath(env), [ffmpeg], { log: context.log ?? (() => undefined), signal: context.signal });
   return executable;
 }

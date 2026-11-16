@@ -1077,8 +1077,6 @@ bunx @e2e-dev/web install chromium --with-deps
 - `chromium` video needs an ffmpeg with `libvpx-vp9`: `E2E_FFMPEG_PATH`,
   else `ffmpeg` on the `PATH`, else a pinned build the first recording
   downloads into the browser cache. Install it ahead with `install ffmpeg`.
-  Windows on Arm has no pinned build: set `E2E_FFMPEG_PATH` to record
-  video there.
 - The command exits non-zero when an install fails. Ctrl-C or SIGTERM stops
   the download, removes the partial files, and exits 130 or 143.
 
