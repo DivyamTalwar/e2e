@@ -9,11 +9,13 @@ import { onFirefox, startWebSession, type WebSession } from '../helpers/web-sess
  * JSON body, a genuinely empty body under 200 and 204, a redirect whose body
  * the browser drops, and a body cut short by a connection reset before the
  * declared `Content-Length` was sent, one whose body follows its headers
- * 800ms later, and one that never finishes. The fragment is flushed before the
- * reset so the browser has seen the headers and reports the response rather
- * than an empty reply.
+ * only once the test calls `sendSlowBody`, and one that never finishes. The
+ * fragment is flushed before the reset so the browser has seen the headers
+ * and reports the response rather than an empty reply.
  */
-function startBodyServer(): Promise<{ server: Server; url: string }> {
+function startBodyServer(): Promise<{ server: Server; url: string; sendSlowBody: () => void }> {
+  let sendSlowBody: () => void = () => undefined;
+  const slowBodyDue = new Promise<void>((resolve) => (sendSlowBody = resolve));
   const server = createServer((request, response) => {
     switch (request.url) {
       case '/':
@@ -39,7 +41,7 @@ function startBodyServer(): Promise<{ server: Server; url: string }> {
       case '/api/slow':
         response.writeHead(200, { 'content-type': 'text/plain' });
         response.flushHeaders();
-        setTimeout(() => response.end('slow-body'), 800);
+        void slowBodyDue.then(() => response.end('slow-body'));
         return;
       case '/api/endless':
         response.writeHead(200, { 'content-type': 'text/plain' });
@@ -59,7 +61,7 @@ function startBodyServer(): Promise<{ server: Server; url: string }> {
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address() as AddressInfo;
-      resolve({ server, url: `http://127.0.0.1:${port}` });
+      resolve({ server, url: `http://127.0.0.1:${port}`, sendSlowBody });
     });
   });
 }
@@ -69,9 +71,10 @@ describe('browser.waitForResponse bodies', () => {
   let server: Server;
   let origin: string;
   let browser: Browser;
+  let sendSlowBody: () => void;
 
   beforeAll(async () => {
-    ({ server, url: origin } = await startBodyServer());
+    ({ server, url: origin, sendSlowBody } = await startBodyServer());
     session = await startWebSession({ appUrl: origin, timeoutMs: 2_000, startAttempt: false });
   });
 
@@ -146,11 +149,18 @@ describe('browser.waitForResponse bodies', () => {
   });
 
   it('matches on headers inside its timeout and lets text() wait for a slower body, on Chromium', async () => {
-    // Firefox sends network.responseStarted only once the body starts, not when the headers arrive.
-    if (onFirefox) return expect(observe('/api/slow', { timeout: 500 })).rejects.toMatchObject({ code: 'ACTION_FAILED', message: expect.stringContaining('operation timed out in browser.waitForResponse') });
-    const response = await observe('/api/slow', { timeout: 500 });
-    expect(response.status).toBe(200);
-    await expect(response.text()).resolves.toBe('slow-body');
+    try {
+      // Firefox sends network.responseStarted only once the body starts, not when the headers arrive.
+      if (onFirefox) return await expect(observe('/api/slow', { timeout: 500 })).rejects.toMatchObject({ code: 'ACTION_FAILED', message: expect.stringContaining('operation timed out in browser.waitForResponse') });
+      // No body is sent before the wait settled, so the headers alone matched.
+      const response = await observe('/api/slow');
+      expect(response.status).toBe(200);
+      const text = response.text();
+      sendSlowBody();
+      await expect(text).resolves.toBe('slow-body');
+    } finally {
+      sendSlowBody();
+    }
   });
 
   it('rejects reading a body that never finishes once the action budget runs out', async () => {
