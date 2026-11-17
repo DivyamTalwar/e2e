@@ -907,6 +907,57 @@ describe('AttemptNetwork', () => {
     expect(fake.commands('network.removeIntercept').filter((command) => command.params['intercept'] === 'global').length).toBeGreaterThanOrEqual(2);
   });
 
+  it('binds the new user context with what the attempt needs when a removal for the old one failed, and still reports the removal', async () => {
+    const fake = new FakeBidi();
+    const { net } = network(fake, { headers: true, exclusive: true });
+    await net.bind('user-1');
+    fake.on('network.removeIntercept', { error: 'unknown error', message: 'stuck' });
+    await expect(net.bind('user-2')).rejects.toThrow('stuck');
+    expect(fake.commands('session.subscribe').at(-1)?.params).toEqual({ events: ['network.beforeRequestSent', 'network.authRequired'], userContexts: ['user-2'] });
+    fake.emit('network.beforeRequestSent', request('held', `${SITE}/page`, ['intercept-2']));
+    await settle();
+    expect(fake.commands('network.continueRequest').map((command) => command.params)).toEqual([{
+      request: 'held',
+      headers: [{ name: 'accept', value: { type: 'string', value: '*/*' } }, { name: 'x-preview', value: { type: 'string', value: 'token' } }],
+    }]);
+    const waiting = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
+    fake.emit('network.responseStarted', { ...request('r', `${SITE}/r`, []), response: { url: `${SITE}/r`, status: 200, headers: [] } });
+    await expect(waiting).resolves.toMatchObject({ url: `${SITE}/r`, status: 200 });
+  });
+
+  it('reports what the new user context could not install over a removal for the old one that failed, which dispose tries again', async () => {
+    const fake = new FakeBidi();
+    const { net } = network(fake, { headers: true, exclusive: true });
+    await net.bind('user-1');
+    fake.on('network.removeIntercept', { error: 'unknown error', message: 'stuck' });
+    fake.on('network.addIntercept', { error: 'unknown error', message: 'refused' });
+    await expect(net.bind('user-2')).rejects.toThrow('refused');
+    fake.on('network.removeIntercept', { result: {} });
+    await net.dispose();
+    expect(fake.commands('network.removeIntercept').map((command) => command.params['intercept'])).toEqual(['intercept-1', 'intercept-1']);
+  });
+
+  it('takes a blank-served tab back out when what serves it could not be installed', async () => {
+    const fake = new FakeBidi();
+    const { net, contexts } = network(fake);
+    await net.bind('user-1');
+    contexts.created('scratch', 'user-1', null);
+    fake.on('network.addIntercept', { error: 'unknown error', message: 'refused' });
+    await expect(net.serveBlank('scratch')).rejects.toThrow('refused');
+    fake.on('network.addIntercept', { result: { intercept: 'intercept-1' } });
+    let routed = 0;
+    await net.addRoute(route('**', async (_held, decisions) => {
+      routed += 1;
+      await decisions.fallback();
+    }));
+    fake.emit('network.beforeRequestSent', { ...request('doc', `${SITE}/`), context: 'scratch', navigation: 'nav-1' });
+    await settle();
+    await settle();
+    expect(routed).toBe(1);
+    expect(fake.commands('network.provideResponse')).toEqual([]);
+    expect(fake.commands('network.continueRequest').map((command) => command.params['request'])).toEqual(['doc']);
+  });
+
   describe('what a request leaves behind once it is over', () => {
     it('forgets a basic-auth answer once its tab closed mid-redirect, so a new challenge gets the credentials', async () => {
       const fake = new FakeBidi();

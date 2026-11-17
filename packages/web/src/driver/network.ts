@@ -46,18 +46,24 @@ export class AttemptNetwork {
    * Binds the network to a fresh user context (the attempt's first, or the
    * one a reset or restore replaced it with). The old binding ends first,
    * with every request it tracked, and its resources are removed; the new
-   * one starts with no tabs and no requests. The response collector starts
-   * here, so a response wait has nothing to set up before the action it
-   * waits on can fire the response.
+   * one starts with no tabs and no requests. It is in place with what the
+   * attempt needs whatever became of the removals: one that failed stays
+   * for the next release (`unreleased`) and rejects the bind once the new
+   * binding stands, so the attempt never runs a user context unbound. The
+   * response collector starts here, so a response wait has nothing to set
+   * up before the action it waits on can fire the response.
    */
   bind(userContext: string): Promise<void> {
     return this.change(async () => {
       const old = this.binding;
       this.binding = undefined;
       old?.close();
-      await this.release(old);
-      this.binding = new NetworkBinding(this.connection, userContext, this.options, this.routes);
-      await this.reconcile();
+      try {
+        await this.release(old);
+      } finally {
+        this.binding = new NetworkBinding(this.connection, userContext, this.options, this.routes);
+        await this.reconcile();
+      }
     });
   }
 
@@ -94,14 +100,20 @@ export class AttemptNetwork {
   /**
    * Answers every document request of `context`, a tab of the attempt, with
    * a blank page before any route sees it, so a page at an origin can run
-   * script without the app's server seeing a request. Returns the undo.
+   * script without the app's server seeing a request. Returns the undo; a
+   * failed install takes the tab back out, since no undo is returned for it.
    */
   async serveBlank(context: string): Promise<() => Promise<void>> {
     let binding: NetworkBinding | undefined;
     await this.change(async () => {
       binding = this.binding;
       binding?.serveBlank(context);
-      await this.reconcile();
+      try {
+        await this.reconcile();
+      } catch (cause) {
+        binding?.unserveBlank(context);
+        throw cause;
+      }
     });
     return () => this.change(async () => {
       binding?.unserveBlank(context);
