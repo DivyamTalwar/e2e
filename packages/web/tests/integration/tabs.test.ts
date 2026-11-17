@@ -56,6 +56,9 @@ describe('tabs', () => {
   let artifactsDir: string;
   /** Requests for `/hang`, answered only when a test lets them go. */
   const hanging = new Set<ServerResponse>();
+  /** Opens the gate: requests for `/gate` are answered from then on, and held until then. */
+  let openGate: () => void = () => undefined;
+  const gateOpened = new Promise<void>((resolve) => (openGate = resolve));
 
   beforeAll(async () => {
     server = createServer((request, response) => {
@@ -66,6 +69,10 @@ describe('tabs', () => {
       if (request.url === '/no-content') {
         response.writeHead(204);
         response.end();
+        return;
+      }
+      if (request.url === '/gate') {
+        void gateOpened.then(() => response.end());
         return;
       }
       if (request.url === '/export') {
@@ -239,8 +246,8 @@ describe('tabs', () => {
     await withAttempt(async (engine, browser) => {
       await browser.waitForPopup(() => tap(engine, 'Open closable'));
       await screenAt(engine, '/popup');
-      // The tab closes itself once it is shown and the reads below are running, not on a timer from its opening.
-      await browser.evaluate('() => { setTimeout(() => window.close(), 300); return null; }');
+      // The tab closes itself once the gate opens: after a read of it came back, under the reads sent since.
+      await browser.evaluate("() => { void fetch('/gate').then(() => window.close()); return null; }");
       // A retryable stale read is the runner's to repeat, as the locator engine does.
       const repeated = async <T>(read: () => Promise<T>): Promise<T | undefined> => {
         try {
@@ -250,16 +257,21 @@ describe('tabs', () => {
           return undefined;
         }
       };
-      const until = Date.now() + 1_500;
-      const locations = new Set<string>();
-      while (Date.now() < until) {
-        const [snapshot] = await Promise.all([
-          repeated(() => engine.observe!(operation())),
-          repeated(() => engine.locate!(HEADING, operation())),
-        ]);
-        if (snapshot !== undefined) locations.add(snapshot.location ?? '');
+      const locations: string[] = [];
+      try {
+        while (locations.at(-1) !== `${url}/opener`) {
+          const reads = Promise.all([
+            repeated(() => engine.observe!(operation())),
+            repeated(() => engine.locate!(HEADING, operation())),
+          ]);
+          if (locations.length > 0) openGate();
+          const [snapshot] = await reads;
+          if (snapshot !== undefined && snapshot.location !== locations.at(-1)) locations.push(snapshot.location ?? '');
+        }
+      } finally {
+        openGate();
       }
-      expect([...locations]).toEqual([`${url}/popup`, `${url}/opener`]);
+      expect(locations).toEqual([`${url}/popup`, `${url}/opener`]);
     });
   });
 
