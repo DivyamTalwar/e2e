@@ -53,6 +53,22 @@ describe('checked and selected', () => {
     expect((await page.locate(byRole('option'))).map((node) => node.testId)).toEqual(['visible', 'disabled', 'visibility', 'restored']);
   });
 
+  it('leaves a select\'s option without its value, the app\'s token, and keeps the value of an option no select holds, which a locate reads either way', async () => {
+    await page.setContent(`
+      <select aria-label="Plan">
+        <option data-testid="choice" value="plan-token">Monthly</option>
+        <optgroup label="Yearly"><option data-testid="grouped" value="group-token">Prepaid</option></optgroup>
+      </select>
+      <datalist style="display:block"><option data-testid="suggestion" value="Warsaw"></option></datalist>
+      <div><option data-testid="stray" value="stray-value">Stray</option></div>
+    `);
+    const testIds = ['choice', 'grouped', 'suggestion', 'stray'];
+    const nodes = await captureByTestId();
+    expect(testIds.map((testId) => nodes.get(testId)?.value)).toEqual([undefined, undefined, 'Warsaw', 'stray-value']);
+    const located = await Promise.all(testIds.map(async (testId) => (await page.locate(byTestId(testId)))[0]?.value));
+    expect(located).toEqual(['plan-token', 'group-token', 'Warsaw', 'stray-value']);
+  });
+
   it('lists a checkbox or radio its own label draws over no box as shown, with its checked state', async () => {
     await page.setContent(`
       <style>.shrunk { opacity: 0; width: 0; height: 0; margin: 0; position: absolute }</style>

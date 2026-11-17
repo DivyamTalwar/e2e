@@ -543,10 +543,10 @@ export const createSemanticReader = (
    * read it serves. The tree's is the model-bound projection: bounded line
    * text (`lineTextOf`), a bounded attribute projection, hrefs reduced to
    * origin+path, the root document named by its title, a list row, a
-   * status, or an alert named from its content, and no value on a checkbox
-   * or radio, whose value attribute is an app token its checked state
-   * already says more than. A locate's is the full locator-read surface
-   * (`LOCATOR`).
+   * status, or an alert named from its content, and no value on a checkbox,
+   * a radio, or a select's option, whose value attribute is an app token
+   * its checked or selected state already says more than. A locate's is the
+   * full locator-read surface (`LOCATOR`).
    */
   interface Projection {
     /** The attributes kept beside the `aria-` ones; null keeps all. */
@@ -557,7 +557,8 @@ export const createSemanticReader = (
     readonly nameLimit: number;
     readonly redactHref: boolean;
     readonly documentRoot: boolean;
-    readonly checkableValue: boolean;
+    /** Whether a checkbox, a radio, and a select's option report their value attribute. */
+    readonly choiceValue: boolean;
     readonly text: (el: Element) => string;
     readonly name: (el: Element) => string | null;
   }
@@ -571,18 +572,18 @@ export const createSemanticReader = (
     let selectedState: boolean | null = null;
     if (el instanceof HTMLInputElement) {
       // A checkbox or radio submits its value attribute (`on` by default)
-      // whatever its checked state, so a locator read reports both; the tree
-      // drops that token as it drops an option's.
+      // whatever its checked state, so a locator read reports both.
       const checkable = el.type === 'checkbox' || el.type === 'radio';
       if (checkable) checked = el.checked;
-      if (!checkable || projection.checkableValue) value = el.value;
+      if (!checkable || projection.choiceValue) value = el.value;
     } else if (el instanceof HTMLTextAreaElement) {
       value = el.value;
     } else if (el instanceof HTMLSelectElement) {
       value = el.value;
     } else if (el instanceof HTMLOptionElement) {
       selectedState = el.selected;
-      value = el.value;
+      // Only a select's option is a choice with a token; a datalist's value is the text it suggests.
+      if (projection.choiceValue || el.closest('select') === null) value = el.value;
     } else if (isEditingHost(el)) {
       // An editor's document is its value, as a textarea's text is: kept as
       // rendered, spaces and newlines included. An empty editor renders
@@ -707,7 +708,7 @@ export const createSemanticReader = (
     nameLimit: Infinity,
     redactHref: false,
     documentRoot: false,
-    checkableValue: true,
+    choiceValue: true,
     text: textOf,
     name: locatorName,
   };
@@ -758,7 +759,7 @@ export const createSemanticReader = (
       nameLimit: limits.nameLimit,
       redactHref: true,
       documentRoot: true,
-      checkableValue: false,
+      choiceValue: false,
       text: lineTextOf,
       name: (el) => names.reportedName(el, accessibleName(el)),
     };
@@ -829,13 +830,7 @@ export const createSemanticReader = (
           truncated = true;
           return;
         }
-        const index = include(el, parent, style);
-        frames.push({ node: index, selector: frameSelectorOf(el) });
-        const node = nodes[index]!;
-        if (node.name === null) {
-          const title = el.getAttribute('title');
-          if (title !== null && title.trim() !== '') node.name = title.trim();
-        }
+        frames.push({ node: include(el, parent, style), selector: frameSelectorOf(el) });
         return;
       }
 
@@ -866,12 +861,8 @@ export const createSemanticReader = (
             truncated = true;
             return;
           }
-          const index = include(option, nextParent, styleOf(option));
-          const node = nodes[index]!;
-          // Listed on purpose, so not "hidden"; the label is the name and the
-          // value attribute is the app's internal token, not something to show.
-          node.states.hidden = false;
-          node.value = null;
+          // Listed on purpose, so not "hidden".
+          nodes[include(option, nextParent, styleOf(option))]!.states.hidden = false;
         }
         return;
       }

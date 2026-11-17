@@ -171,6 +171,22 @@ describe('names from content and precedence', () => {
     }
   });
 
+  it('names an iframe by its title after its label, as a locate reads it, a label of icon glyphs alone giving way to the title', async () => {
+    await page.setContent(`
+      <iframe data-testid="titled" title=" Offers " srcdoc="<p>a</p>"></iframe>
+      <iframe data-testid="labelled" aria-label="Checkout" title="Payment frame" srcdoc="<p>b</p>"></iframe>
+      <iframe data-testid="glyph" aria-label="&#xf090;" title="Sign in" srcdoc="<p>c</p>"></iframe>
+      <iframe data-testid="glyph-alone" aria-label="&#xf090;" srcdoc="<p>d</p>"></iframe>
+      <iframe data-testid="blank" title="  " srcdoc="<p>e</p>"></iframe>
+      <iframe data-testid="bare" srcdoc="<p>f</p>"></iframe>
+    `);
+    await page.waitForFrames();
+    const names = ['Offers', 'Checkout', 'Sign in', undefined, undefined, undefined];
+    const { tree } = await capture();
+    expect(flatten(tree).filter((node) => node.role === 'iframe').map((node) => node.name)).toEqual(names);
+    expect((await page.locate(byRole('iframe'))).map((node) => node.name)).toEqual(names);
+  });
+
   it('reads an embedded control by its value, as the role selector does', async () => {
     await page.setContent(`
       <button data-testid="textbox">Flash the screen <input value="3"> times</button>
