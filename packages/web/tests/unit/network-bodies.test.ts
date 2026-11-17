@@ -12,7 +12,8 @@ import { ContextTree } from '../../src/driver/context-tree.ts';
 import { AttemptNetwork } from '../../src/driver/network.ts';
 import type { InterceptedRequest, NetworkRoute, RouteDecisions } from '../../src/driver/network-decisions.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
-import { FakeBidi, settle, type Reply } from '../helpers/bidi-fake.ts';
+import type { Network } from 'webdriver-bidi-protocol';
+import { FakeBidi, requestData, settle, type Reply } from '../helpers/bidi-fake.ts';
 
 /** An attempt network over `fake` on `browser`, bound to `user-1` with tab `tab` open, and the failures it latched. */
 async function network(fake: FakeBidi, browser: BrowserName) {
@@ -47,7 +48,7 @@ function route(handle: NetworkRoute['handle']): NetworkRoute {
 }
 
 /** A `beforeRequestSent` event of request `id` from `tab`, held by every intercept the fake handed out, with `fields` over its request. */
-function held(id: string, fields: Record<string, unknown>, navigation: string | null = null): Record<string, unknown> {
+function held(id: string, fields: Partial<Network.RequestData>, navigation: string | null = null): Network.BeforeRequestSentParameters {
   return {
     context: 'tab',
     isBlocked: true,
@@ -55,12 +56,12 @@ function held(id: string, fields: Record<string, unknown>, navigation: string | 
     redirectCount: 0,
     timestamp: 0,
     intercepts: ['intercept-1', 'intercept-2'],
-    request: { request: id, url: 'http://app.test/upload', method: 'POST', headers: [], cookies: [], headersSize: 0, bodySize: 0, timings: {}, ...fields },
+    request: requestData(id, 'http://app.test/upload', { method: 'POST', ...fields }),
   };
 }
 
 /** What a route was handed for the one request `event` announces, and what its `fetch` did, when asked to: the response's status, or the failure. */
-async function routed(fake: FakeBidi, browser: BrowserName, event: Record<string, unknown>, replay = false): Promise<{ request: InterceptedRequest | undefined; fetch: unknown; failures: Error[] }> {
+async function routed(fake: FakeBidi, browser: BrowserName, event: Network.BeforeRequestSentParameters, replay = false): Promise<{ request: InterceptedRequest | undefined; fetch: unknown; failures: Error[] }> {
   const { net, failures } = await network(fake, browser);
   let request: InterceptedRequest | undefined;
   let fetch: unknown;
@@ -160,11 +161,11 @@ describe('the body of a held request on Chromium', () => {
     expect(cdpCommands(fake)).toEqual([]);
   });
 
-  it('asks for no body of a navigation, which Chrome never answers for', async () => {
-    const fake = new FakeBidi();
+  it('reads the body of a navigation that posts a form as any other', async () => {
+    const fake = answering({ result: { result: { postData: 'YT0x', base64Encoded: true } } });
     const { request } = await routed(fake, 'chromium', held('submit', { bodySize: 3 }, 'nav-1'));
-    expect(request).not.toHaveProperty('postData');
-    expect(cdpCommands(fake)).toEqual([]);
+    expect(request?.postData).toBe('a=1');
+    expect(cdpCommands(fake)).toEqual([['session-of-tab', 'Network.getRequestPostData', { requestId: 'submit' }]]);
   });
 });
 

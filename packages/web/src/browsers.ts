@@ -42,8 +42,6 @@ export interface BrowserTraits {
   readonly continueKeepsContentLength: boolean;
   /** Whether `network.continueRequest` can send a request to another URL. */
   readonly continueRewritesUrl: boolean;
-  /** Whether the body of a held navigation (a form submission) can be read; Chromium never answers for it. */
-  readonly navigationBodies: boolean;
   /**
    * Where the body of a held request is read: BiDi's request `collector`, or
    * `cdp`. The Chromium mapper reports a body of bytes as the text of their
@@ -90,7 +88,6 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     continueAddsCookies: true,
     continueKeepsContentLength: false,
     continueRewritesUrl: true,
-    navigationBodies: false,
     requestBodies: 'cdp',
     pointerWaitsForFrame: false,
     windowClipsViewport: false,
@@ -111,7 +108,6 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     continueAddsCookies: false,
     continueKeepsContentLength: true,
     continueRewritesUrl: false,
-    navigationBodies: true,
     requestBodies: 'collector',
     pointerWaitsForFrame: true,
     windowClipsViewport: true,

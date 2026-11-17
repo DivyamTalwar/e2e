@@ -1,15 +1,12 @@
 /**
- * A route on a form submission that navigates, on both browsers. Firefox
- * reports the body of a navigation it holds, so the route reads the form as
- * `postData` and `route.fetch()` sends it upstream. Chromium reports none:
- * the route gets no `postData`, and `route.fetch()` refuses with that reason
- * rather than send the form without its fields, while a route that lets the
- * submission go on still sends them.
+ * A route on a form submission that navigates, on both browsers: the route
+ * reads the form as `postData`, `route.fetch()` sends it upstream, and a
+ * route that lets the submission go on still sends its fields.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { WebRoute } from '../../src/fixture/types.ts';
-import { byRole, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { byRole, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 /** The form's fields as a browser encodes them. */
 const FORM_BODY = 'name=Ada&note=two+words';
@@ -58,7 +55,7 @@ describe('a route on a form submission that navigates', () => {
     return session.browser.evaluate(() => document.body.textContent);
   }
 
-  it('hands the route the form as postData on Firefox, and no postData on Chromium, where the submission it lets go on still carries the form', async () => {
+  it('hands the route the form as postData, and the submission it lets go on still carries the form', async () => {
     const seen: { method: string; postData: string | undefined }[] = [];
 
     const received = await submitThrough(async (route) => {
@@ -66,29 +63,17 @@ describe('a route on a form submission that navigates', () => {
       await route.continue();
     });
 
-    expect(seen).toEqual([{ method: 'POST', postData: onFirefox ? FORM_BODY : undefined }]);
+    expect(seen).toEqual([{ method: 'POST', postData: FORM_BODY }]);
     expect(received).toBe(FORM_BODY);
     expect(submitted).toEqual([FORM_BODY]);
   });
 
-  it('sends the form upstream from route.fetch() on Firefox, and refuses on Chromium with the reason it has no body to send', async () => {
-    const refusals: unknown[] = [];
-
+  it('sends the form upstream from route.fetch()', async () => {
     const received = await submitThrough(async (route) => {
-      try {
-        const upstream = await route.fetch();
-        await route.fulfill({ status: upstream.status, contentType: upstream.headers['content-type']!, body: await upstream.text() });
-      } catch (cause) {
-        refusals.push(cause);
-        await route.continue();
-      }
+      const upstream = await route.fetch();
+      await route.fulfill({ status: upstream.status, contentType: upstream.headers['content-type']!, body: await upstream.text() });
     });
 
-    expect(refusals).toEqual(onFirefox ? [] : [expect.objectContaining({
-      code: 'ACTION_FAILED',
-      message: 'route.fetch: this browser reports no body for a navigation it holds, such as a form submission, so the request cannot be replayed',
-    })]);
-    // The server got the form once either way: from the route's fetch, or from the browser once the route let the submission go on.
     expect(received).toBe(FORM_BODY);
     expect(submitted).toEqual([FORM_BODY]);
   });

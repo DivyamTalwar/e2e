@@ -355,7 +355,7 @@ export class NetworkBinding implements DecisionScope {
    * stream, no collector in place yet) is lost. Chromium's is read over CDP
    * (`pausedBody`).
    */
-  async requestBody(request: Network.RequestData, context: string): Promise<Exclude<HeldBody, 'unreported'>> {
+  async requestBody(request: Network.RequestData, context: string): Promise<HeldBody> {
     if (this.options.traits.requestBodies === 'cdp') return this.pausedBody(request, context);
     if (!hasBody(request)) return 'none';
     const collector = this.requestCollector;

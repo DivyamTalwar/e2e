@@ -14,7 +14,7 @@
 - `browser.mouse.move` and `wheel` throw `INVALID_ARGUMENT` for a point outside the viewport, and `waitForResponse` reads no body over 20 MB (`body()` throws `ACTION_FAILED`).
 - `setInputFiles` on a browser provider's browser sends the files' bytes to the page, up to 50 MB in all; a directory there throws `UNSUPPORTED_CAPABILITY`, and so does a download on a provider without `downloads`.
 - On Firefox, `browser.emulateMedia({ reducedMotion })` (set `web({ reducedMotion })` instead), `route.continue({ url })`, and a drag that starts an HTML5 drag throw `UNSUPPORTED_CAPABILITY`. The web reference lists the limits of each browser.
-- Setting `headers` or a route no longer turns the browser's HTTP cache off: a response served from the cache sends no request for a route to see.
+- Setting `headers` no longer turns the browser's HTTP cache off. A route still does: while the attempt has a route every request asks the network, and the cache answers again once the last route is removed.
 - Browsers are new pinned builds: Chrome for Testing 157.0.8103.38 (the headless shell, or full Chrome when headed) and Firefox 159.0.1. They install into `E2E_BROWSERS_PATH`, else `e2e/browsers` in the user cache, with `npx @e2e-dev/web install [chromium|firefox] [--with-deps] [--headed]`, or on the first run. `PLAYWRIGHT_BROWSERS_PATH` is no longer read.
 - Chromium video needs an ffmpeg with VP9: `E2E_FFMPEG_PATH`, else the pinned build once it is in the browser cache, else `ffmpeg` on the `PATH`. With none of them, the first recording downloads the pinned build into the browser cache (`npx @e2e-dev/web install ffmpeg` fetches it ahead). A run that records no video never downloads it.
 - The old `ms-playwright` browser cache is no longer used and can be deleted.

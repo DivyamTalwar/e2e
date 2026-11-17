@@ -372,7 +372,7 @@ export type WebInitScript = string | { readonly path: string } | (() => unknown)
 | On Firefox, a key WebDriver defines no value for, such as `MediaPlayPause`, throws `UNSUPPORTED_CAPABILITY` | Chromium presses those keys over CDP. |
 | On Firefox, a viewport its window cannot grow to hold throws `UNSUPPORTED_CAPABILITY` | Firefox takes pointer input only inside its window. A headless window grows to 16384 pixels each way, a headed one to its display. |
 | On Chromium, a request for `/favicon.ico` goes to the network past its own route | chromium-bidi reports no events for it. |
-| On Chromium, a route on a form submission that navigates gets no `route.request.postData`, and `route.fetch()` on it throws `ACTION_FAILED` | Chromium does not report the body of a held navigation. |
+| On Chromium, a route on a request whose body has a file from disk inside a form, or a streamed body, gets no `route.request.postData`, and `route.fetch()` throws `ACTION_FAILED` | Chromium reports no bytes for that part. `route.continue()` still sends it. |
 | On Firefox, an init script sees a same-origin frame's first, empty document (`about:blank`), not the page the frame then loads | Firefox keeps that document's `window` for the page and runs no script again. What the script set on `window` stays. |
 | On Firefox, a `browser.evaluate` can run more than once: one still running when a tab from `browser.newTab()` loads its first page, or one that starts while a navigation to another site commits | Firefox sends a command again when the empty document it went to (a new tab's first, the one a new site's process starts with) is replaced by a page. Wait for the page first, as with `waitForURL`. |
 | With a browser provider, `setInputFiles` sends the files' bytes to the page, up to 50 MB in all, and throws `UNSUPPORTED_CAPABILITY` for a directory; downloads throw it when the provider serves none | The browser's filesystem is another machine's. |
@@ -626,9 +626,12 @@ It does not follow redirects, which could take it past the navigation rule.
   character, and `\` escapes the next. `unroute` and `waitForResponse` take
   the same patterns.
 - A route survives `app.restart()`, `app.clearState()`, and session restore.
-- A stylesheet or an image that an earlier page of the attempt loaded can
-  come from the browser's cache, with no request for a route to see. Add the
-  route before the page opens.
+- While a route is set the browser's HTTP cache is bypassed, so a route sees
+  a resource an earlier page loaded. On Firefox, an image or a stylesheet the
+  current document already loaded is reused with no request: add the route
+  before the page opens.
+- `route.request.postData` is the body's bytes decoded as UTF-8; a body that
+  is not text reads with U+FFFD. `route.fetch()` sends the exact bytes.
 - Routes run newest first.
 - The handler must decide exactly once, with `fulfill`, `continue`,
   `fallback`, or `abort`, each described on `WebRoute` below.

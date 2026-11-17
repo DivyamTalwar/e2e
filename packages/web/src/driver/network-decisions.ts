@@ -21,7 +21,7 @@ import { asError, BidiError, releaseQuietly } from '../errors.ts';
 import { lowercaseNames, type ProtectedApp } from '../protected-app.ts';
 import type { BidiConnection, BidiEventParams } from './connection.ts';
 import { CONTENT_TYPES } from './content-types.ts';
-import { bytesText, hasBody, headerRecord, stripHash, wireHeaders } from './network-wire.ts';
+import { bytesText, headerRecord, stripHash, wireHeaders } from './network-wire.ts';
 import { fetchedResponse, replayRequest, setCookieOf, type FetchedResponse } from './route-fetch.ts';
 import { routePatternMatches } from './route-pattern.ts';
 
@@ -112,24 +112,22 @@ export interface DecisionRecord {
 /** What a decision reads and writes of the user context that holds the request; the binding provides it. */
 export interface DecisionScope {
   /** The body of held `request`, which came from `context`, as the browser gives it. */
-  requestBody(request: Network.RequestData, context: string): Promise<Exclude<HeldBody, 'unreported'>>;
+  requestBody(request: Network.RequestData, context: string): Promise<HeldBody>;
   /** Stores `cookies` in the user context's jar, giving up once `signal` aborts. */
   storeCookies(cookies: readonly Storage.PartialCookie[], signal: AbortSignal): Promise<void>;
 }
 
 /**
  * A held request's body as the browser gives it: its bytes, `none` for a
- * request without one, `lost` for one the collector kept none of,
- * `unreadable` for one with a part the browser reports no bytes of, and
- * `unreported` for a held navigation's on a browser that never answers for it.
+ * request without one, `lost` for one the collector kept none of, and
+ * `unreadable` for one with a part the browser reports no bytes of.
  */
-export type HeldBody = Buffer | 'none' | 'lost' | 'unreadable' | 'unreported';
+export type HeldBody = Buffer | 'none' | 'lost' | 'unreadable';
 
-/** Why a route's fetch has no body to replay a request with, for each way `heldBody` found none. */
-const NO_BODY: Readonly<Record<'lost' | 'unreadable' | 'unreported', string>> = {
+/** Why a route's fetch has no body to replay a request with, for each way the scope found none. */
+const NO_BODY: Readonly<Record<'lost' | 'unreadable', string>> = {
   lost: 'the browser kept none of the request body (too large or streamed)',
   unreadable: 'the browser reports no bytes for a part of the request body (a file on disk, or a stream)',
-  unreported: 'this browser reports no body for a navigation it holds, such as a form submission',
 };
 
 /** What deciding held requests needs of the attempt. */
@@ -285,7 +283,7 @@ export class RequestDecisions {
     const address = stripHash(request.url);
     const url = URL.canParse(address) ? new URL(address) : undefined;
     const matching = url === undefined ? [] : this.routes.filter((route) => routePatternMatches(route.pattern, url.href)).toReversed();
-    const body = matching.length === 0 ? 'none' : await this.heldBody(request, record.context, event.navigation !== null);
+    const body = matching.length === 0 ? 'none' : await this.scope.requestBody(request, record.context);
     const intercepted: InterceptedRequest = {
       id: request.request,
       url: address,
@@ -313,19 +311,6 @@ export class RequestDecisions {
   }
 
   /**
-   * The body of held `request` from `context`, as the user context's scope
-   * reads it. A held navigation's is never asked for on a browser that does
-   * not answer for it (`navigationBodies`): Chromium, for the body of a
-   * paused form submission
-   * (https://github.com/puppeteer/puppeteer/pull/15607). There one BiDi
-   * sizes at nothing has none, and any other is unreported.
-   */
-  private async heldBody(request: Network.RequestData, context: string, navigation: boolean): Promise<HeldBody> {
-    if (navigation && !this.options.traits.navigationBodies) return hasBody(request) ? 'unreported' : 'none';
-    return this.scope.requestBody(request, context);
-  }
-
-  /**
    * A route's fetch of the request it holds: sends it from Node as the
    * browser sent it (its body bytes and its cookies) with the configured
    * headers `continue` adds, within `budget` and the attempt's lifetime, and
@@ -336,7 +321,7 @@ export class RequestDecisions {
    * fetch with that reason (`NO_BODY`) rather than send none or a part.
    */
   private async fetch(request: InterceptedRequest, cookies: readonly Network.Cookie[], body: HeldBody, budget: Pick<OperationContext, 'signal' | 'timeoutMs'>): Promise<FetchedResponse> {
-    if (body === 'lost' || body === 'unreadable' || body === 'unreported') {
+    if (body === 'lost' || body === 'unreadable') {
       throw new TestError('ACTION_FAILED', `route.fetch: ${NO_BODY[body]}, so the request cannot be replayed`);
     }
     const signal = AbortSignal.any([budget.signal, AbortSignal.timeout(budget.timeoutMs), this.options.lifetime]);

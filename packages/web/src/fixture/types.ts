@@ -91,6 +91,7 @@ export interface WebRoute {
     readonly url: string;
     readonly method: string;
     readonly headers: Readonly<Record<string, string>>;
+    /** The body's bytes decoded as UTF-8; absent for a request without one, or one the browser reports no bytes for. */
     readonly postData?: string;
   };
   /** Reads the upstream response without deciding the route or following redirects. */

@@ -10,13 +10,14 @@ import { BROWSER_TRAITS } from '../../src/browsers.ts';
 import { ContextTree } from '../../src/driver/context-tree.ts';
 import { AttemptNetwork } from '../../src/driver/network.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
-import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import type { Network } from 'webdriver-bidi-protocol';
+import { FakeBidi, requestData, responseData, settle } from '../helpers/bidi-fake.ts';
 
 const START = 'https://external.test/start';
-const LOCATION = [{ name: 'Location', value: { type: 'string', value: '/next' } }];
+const LOCATION: Network.Header[] = [{ name: 'Location', value: { type: 'string', value: '/next' } }];
 
 /** A `beforeRequestSent` event of hop `redirectCount` of request `id` at `url`, held by the route's intercept. */
-function hop(id: string, url: string, redirectCount = 0): Record<string, unknown> {
+function hop(id: string, url: string, redirectCount = 0): Network.BeforeRequestSentParameters {
   return {
     context: 'tab',
     isBlocked: true,
@@ -24,7 +25,7 @@ function hop(id: string, url: string, redirectCount = 0): Record<string, unknown
     redirectCount,
     timestamp: 0,
     intercepts: ['intercept-1'],
-    request: { request: id, url, method: 'GET', headers: [{ name: 'Accept', value: { type: 'string', value: '*/*' } }], cookies: [], headersSize: 0, bodySize: 0, timings: {} },
+    request: requestData(id, url, { headers: [{ name: 'Accept', value: { type: 'string', value: '*/*' } }] }),
   };
 }
 
@@ -34,7 +35,7 @@ function hop(id: string, url: string, redirectCount = 0): Record<string, unknown
  * hop under the same id. Returns whether the response collector was told to
  * let go of the response, and what the second hop was continued with.
  */
-async function answered(status: number, headers: readonly unknown[]): Promise<{ released: boolean; next: Record<string, unknown> | undefined }> {
+async function answered(status: number, headers: Network.Header[]): Promise<{ released: boolean; next: Record<string, unknown> | undefined }> {
   const fake = new FakeBidi();
   const contexts = new ContextTree();
   fake.on('network.addIntercept', { result: { intercept: 'intercept-1' } });
@@ -61,7 +62,7 @@ async function answered(status: number, headers: readonly unknown[]): Promise<{ 
   fake.emit('network.beforeRequestSent', hop('r', START));
   await settle();
   await settle();
-  fake.emit('network.responseCompleted', { ...hop('r', START), isBlocked: false, response: { url: START, status, headers } });
+  fake.emit('network.responseCompleted', { ...hop('r', START), isBlocked: false, response: responseData(START, status, { headers }) });
   await settle();
   fake.emit('network.beforeRequestSent', hop('r', 'https://external.test/next', 1));
   await settle();
