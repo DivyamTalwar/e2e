@@ -391,9 +391,9 @@ async function fill(session: BidiSession, target: NodeTarget, value: string, dea
  * sends a call again (`resendsPageCalls`): there the refusal may answer for
  * the document that replaced the one the mutation ran in, and the try stays
  * counted. A mutation that ran, threw midway, or refused stays counted too:
- * a fill refuses a malformed number only once the field took it. So does one
- * whose document, frame, or tab went away under it. Nothing runs once
- * `signal` aborted.
+ * a fill refuses a field that gave focus up only after its focus handlers
+ * ran. So does one whose document, frame, or tab went away under it. Nothing
+ * runs once `signal` aborted.
  */
 async function mutateWhenReady(session: BidiSession, target: NodeTarget, deadline: Deadline, signal: AbortSignal, prefix: string, mutate: () => Promise<Outcome>): Promise<void> {
   await settle(deadline, signal, async () => {
