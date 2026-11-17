@@ -152,7 +152,7 @@ export async function typeText(session: BidiSession, text: string, replace: bool
     await session.input.key(pressStroke('ControlOrMeta+a'), signal);
     await session.input.key(pressStroke('Delete'), signal);
   }
-  await typeInto(session, text, signal, documents);
+  await typeInto(session, text, signal);
 }
 
 /**
@@ -160,12 +160,11 @@ export async function typeText(session: BidiSession, text: string, replace: bool
  * does: a run of characters the US keyboard has is key presses, a run of
  * anything else (an emoji, letters of another alphabet) is inserted as text,
  * one edit per character, in the document holding focus, since no key types
- * it. `documents` are the tab's documents when the caller already read
- * them; else they are read once, when the first run is inserted. Each of
- * them is offered what is left of a run until one takes some; a character
- * none takes is dropped, as a key press with no focus is.
+ * it. The tab's documents are read once, when the first such run is
+ * inserted. Each of them is offered what is left of a run until one takes
+ * some; a character none takes is dropped, as a key press with no focus is.
  */
-export async function typeInto(session: BidiSession, text: string, signal: AbortSignal, documents?: readonly string[]): Promise<void> {
+export async function typeInto(session: BidiSession, text: string, signal: AbortSignal): Promise<void> {
   const runs: { readonly keys: boolean; readonly graphemes: string[] }[] = [];
   for (const { segment } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
     const keys = /^[\x20-\x7e]$/.test(segment) || segment === '\n' || segment === '\r\n' || segment === '\t';
@@ -173,7 +172,7 @@ export async function typeInto(session: BidiSession, text: string, signal: Abort
     if (last?.keys === keys) last.graphemes.push(segment);
     else runs.push({ keys, graphemes: [segment] });
   }
-  let contexts = documents;
+  let contexts: readonly string[] | undefined;
   for (const run of runs) {
     if (run.keys) {
       await session.input.send([typeSource(run.graphemes.join(''))], signal);
