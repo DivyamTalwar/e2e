@@ -1,9 +1,9 @@
 /**
  * Every point of the viewport the engine sets takes pointer input: its
- * corners and edges at the default size, at a configured one, and at one set
- * while the attempt runs, in the attempt's own tab, a tab the test opens, and
- * a tab or a window the app opens. A screenshot and a recording cover all of
- * it.
+ * corners and edges at the default size, at a configured one, at one set
+ * while the attempt runs, and at the largest one a window holds, in the
+ * attempt's own tab, a tab the test opens, and a tab or a window the app
+ * opens. A screenshot and a recording cover all of it.
  */
 
 import { readFileSync } from 'node:fs';
@@ -222,6 +222,31 @@ describe('a viewport set while the attempt runs', () => {
       await resized;
       await expectTaps(page, tallest);
     }
+  });
+
+  it.each([
+    ['height', { width: 400, height: 20_000 }],
+    ['width', { width: 20_000, height: 300 }],
+  ] as const)('takes a tap in every corner and on every edge of the largest viewport the Firefox window holds by %s, and refuses one pixel more; Chromium takes what was asked', async (side, asked) => {
+    await page.browser.setViewport(DEFAULT);
+    await openEdges(page);
+    const refusal = await page.browser.setViewport(asked).then(() => undefined, (cause: unknown) => cause);
+    if (!onFirefox) {
+      expect(refusal).toBeUndefined();
+      await expectTaps(page, asked);
+      return;
+    }
+    expect(refusal).toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' });
+    const limit = Number(new RegExp(`it shows at most (\\d+) pixels of the page's ${side},`).exec((refusal as Error).message)?.[1]);
+    const largest = { ...asked, [side]: limit };
+    await page.browser.setViewport(largest);
+    await expectTaps(page, largest);
+    await expect(page.browser.setViewport({ ...largest, [side]: limit + 1 })).rejects.toMatchObject({
+      code: 'UNSUPPORTED_CAPABILITY',
+      message: expect.stringContaining(`it shows at most ${String(limit)} pixels of the page's ${side},`),
+    });
+    await openEdges(page);
+    await expectTaps(page, largest);
   });
 
   it('sizes a tab opened before the change once it is shown again', async () => {
