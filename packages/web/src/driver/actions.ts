@@ -10,7 +10,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   Deadline,
   EngineError,
+  raceAbort,
   TestError,
+  withTimeout,
   type LocatorAction,
   type NodeRef,
   type PointerAction,
@@ -480,28 +482,19 @@ async function setInputFiles(session: BidiSession, target: NodeTarget, paths: re
     await send(target.context, input);
     return;
   }
-  const timer = new AbortController();
   let off: () => void = () => undefined;
-  const opened = new Promise<{ context: string; element?: { sharedId: string } } | undefined>((resolve) => {
+  const opened = new Promise<{ context: string; element?: { sharedId: string } }>((resolve) => {
     off = connection.on('input.fileDialogOpened', (info) => {
       if (session.onPage(info.context)) resolve(info);
     });
-    timer.signal.addEventListener('abort', () => resolve(undefined));
   });
-  const timeout = setTimeout(() => timer.abort(), Math.max(1, deadline.remaining()));
-  const cancel = (): void => timer.abort();
-  signal.addEventListener('abort', cancel);
+  const noChooser = (): EngineError => new EngineError('NOT_ACTIONABLE', 'upload clicked the control but it opened no file chooser', { retryable: false });
   try {
     await click(session, target, deadline, {}, signal);
-    const chooser = await opened;
-    signal.throwIfAborted();
-    if (chooser?.element === undefined) {
-      throw new EngineError('NOT_ACTIONABLE', 'upload clicked the control but it opened no file chooser', { retryable: false });
-    }
+    const chooser = await withTimeout(raceAbort(opened, signal, 'upload'), deadline.remaining(), noChooser);
+    if (chooser.element === undefined) throw noChooser();
     await send(chooser.context, new ElementRef(chooser.element.sharedId));
   } finally {
-    clearTimeout(timeout);
-    signal.removeEventListener('abort', cancel);
     off();
   }
 }
