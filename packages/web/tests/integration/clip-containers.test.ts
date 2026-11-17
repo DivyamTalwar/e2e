@@ -37,10 +37,16 @@ const offCentre = (): Promise<number> => page.browser.evaluate(() => document.qu
 
 const title = (): Promise<string> => page.browser.evaluate(() => document.title);
 
-/** Whether the browser's own hit test reaches the button at its centre: false for one its ancestors clip away. */
+/**
+ * Whether the browser's own hit test reaches the button where it draws: at
+ * the centre of its box, or of its contents' box for a `display: contents`
+ * button, which has none of its own. False for one its ancestors clip away.
+ */
 const painted = (): Promise<boolean> => page.browser.evaluate(() => {
   const button = document.querySelector('button')!;
-  const { left, top, width, height } = button.getBoundingClientRect();
+  const contents = document.createRange();
+  contents.selectNodeContents(button);
+  const { left, top, width, height } = (button.getClientRects().length > 0 ? button : contents).getBoundingClientRect();
   return document.elementFromPoint(left + width / 2, top + height / 2) === button;
 });
 
@@ -170,7 +176,11 @@ describe('clip containers', () => {
   });
 
   it('refuses a tap on a display: contents target with a position of its own, clipped by the box its text is laid out in', async () => {
-    await page.setContent(`<!doctype html><div style="margin-top:100px;overflow:hidden;height:20px"><div style="margin-top:-80px;height:24px">${styled('display:contents;position:absolute')}</div></div>`);
+    /** The page with the style `box` on the outer box, which the button's text is laid out in and reaches past. */
+    const laidOutIn = (box: string): string => `<!doctype html><div style="margin-top:100px;${box};height:20px"><div style="margin-top:-80px;height:24px">${styled('display:contents;position:absolute')}</div></div>`;
+    await page.setContent(laidOutIn('overflow:visible'));
+    expect(await painted()).toBe(true);
+    await page.setContent(laidOutIn('overflow:hidden'));
     expect(await painted()).toBe(false);
     await expectClipped();
   });
