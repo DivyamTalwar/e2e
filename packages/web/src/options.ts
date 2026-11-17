@@ -158,7 +158,7 @@ export interface WebOptions {
    * The `prefers-reduced-motion` every page reports from its first paint: `'reduce'`
    * lets an app's own rule turn its animations off, so none races an
    * assertion. Defaults to the browser's own. `browser.emulateMedia`
-   * changes it for the rest of one attempt.
+   * changes it for the rest of one attempt, on Chromium only.
    */
   readonly reducedMotion?: WebMedia['reducedMotion'];
   /**

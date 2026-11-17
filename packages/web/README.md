@@ -48,7 +48,8 @@ target, so a test can `requires: ['browser']`. Browser options:
 `locale` and `timezoneId` (the language and time zone every attempt runs in,
 such as `de-DE` and `Europe/Berlin`), `colorScheme` and `reducedMotion` (the
 `prefers-color-scheme` and `prefers-reduced-motion` every page reports, from
-first paint; `browser.emulateMedia` changes them in a test), `initScripts` (scripts every document
+first paint; `browser.emulateMedia` changes them in a test, `reducedMotion` on
+Chromium only), `initScripts` (scripts every document
 runs before the page's own), and
 `connect` (attach to a remote browser over CDP instead of launching a local
 one).

@@ -204,7 +204,8 @@ export interface Browser extends Expectable<BrowserExpectation> {
    * them, the app's own included, for the rest of the attempt, as Playwright's
    * `page.emulateMedia` does: the page's `@media` rules and `matchMedia` both
    * read them. A feature left out keeps its value. Works before the first
-   * navigation, so the page loads with them.
+   * navigation, so the page loads with them. Firefox changes only
+   * `colorScheme`; `reducedMotion` there throws `UNSUPPORTED_CAPABILITY`.
    */
   emulateMedia(media: WebMedia): Promise<void>;
   /** Registers an attempt-scoped dialog handler and returns an unsubscribe function. */

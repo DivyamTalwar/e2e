@@ -582,7 +582,7 @@ the opener is gone. `tabs()`, `newTab()`, `tab.activate()`, and
   option with `INVALID_ARGUMENT`.
 - `unrouteAll()` removes every route; configured headers stay.
 - `waitForResponse(pattern, { timeout? })`: resolves once the headers
-  arrive, with `{ url, status, headers, body(), json(), text() }`; the body
+  arrive (on Firefox once the body starts), with `{ url, status, headers, body(), json(), text() }`; the body
   readers wait for the body (up to the action timeout) and reject with
   `ACTION_FAILED` when it could not be read. Start the wait before the
   request, including the first `browser.goto` or `app.open`.
