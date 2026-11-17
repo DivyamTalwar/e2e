@@ -83,7 +83,7 @@ interface RedirectPolicy {
   readonly injected?: Readonly<Record<string, string>>;
 }
 
-/** The part of a request's record the decisions read and keep; the binding holds the record until the request is over. */
+/** The part of a request's record the decisions read and keep; the binding holds the record until the request is over, and drops what belongs to one hop when the next starts. */
 export interface DecisionRecord {
   /**
    * Where its latest hop went, as its `beforeRequestSent` said: Firefox
@@ -95,7 +95,7 @@ export interface DecisionRecord {
   redirect?: RedirectPolicy;
   /** The body a route fulfilled it with, which a response wait reads since the browser keeps none. */
   fulfilledBody?: Buffer;
-  /** Whether its basic-auth challenge was answered once. */
+  /** Whether the basic-auth challenge of its hop in flight was answered once. */
   authAnswered?: boolean;
 }
 
@@ -167,11 +167,13 @@ export class RequestDecisions {
   /**
    * Answers a held basic-auth challenge. One with no `record` is another
    * client's and gets the browser's default. The attempt's from a credential
-   * origin gets the credentials once; one from any other origin, a second
-   * one for the same request (the credentials were refused), and any without
-   * credentials go through as the 401. Firefox's default is a login prompt
-   * BiDi neither reports nor dismisses, which stalls the navigation, so
-   * there challenges are held even without credentials.
+   * origin gets the credentials, once on each hop of its request, so every
+   * credential origin a redirect leads through is answered; one from any
+   * other origin, a second one on the same hop (the credentials were
+   * refused), and any without credentials go through as the 401. Firefox's
+   * default is a login prompt BiDi neither reports nor dismisses, which
+   * stalls the navigation, so there challenges are held even without
+   * credentials.
    */
   answerChallenge(event: BidiEventParams<'network.authRequired'>, record: DecisionRecord | undefined): void {
     const request = event.request.request;

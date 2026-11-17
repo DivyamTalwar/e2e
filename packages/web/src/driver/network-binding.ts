@@ -31,6 +31,8 @@ export interface ObservedResponse {
 interface RequestRecord extends DecisionRecord {
   /** The browsing context it came from, whose closing retires it. */
   context: string;
+  /** How many redirects led to its hop in flight, as the hop's `beforeRequestSent` said. */
+  redirectCount?: number;
   /** Whether it counts as in flight for `networkidle`: a request of the attempt's tab that is no EventSource stream, between a hop's start and its settling. */
   counted: boolean;
   /** Whether its last hop settled. */
@@ -262,10 +264,17 @@ export class NetworkBinding implements DecisionScope {
    * The record of the attempt's request whose hop `event` starts in
    * `context`: where the hop goes, and whether it counts as in flight, as a
    * request of the attempt's tab does unless it is an EventSource stream,
-   * which never settles.
+   * which never settles. A hop further along the redirects starts without
+   * the answered challenge of the hop before it; the redirect count tells
+   * it from a hop Firefox announces again, as it does when it resends one
+   * with credentials.
    */
   private started(event: BidiEventParams<'network.beforeRequestSent'>, context: string): RequestRecord {
     const record = this.record(event.request.request, context);
+    if (record.redirectCount !== event.redirectCount) {
+      record.redirectCount = event.redirectCount;
+      delete record.authAnswered;
+    }
     record.context = context;
     record.url = event.request.url;
     record.settled = false;

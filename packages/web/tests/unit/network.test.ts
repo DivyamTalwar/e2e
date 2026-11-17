@@ -18,10 +18,10 @@ import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
 
 const SITE = 'http://app.test';
 
-/** An attempt network over `fake`, and the failures it latched; `headers` configures one for the app's origin (`site`, else `SITE`), `credentials` its basic auth. */
+/** An attempt network over `fake`, and the failures it latched; `headers` configures one for the app's origin (`site`, else `SITE`), `credentials` its basic auth, and `credentialOrigins` lists more origins that get both. */
 function network(
   fake: FakeBidi,
-  options: { headers?: boolean; credentials?: { username: string; password: string }; site?: string; browser?: BrowserName; exclusive?: boolean; ours?: (context: string | null) => boolean; onPage?: (context: string | null) => boolean } = {},
+  options: { headers?: boolean; credentials?: { username: string; password: string }; site?: string; credentialOrigins?: readonly string[]; browser?: BrowserName; exclusive?: boolean; ours?: (context: string | null) => boolean; onPage?: (context: string | null) => boolean } = {},
 ) {
   const failures: Error[] = [];
   const contexts = new ContextTree();
@@ -31,7 +31,7 @@ function network(
   fake.on('network.addDataCollector', { result: { collector: 'collector-1' } });
   fake.on('session.subscribe', { result: { subscription: 'subscription-1' } });
   const net = new AttemptNetwork(fake.connection, {
-    protectedApp: new ProtectedApp(new Set([options.site ?? SITE]), options.headers === true ? { 'X-Preview': 'token' } : undefined, options.credentials),
+    protectedApp: new ProtectedApp(new Set([options.site ?? SITE, ...(options.credentialOrigins ?? [])]), options.headers === true ? { 'X-Preview': 'token' } : undefined, options.credentials),
     ours: (event) => options.ours?.(event.context) ?? true,
     onPage: (context) => options.onPage?.(context) ?? true,
     contexts,
@@ -191,6 +191,37 @@ describe('AttemptNetwork', () => {
     await net.bind('user-1');
     await open('tab');
     expect(fake.commands('network.addIntercept')).toEqual([]);
+  });
+
+  describe('a basic-auth challenge on each hop of a request', () => {
+    type Emitted = readonly [method: string, params: Record<string, unknown>];
+    const first = `${SITE}/private`;
+    const second = 'http://other.test/private';
+    /** Hop `count` of the request starts at `url`, held by no intercept. */
+    const sent = (url: string, count: number): Emitted => ['network.beforeRequestSent', { ...request('r', url, []), redirectCount: count }];
+    /** A held challenge that names `url` as hop `count`. */
+    const challenged = (url: string, count: number): Emitted => ['network.authRequired', { ...request('r', url), redirectCount: count, response: { status: 401 } }];
+    /** The hop at `url` ends in a redirect. */
+    const redirected = (url: string): Emitted => ['network.responseCompleted', { ...request('r', url, []), response: { url, status: 302, headers: LOCATION } }];
+
+    /**
+     * Chromium announces each hop once and names the hop a challenge came
+     * from. Firefox announces a hop again when it resends it with the
+     * credentials, and names every challenge after the hop the request
+     * started at.
+     */
+    it.each<[BrowserName, Emitted[]]>([
+      ['chromium', [sent(first, 0), challenged(first, 0), redirected(first), sent(second, 1), challenged(second, 1), challenged(second, 1)]],
+      ['firefox', [sent(first, 0), challenged(first, 0), sent(first, 0), redirected(first), sent(second, 1), challenged(first, 0), sent(second, 1), challenged(first, 0)]],
+    ])('answers one from each credential origin a redirect leads through, and lets a second one on a hop through as the 401, as %s reports them', async (browser, events) => {
+      const fake = new FakeBidi();
+      const { net, open } = network(fake, { credentials: { username: 'ada', password: 'secret' }, credentialOrigins: [new URL(second).origin], browser });
+      await net.bind('user-1');
+      await open('tab');
+      for (const [method, params] of events) fake.emit(method, params);
+      await settle();
+      expect(fake.commands('network.continueWithAuth').map((command) => command.params['action'])).toEqual(['provideCredentials', 'provideCredentials', 'cancel']);
+    });
   });
 
   it('refuses a URL rewrite on Firefox before the request goes, and fails the request', async () => {

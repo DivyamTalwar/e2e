@@ -7,9 +7,13 @@
  * engine hooks, as the attempt executor drives them; a second fixture
  * instance stands in for another origin, on the same host under another
  * port, and as `localhost` rather than `127.0.0.1` for a third-party site.
+ * A challenge on each hop of a redirect goes to a gate of its own, reached
+ * under both host names.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -22,7 +26,7 @@ import { browserFixture, byRole, cleanup, initInfo, operation, testWeb as web } 
 
 async function boot(
   engine: EngineHandle,
-  app: FixtureApp,
+  app: Pick<FixtureApp, 'url'>,
   artifactsDir: string,
   attemptId: string,
   resolveSecret: (secret: Secret) => Promise<string> = noSecrets,
@@ -49,6 +53,46 @@ async function headingAt(engine: EngineHandle, attemptId: string, url: string): 
     operation(attemptId),
   );
   return nodes[0]?.name ?? '';
+}
+
+/**
+ * A gate that challenges every request for the fixture's credential. With
+ * it, `/hop?to=<url>` answers a redirect to `to`, `/locked` challenges
+ * again whatever was sent, and any other path answers a page headed
+ * `Through`. `asked` counts the requests it got, by path.
+ */
+function startGate(): Promise<Pick<FixtureApp, 'url' | 'close'> & { readonly asked: Map<string, number> }> {
+  const authorization = `Basic ${Buffer.from(`${PROTECTED_CREDENTIAL.username}:${PROTECTED_CREDENTIAL.password}`).toString('base64')}`;
+  const asked = new Map<string, number>();
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? '/', 'http://gate.test');
+    asked.set(url.pathname, (asked.get(url.pathname) ?? 0) + 1);
+    if (request.headers.authorization !== authorization || url.pathname === '/locked') {
+      response.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'www-authenticate': 'Basic realm="gate"' });
+      response.end('<!doctype html><title>Gate</title><h1>Unauthorized</h1>');
+      return;
+    }
+    const to = url.searchParams.get('to');
+    if (url.pathname === '/hop' && to !== null) {
+      response.writeHead(302, { location: to });
+      response.end();
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end('<!doctype html><title>Gate</title><h1>Through</h1>');
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve({
+        url: `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`,
+        asked,
+        close: () => new Promise<void>((done) => {
+          server.close(() => done());
+          server.closeAllConnections();
+        }),
+      });
+    });
+  });
 }
 
 describe('web({ headers, basicAuth })', () => {
@@ -208,6 +252,24 @@ describe('web({ headers, basicAuth })', () => {
       expect(await headingAt(engine, 'b2', `${otherSite}/protected`)).toBe('Unauthorized');
     } finally {
       await shutdown(engine);
+    }
+  });
+
+  it('answers a challenge on each hop of a redirect through credential origins, once per hop', async () => {
+    const gate = await startGate();
+    const listed = gate.url.replace('127.0.0.1', 'localhost');
+    const through = (target: string): string => `${gate.url}/hop?to=${encodeURIComponent(target)}`;
+    const engine = web({ basicAuth: PROTECTED_CREDENTIAL, credentialOrigins: [listed] });
+    try {
+      await boot(engine, gate, artifactsDir, 'b3');
+      expect(await headingAt(engine, 'b3', through(`${listed}/landing`))).toBe('Through');
+      await engine.session!.reset!(operation('b3'));
+      // The redirect's target refuses the credentials: asked bare, then with them, and its second challenge is the 401.
+      expect(await headingAt(engine, 'b3', through(`${listed}/locked`))).toBe('Unauthorized');
+      expect(gate.asked.get('/locked')).toBe(2);
+    } finally {
+      await shutdown(engine);
+      await gate.close();
     }
   });
 
