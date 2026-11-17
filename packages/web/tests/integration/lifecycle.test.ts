@@ -107,13 +107,16 @@ function viewportOf(page: ReturnType<typeof pageOf>): Promise<{ width: number; h
 }
 
 /**
- * Resolves once the page repainted: at its second animation frame from now.
- * Firefox's recording is the page's repaints, so it holds no frame of a page
- * that has not painted yet; Chromium's segment ends on a screenshot of the
- * page as it stands.
+ * Lets the page paint into the recording before a segment closes: its
+ * second animation frame from now, then half a second. Firefox's recorder
+ * takes the page's repaints on its own clock and reports nothing of what it
+ * has taken, so a recording stopped at the animation frame can end one
+ * repaint short: the last frame of a segment then held no ink in 7 of 41
+ * runs. Chromium's segment ends on a screenshot of the page as it stands.
  */
 async function repainted(page: ReturnType<typeof pageOf>): Promise<void> {
   await page.browser.evaluate('() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))))');
+  await new Promise((resolve) => setTimeout(resolve, 500));
 }
 
 async function withAttempt(
