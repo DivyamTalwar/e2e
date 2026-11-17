@@ -6,52 +6,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { BROWSER_TRAITS } from '../../src/browsers.ts';
-import { ContextTree } from '../../src/driver/context-tree.ts';
-import { AttemptNetwork } from '../../src/driver/network.ts';
-import type { NetworkRoute } from '../../src/driver/network-decisions.ts';
-import { ProtectedApp } from '../../src/protected-app.ts';
 import { FakeBidi } from '../helpers/bidi-fake.ts';
-
-/** An attempt network over `fake` bound to `user-1`, with configured headers when `headers`, and how its tabs open and close. */
-async function network(fake: FakeBidi, options: { exclusive: boolean; headers?: boolean }) {
-  const contexts = new ContextTree();
-  let intercepts = 0;
-  fake.on('network.addIntercept', () => ({ result: { intercept: `intercept-${String((intercepts += 1))}` } }));
-  fake.on('network.addDataCollector', { result: { collector: 'collector-1' } });
-  fake.on('session.subscribe', { result: { subscription: 'subscription-1' } });
-  const net = new AttemptNetwork(fake.connection, {
-    protectedApp: new ProtectedApp(new Set(['http://app.test']), options.headers === true ? { 'X-Preview': 'token' } : undefined, undefined),
-    ours: () => true,
-    onPage: () => true,
-    contexts,
-    exclusive: options.exclusive,
-    traits: BROWSER_TRAITS.chromium,
-    onFailure: () => undefined,
-    onNavigationAbort: () => undefined,
-    lifetime: new AbortController().signal,
-  });
-  await net.bind('user-1');
-  return {
-    net,
-    /** Opens top-level tab `tab`, as its `contextCreated` event records it, and hands it to the network. */
-    open: (tab: string): Promise<void> => {
-      contexts.created(tab, 'user-1', null);
-      return net.addContext(tab);
-    },
-    /** Closes `tab`, as its `contextDestroyed` event tells the network and then the tree. */
-    close: (tab: string): Promise<void> => {
-      const removed = net.removeContext(tab);
-      contexts.destroyed(tab);
-      return removed;
-    },
-  };
-}
-
-/** A route on `pattern` that lets every request go on. */
-function route(pattern: string): NetworkRoute {
-  return { pattern: { kind: 'string', value: pattern, exact: true }, handle: (_request, decisions) => decisions.continue({}) };
-}
+import { network, route } from '../helpers/network-fake.ts';
 
 /** The parameters of every `network.setCacheBehavior` sent so far, in order. */
 const cacheCommands = (fake: FakeBidi): Record<string, unknown>[] => fake.commands('network.setCacheBehavior').map((command) => command.params);
@@ -59,7 +15,8 @@ const cacheCommands = (fake: FakeBidi): Record<string, unknown>[] => fake.comman
 describe('AttemptNetwork and the HTTP cache', () => {
   it('leaves the cache alone without a route, under configured headers too', async () => {
     const fake = new FakeBidi();
-    const { net, open } = await network(fake, { exclusive: true, headers: true });
+    const { net, open } = network(fake, { exclusive: true, headers: true });
+    await net.bind('user-1');
     await open('tab');
     await net.track();
     await net.dispose();
@@ -69,7 +26,8 @@ describe('AttemptNetwork and the HTTP cache', () => {
 
   it('bypasses the cache of a browser of its own from the first route to the last', async () => {
     const fake = new FakeBidi();
-    const { net, open } = await network(fake, { exclusive: true });
+    const { net, open } = network(fake, { exclusive: true });
+    await net.bind('user-1');
     await open('tab-1');
     const first = route('**/a');
     const second = route('**/b');
@@ -85,7 +43,8 @@ describe('AttemptNetwork and the HTTP cache', () => {
 
   it('bypasses the cache before the intercept that holds requests for the route is added', async () => {
     const fake = new FakeBidi();
-    const { net } = await network(fake, { exclusive: true });
+    const { net } = network(fake, { exclusive: true });
+    await net.bind('user-1');
     await net.addRoute(route('**'));
     const order = fake.sent.map((command) => command.method).filter((method) => method === 'network.setCacheBehavior' || method === 'network.addIntercept');
     expect(order).toEqual(['network.setCacheBehavior', 'network.addIntercept']);
@@ -93,7 +52,8 @@ describe('AttemptNetwork and the HTTP cache', () => {
 
   it('turns the cache of a browser of its own back on when the attempt ends with a route', async () => {
     const fake = new FakeBidi();
-    const { net } = await network(fake, { exclusive: true });
+    const { net } = network(fake, { exclusive: true });
+    await net.bind('user-1');
     await net.addRoute(route('**'));
     await net.dispose();
     expect(cacheCommands(fake)).toEqual([{ cacheBehavior: 'bypass' }, { cacheBehavior: 'default' }]);
@@ -101,7 +61,8 @@ describe('AttemptNetwork and the HTTP cache', () => {
 
   it('bypasses the cache again on the user context a reset binds, after the old one let go of it', async () => {
     const fake = new FakeBidi();
-    const { net } = await network(fake, { exclusive: true });
+    const { net } = network(fake, { exclusive: true });
+    await net.bind('user-1');
     await net.addRoute(route('**'));
     await net.bind('user-2');
     expect(cacheCommands(fake)).toEqual([{ cacheBehavior: 'bypass' }, { cacheBehavior: 'default' }, { cacheBehavior: 'bypass' }]);
@@ -109,7 +70,8 @@ describe('AttemptNetwork and the HTTP cache', () => {
 
   it('bypasses the cache of its own open tabs only, on a browser other clients drive', async () => {
     const fake = new FakeBidi();
-    const { net, open, close } = await network(fake, { exclusive: false });
+    const { net, open, close } = network(fake, { exclusive: false });
+    await net.bind('user-1');
     await open('tab-1');
     await net.addRoute(route('**'));
     await open('tab-2');
@@ -124,7 +86,8 @@ describe('AttemptNetwork and the HTTP cache', () => {
 
   it('turns the cache of each tab that bypasses it back on when the attempt ends with a route', async () => {
     const fake = new FakeBidi();
-    const { net, open } = await network(fake, { exclusive: false });
+    const { net, open } = network(fake, { exclusive: false });
+    await net.bind('user-1');
     await open('tab-1');
     await open('tab-2');
     await net.addRoute(route('**'));
@@ -137,7 +100,8 @@ describe('AttemptNetwork and the HTTP cache', () => {
 
   it('takes a tab that closed under the call as done, and one that closed before the attempt ended', async () => {
     const fake = new FakeBidi();
-    const { net, open, close } = await network(fake, { exclusive: false });
+    const { net, open, close } = network(fake, { exclusive: false });
+    await net.bind('user-1');
     await open('tab-1');
     await open('tab-2');
     let closing: Promise<void> | undefined;
@@ -158,7 +122,8 @@ describe('AttemptNetwork and the HTTP cache', () => {
 
   it('refuses a route whose cache bypass the browser refused, and sets it with the next route', async () => {
     const fake = new FakeBidi();
-    const { net, open } = await network(fake, { exclusive: false });
+    const { net, open } = network(fake, { exclusive: false });
+    await net.bind('user-1');
     await open('tab');
     fake.on('network.setCacheBehavior', { error: 'unknown error', message: 'refused' });
     await expect(net.addRoute(route('**/a'))).rejects.toThrow('refused');

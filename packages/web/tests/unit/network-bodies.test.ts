@@ -6,66 +6,27 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
+import type { BrowserName } from '../../src/browsers.ts';
 import { NO_POST_DATA, UNREPORTED_POST_DATA } from '../../src/driver/cdp-fixups.ts';
-import { ContextTree } from '../../src/driver/context-tree.ts';
-import { AttemptNetwork } from '../../src/driver/network.ts';
-import type { InterceptedRequest, NetworkRoute, RouteDecisions } from '../../src/driver/network-decisions.ts';
-import { ProtectedApp } from '../../src/protected-app.ts';
+import type { InterceptedRequest, RouteDecisions } from '../../src/driver/network-decisions.ts';
 import type { Network } from 'webdriver-bidi-protocol';
 import { FakeBidi, requestData, settle, type Reply } from '../helpers/bidi-fake.ts';
-
-/** An attempt network over `fake` on `browser`, bound to `user-1` with tab `tab` open, and the failures it latched. */
-async function network(fake: FakeBidi, browser: BrowserName) {
-  const contexts = new ContextTree();
-  const failures: Error[] = [];
-  let intercepts = 0;
-  let collectors = 0;
-  fake.on('network.addIntercept', () => ({ result: { intercept: `intercept-${String((intercepts += 1))}` } }));
-  fake.on('network.addDataCollector', () => ({ result: { collector: `collector-${String((collectors += 1))}` } }));
-  fake.on('session.subscribe', { result: { subscription: 'subscription-1' } });
-  fake.on('goog:cdp.getSession', (params) => ({ result: { session: `session-of-${String(params['context'])}` } }));
-  const net = new AttemptNetwork(fake.connection, {
-    protectedApp: new ProtectedApp(new Set(['http://app.test']), undefined, undefined),
-    ours: () => true,
-    onPage: () => true,
-    contexts,
-    exclusive: false,
-    traits: BROWSER_TRAITS[browser],
-    onFailure: (error) => failures.push(error),
-    onNavigationAbort: () => undefined,
-    lifetime: new AbortController().signal,
-  });
-  await net.bind('user-1');
-  contexts.created('tab', 'user-1', null);
-  await net.addContext('tab');
-  return { net, failures, contexts };
-}
-
-/** A route on every URL that runs `handle`. */
-function route(handle: NetworkRoute['handle']): NetworkRoute {
-  return { pattern: { kind: 'string', value: '**', exact: true }, handle };
-}
+import { network, request as requestSent, route, SITE } from '../helpers/network-fake.ts';
 
 /** A `beforeRequestSent` event of request `id` from `tab`, held by every intercept the fake handed out, with `fields` over its request. */
 function held(id: string, fields: Partial<Network.RequestData>, navigation: string | null = null): Network.BeforeRequestSentParameters {
-  return {
-    context: 'tab',
-    isBlocked: true,
-    navigation,
-    redirectCount: 0,
-    timestamp: 0,
-    intercepts: ['intercept-1', 'intercept-2'],
-    request: requestData(id, 'http://app.test/upload', { method: 'POST', ...fields }),
-  };
+  const url = `${SITE}/upload`;
+  return { ...requestSent(id, url, ['intercept-1', 'intercept-2']), navigation, request: requestData(id, url, { method: 'POST', ...fields }) };
 }
 
 /** What a route was handed for the one request `event` announces, and what its `fetch` did, when asked to: the response's status, or the failure. */
 async function routed(fake: FakeBidi, browser: BrowserName, event: Network.BeforeRequestSentParameters, replay = false): Promise<{ request: InterceptedRequest | undefined; fetch: unknown; failures: Error[] }> {
-  const { net, failures } = await network(fake, browser);
+  const { net, failures, open } = network(fake, { browser });
+  await net.bind('user-1');
+  await open('tab');
   let request: InterceptedRequest | undefined;
   let fetch: unknown;
-  await net.addRoute(route(async (intercepted, decisions: RouteDecisions) => {
+  await net.addRoute(route('**', async (intercepted, decisions: RouteDecisions) => {
     request = intercepted;
     if (replay) fetch = await decisions.fetch({ signal: new AbortController().signal, timeoutMs: 1_000 }).then((response) => response.status, (failure: unknown) => failure);
     await decisions.fulfill({ status: 200, headers: {} });
@@ -135,13 +96,15 @@ describe('the body of a held request on Chromium', () => {
 
   it('takes a request whose tab closed under the read as unreadable, which is no failure of the attempt', async () => {
     const fake = new FakeBidi();
-    const { net, failures, contexts } = await network(fake, 'chromium');
+    const { net, failures, contexts, open } = network(fake);
+    await net.bind('user-1');
+    await open('tab');
     fake.on('goog:cdp.sendCommand', () => {
       contexts.destroyed('tab');
       return { error: 'unknown error', message: 'Session with given id not found' };
     });
     const seen: InterceptedRequest[] = [];
-    await net.addRoute(route(async (intercepted, decisions) => {
+    await net.addRoute(route('**', async (intercepted, decisions) => {
       seen.push(intercepted);
       await decisions.continue({});
     }));
@@ -172,14 +135,16 @@ describe('the body of a held request on Chromium', () => {
 describe('the body of a held request on Firefox', () => {
   it('reads it from the request collector, which the first route adds and the last removes', async () => {
     const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'base64', value: '//4AgEE=' } } });
-    const { net } = await network(fake, 'firefox');
+    const { net, open } = network(fake, { browser: 'firefox', numberedCollectors: true });
+    await net.bind('user-1');
+    await open('tab');
     const seen: (string | undefined)[] = [];
-    const first = route(async (intercepted, decisions) => {
+    const first = route('**', async (intercepted, decisions) => {
       seen.push(intercepted.postData);
       await decisions.fulfill({ status: 200, headers: {} });
     });
     await net.addRoute(first);
-    await net.addRoute(route(async (_intercepted, decisions) => decisions.fallback()));
+    await net.addRoute(route('**', async (_intercepted, decisions) => decisions.fallback()));
     fake.emit('network.beforeRequestSent', held('post', { bodySize: 5 }));
     await settle();
     await settle();
@@ -201,7 +166,9 @@ describe('the body of a held request on Firefox', () => {
 
   it('takes a route back when the request collector fails to install, and installs it with the next route', async () => {
     const fake = new FakeBidi();
-    const { net } = await network(fake, 'firefox');
+    const { net, open } = network(fake, { browser: 'firefox' });
+    await net.bind('user-1');
+    await open('tab');
     let failed = false;
     fake.on('network.addDataCollector', (params) => {
       if (failed || !(params['dataTypes'] as string[]).includes('request')) return { result: { collector: 'collector-9' } };
@@ -209,11 +176,11 @@ describe('the body of a held request on Firefox', () => {
       return { error: 'unknown error', message: 'install failed' };
     });
     const handled: string[] = [];
-    await expect(net.addRoute(route(async (_intercepted, decisions) => {
+    await expect(net.addRoute(route('**', async (_intercepted, decisions) => {
       handled.push('first');
       await decisions.continue({});
     }))).rejects.toThrow('install failed');
-    await net.addRoute(route(async (_intercepted, decisions) => {
+    await net.addRoute(route('**', async (_intercepted, decisions) => {
       handled.push('second');
       await decisions.continue({});
     }));
