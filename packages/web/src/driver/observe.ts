@@ -300,7 +300,8 @@ const RECAPTURE_MS = 50;
  * Firefox snapshots the document its parent process shows, which a
  * navigation can replace while scripts still run in the masked one. A frame
  * document with no script context (`hasScriptContext`) holds nothing to
- * mask, and the commit that gives it content is such a navigation.
+ * mask; the commit that gives it content is such a navigation, and one that
+ * has a script context once the masks come off makes the capture stale too.
  */
 async function maskedCapture(session: BidiSession, viewport: ViewportSize): Promise<{ pixels: ObservationPixels; maskedRegionCount: number }> {
   const context = session.requireContext();
@@ -320,6 +321,7 @@ async function maskedCapture(session: BidiSession, viewport: ViewportSize): Prom
   try {
     let count = 0;
     const scripted = await Promise.all(documents.map((each) => hasScriptContext(session.connection, each)));
+    const bare = documents.filter((_each, index) => !scripted[index]);
     for (const each of documents.filter((_each, index) => scripted[index])) {
       count += await session.page.run(maskSecureFields, [SECURE_FIELD_SELECTOR, token], each);
       masked.push(each);
@@ -330,7 +332,8 @@ async function maskedCapture(session: BidiSession, viewport: ViewportSize): Prom
     held = (await Promise.all(masked.map((each) => session.page.run(unmaskSecureFields, [token], each)))).every(Boolean);
     masked.length = 0;
     const after = await session.documentContexts(context);
-    if (!held || navigated || after.length !== documents.length || after.some((each, index) => each !== documents[index])) {
+    const loaded = await Promise.all(bare.map((each) => hasScriptContext(session.connection, each)));
+    if (!held || navigated || loaded.includes(true) || after.length !== documents.length || after.some((each, index) => each !== documents[index])) {
       throw new EngineError('NODE_STALE', 'the page changed while its screenshot was masked', { retryable: true, cause: 'failed' in captured ? captured.failed : undefined });
     }
     if ('failed' in captured) throw captured.failed;
