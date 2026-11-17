@@ -21,6 +21,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LocatorExpression } from '@e2e-dev/core/engine';
+import { callOf } from '../helpers/page-call.ts';
 import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
 import { ROOT_NODE_ID } from '../../src/driver/observe.ts';
@@ -28,12 +29,6 @@ import { callFunction } from '../../src/driver/script.ts';
 import { elementAttached, fill, focus, selectOption } from '../../src/in-page/edits.ts';
 
 const send = BidiConnection.prototype.send;
-
-/** The browsing context of `params` when they are a call of the page function `fn`, which the driver sends behind a check of the nodes it passes. */
-function callOf(fn: { toString(): string }, params: object): string | undefined {
-  const call = params as { functionDeclaration?: unknown; target?: { context?: string } };
-  return typeof call.functionDeclaration === 'string' && call.functionDeclaration.includes(fn.toString()) ? call.target?.context : undefined;
-}
 
 /**
  * Has the page run `change` just before the driver's next call of the page

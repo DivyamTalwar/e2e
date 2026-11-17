@@ -16,7 +16,8 @@ import { ProtectedApp } from '../../src/protected-app.ts';
 import { afterDispatch, BidiError, classify } from '../../src/errors.ts';
 import type { NodeRef } from '@e2e-dev/core/engine';
 import { FakeBidi, settle, type Reply, type SentCommand } from '../helpers/bidi-fake.ts';
-import type { ElementRef } from '../../src/driver/script.ts';
+import { callOf } from '../helpers/page-call.ts';
+import { ElementRef } from '../../src/driver/script.ts';
 
 const SHIFT = '';
 
@@ -343,15 +344,15 @@ describe('a fill', () => {
   /** Has `fake` answer the page's `fill` with `filled`, and every check before it as a shown, enabled field. */
   function field(fake: FakeBidi, filled: () => Reply | Promise<Reply>): void {
     fake.on('script.callFunction', (params) => {
-      if (params['functionDeclaration'] === fill.toString()) return filled();
-      if (params['functionDeclaration'] === elementShown.toString()) return answer({ kind: 'ok' });
+      if (callOf(fill, params) !== undefined) return filled();
+      if (callOf(elementShown, params) !== undefined) return answer({ kind: 'ok' });
       return { result: { type: 'success', realm: 'r', result: { type: 'boolean', value: false } } };
     });
   }
 
   /** Fills the field `held` located as `id`, counted by a scope of its own. */
   function filling(held: BidiSession, id: string, timeoutMs: number): { scope: DispatchScope; done: Promise<void> } {
-    held.refs.storeLocated(id, { element: { sharedId: 'e' } as ElementRef, context: 'tab', locator: { kind: 'selector', selector: '#a' } });
+    held.refs.storeLocated(id, { element: new ElementRef('e'), context: 'tab', locator: { kind: 'selector', selector: '#a' } });
     const scope = new DispatchScope();
     return { scope, done: scope.run(() => perform(held, { id } as NodeRef, { kind: 'fill', value: 'x', sensitive: false }, timeoutMs, new AbortController().signal)) };
   }
@@ -393,10 +394,10 @@ describe('a fill', () => {
 describe('a press on a node', () => {
   it('sends no key once the node left the document, and fails stale as never dispatched', async () => {
     const fake = new FakeBidi().on('input.performActions', { result: {} }).on('script.callFunction', (params) => ({
-      result: { type: 'success', realm: 'r', result: { type: 'object', value: [['kind', { type: 'string', value: params['functionDeclaration'] === focus.toString() ? 'detached' : 'ok' }]] } },
+      result: { type: 'success', realm: 'r', result: { type: 'object', value: [['kind', { type: 'string', value: callOf(focus, params) === undefined ? 'ok' : 'detached' }]] } },
     }));
     const held = await session(fake);
-    held.refs.storeLocated('1', { element: { sharedId: 'e' } as ElementRef, context: 'tab', locator: { kind: 'selector', selector: '#a' } });
+    held.refs.storeLocated('1', { element: new ElementRef('e'), context: 'tab', locator: { kind: 'selector', selector: '#a' } });
     const scope = new DispatchScope();
     const pressing = scope.run(() => perform(held, { id: '1' } as NodeRef, { kind: 'press', key: 'a' }, 5_000, new AbortController().signal));
     await expect(pressing).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
@@ -412,16 +413,16 @@ describe('a press on a node', () => {
    * scope of its own.
    */
   async function press(browser: BrowserName, focused: Reply, read: Reply = ok): Promise<{ fake: FakeBidi; scope: DispatchScope; failure: unknown }> {
-    const fake = new FakeBidi().on('input.performActions', { result: {} }).on('script.callFunction', (params) => (params['functionDeclaration'] === focus.toString() ? focused : read));
+    const fake = new FakeBidi().on('input.performActions', { result: {} }).on('script.callFunction', (params) => (callOf(focus, params) === undefined ? read : focused));
     const held = await session(fake, browser);
-    held.refs.publish(new Map([['1', { element: { sharedId: 'e' } as ElementRef, context: 'tab' }]]));
+    held.refs.publish(new Map([['1', { element: new ElementRef('e'), context: 'tab' }]]));
     const scope = new DispatchScope();
     const failure = await scope.run(() => perform(held, { id: '1' } as NodeRef, { kind: 'press', key: 'a' }, 5_000, new AbortController().signal)).then(() => undefined, (cause: unknown) => cause);
     return { fake, scope, failure };
   }
 
   /** The page calls of `fn` that `fake` got. */
-  const calls = (fake: FakeBidi, fn: { toString(): string }): SentCommand[] => fake.commands('script.callFunction').filter((command) => command.params['functionDeclaration'] === fn.toString());
+  const calls = (fake: FakeBidi, fn: { toString(): string }): SentCommand[] => fake.commands('script.callFunction').filter((command) => callOf(fn, command.params) !== undefined);
 
   /** What each browser answers for an element of a document a navigation replaced, settled and in flight, or of a frame that is gone. */
   const REFUSALS: readonly (readonly [BrowserName, Reply])[] = [
@@ -474,7 +475,7 @@ describe('BidiSession.refs', () => {
   it('claims a located ref as fresh once, and only while no input went out since its locate', async () => {
     const fake = new FakeBidi().on('input.performActions', { result: {} });
     const held = await session(fake);
-    const target = { element: { sharedId: 'e' } as ElementRef, context: 'tab', locator: { kind: 'selector', selector: '#a' } as const };
+    const target = { element: new ElementRef('e'), context: 'tab', locator: { kind: 'selector', selector: '#a' } as const };
     held.refs.storeLocated('1', target);
     held.refs.storeLocated('2', target);
     expect(held.refs.claimFresh({ id: '1' } as NodeRef)).toBe(true);
@@ -486,7 +487,7 @@ describe('BidiSession.refs', () => {
   it('claims no located ref as fresh after a click the page swallowed, whose pointer move still reached it', async () => {
     const fake = new FakeBidi().on('input.performActions', { result: {} });
     const held = await session(fake);
-    held.refs.storeLocated('1', { element: { sharedId: 'e' } as ElementRef, context: 'tab', locator: { kind: 'selector', selector: '#a' } });
+    held.refs.storeLocated('1', { element: new ElementRef('e'), context: 'tab', locator: { kind: 'selector', selector: '#a' } });
     await held.input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), { arm: async () => undefined, verdict: async () => null, suppressed: () => true });
     expect(held.refs.claimFresh({ id: '1' } as NodeRef)).toBe(false);
   });

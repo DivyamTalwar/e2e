@@ -17,6 +17,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { callOf } from '../helpers/page-call.ts';
 import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
 import { actionPoint } from '../../src/in-page/actionability.ts';
@@ -24,12 +25,11 @@ import { nextFrame } from '../../src/in-page/document.ts';
 
 const send = BidiConnection.prototype.send;
 
-/** Resolves once the driver sent its next call of the page function `fn`, which it sends behind a check of the nodes it passes. */
+/** Resolves once the driver sent its next call of the page function `fn`. */
 function called(fn: { toString(): string }): Promise<void> {
   return new Promise((resolve) => {
     vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(function (this: BidiConnection, method, params) {
-      const { functionDeclaration } = params as { functionDeclaration?: unknown };
-      if (typeof functionDeclaration === 'string' && functionDeclaration.includes(fn.toString())) resolve();
+      if (callOf(fn, params) !== undefined) resolve();
       return send.call(this, method, params);
     });
   });
@@ -44,7 +44,7 @@ function sentAfterInput(fn: { toString(): string }, until: Promise<void>): Promi
     let input = false;
     vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(function (this: BidiConnection, method, params) {
       if (method === 'input.performActions') input = true;
-      if (!input || (params as { functionDeclaration?: unknown }).functionDeclaration !== fn.toString()) return send.call(this, method, params);
+      if (!input || callOf(fn, params) === undefined) return send.call(this, method, params);
       input = false;
       return until.then(() => {
         const reply = send.call(this, method, params);
