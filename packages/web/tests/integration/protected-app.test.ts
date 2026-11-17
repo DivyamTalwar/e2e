@@ -59,6 +59,37 @@ async function headingAt(engine: EngineHandle, attemptId: string, url: string): 
 const AUTHORIZATION = `Basic ${Buffer.from(`${PROTECTED_CREDENTIAL.username}:${PROTECTED_CREDENTIAL.password}`).toString('base64')}`;
 
 /**
+ * An app with one cacheable response: `/stamp` answers the number of
+ * requests it got so far, fresh for an hour, and any other path a page.
+ * `stamps` holds the `x-fixture-header` of each `/stamp` request, in order.
+ */
+function startCacheable(): Promise<Pick<FixtureApp, 'url' | 'close'> & { readonly stamps: (string | undefined)[] }> {
+  const stamps: (string | undefined)[] = [];
+  const server = createServer((request, response) => {
+    if (new URL(request.url ?? '/', 'http://cacheable.test').pathname !== '/stamp') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end('<!doctype html><title>Cacheable</title><h1>Cacheable</h1>');
+      return;
+    }
+    stamps.push([request.headers['x-fixture-header']].flat()[0]);
+    response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'max-age=3600' });
+    response.end(String(stamps.length));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve({
+        url: `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`,
+        stamps,
+        close: () => new Promise<void>((done) => {
+          server.close(() => done());
+          server.closeAllConnections();
+        }),
+      });
+    });
+  });
+}
+
+/**
  * A gate that challenges every request for the fixture's credential. With
  * it, `/hop?to=<url>` answers a redirect to `to`, `/locked` challenges
  * again whatever was sent, and any other path answers a page headed
@@ -235,6 +266,23 @@ describe('web({ headers, basicAuth })', () => {
       expect(await registered(engine)).toBe(0);
     } finally {
       await shutdown(engine);
+    }
+  });
+
+  it('leaves the browser\'s HTTP cache on under headers', async () => {
+    const cacheable = await startCacheable();
+    const engine = web({ headers: { 'x-fixture-header': 'cached' } });
+    try {
+      await boot(engine, cacheable, artifactsDir, 'c1');
+      await headingAt(engine, 'c1', `${cacheable.url}/`);
+      const stamp = async (): Promise<string> => (await fetch('/stamp')).text();
+      const read = () => browserFixture(engine, { baseUrl: cacheable.url }).evaluate(stamp);
+      // The browser answers the second read from its cache: the server gets one request, with the headers.
+      expect([await read(), await read()]).toEqual(['1', '1']);
+      expect(cacheable.stamps).toEqual(['cached']);
+    } finally {
+      await shutdown(engine);
+      await cacheable.close();
     }
   });
 
