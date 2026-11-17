@@ -112,7 +112,7 @@ export async function contentContext(connection: BidiConnection, frame: NodeTarg
  * Without one, nothing was written into the document, and a call into it
  * would wait for the document the frame loads next.
  */
-export async function hasScriptContext(connection: BidiConnection, context: string): Promise<boolean> {
+async function hasScriptContext(connection: BidiConnection, context: string): Promise<boolean> {
   const { realms } = await connection.send('script.getRealms', { context, type: 'window' });
   return realms.some((realm) => realm.type === 'window' && realm.sandbox === undefined);
 }
