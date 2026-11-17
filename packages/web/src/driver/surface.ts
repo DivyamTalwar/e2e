@@ -119,6 +119,7 @@ export class BidiSurface {
       permissions: Object.keys(info.app.permissions ?? {}),
       remoteFiles: source.files === 'remote',
       userContext: source.userContext.mode,
+      withoutUserContexts: source.userContext.mode === 'fresh' ? source.userContext.instead : undefined,
       env: info.env,
     };
     source.init(info);

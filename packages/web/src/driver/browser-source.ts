@@ -56,9 +56,11 @@ export interface BrowserSource {
   /**
    * The user context an attempt runs in. Only a `fresh` one lets an attempt
    * replace it (`app.clearState()`, saved sessions); any other is the
-   * browser's own, and its `limit` says why `what` cannot replace that.
+   * browser's own, and its `limit` says why `what` cannot replace that. A
+   * `fresh` one a browser may be unable to create names what to do then
+   * (`instead`).
    */
-  readonly userContext: { readonly mode: 'fresh' } | { readonly mode: Exclude<UserContextMode, 'fresh'>; readonly limit: (what: string) => string };
+  readonly userContext: { readonly mode: 'fresh'; readonly instead?: string } | { readonly mode: Exclude<UserContextMode, 'fresh'>; readonly limit: (what: string) => string };
   /** Whether the browser's files are on this machine or on another one, which local paths do not reach. */
   readonly files: 'local' | 'remote';
   /** The `e2e doctor` checks of the browser. */
@@ -119,7 +121,8 @@ export function launchSource(browser: BrowserName, media: WebMedia): BrowserSour
  * the page the browser already shows (`adoptedPage`).
  */
 export function connectSource(endpoint: CdpEndpointResolver, context: ConnectContext): BrowserSource {
-  return cdpSource('connect.cdpEndpoint', context === 'existing' ? adoptedPage(`with ${CONNECT_EXISTING}`, 'attempt') : { mode: 'fresh' }, endpoint);
+  const fresh = { mode: 'fresh', instead: `Set ${CONNECT_EXISTING} to drive the page it already shows.` } as const;
+  return cdpSource('connect.cdpEndpoint', context === 'existing' ? adoptedPage(`with ${CONNECT_EXISTING}`, 'attempt') : fresh, endpoint);
 }
 
 /**

@@ -150,7 +150,8 @@ web({ connect: { cdpEndpoint: async () => 'ws://127.0.0.1:9222' } });
 
 - `cdpEndpoint(signal)` resolves when a worker first needs the browser, and
   again when an attempt starts after the connection dropped.
-- Each attempt gets a new browser context on the remote browser.
+- Each attempt gets a new browser context on the remote browser. A host that
+  can create none fails the attempt with `UNSUPPORTED_CAPABILITY`.
 - `context: 'existing'` drives the page the browser already shows instead of
   creating a context and a tab, for a host that can create neither, such as
   an Electron app. `app.open()` navigates that page, attempts share its

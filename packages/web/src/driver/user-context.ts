@@ -47,6 +47,8 @@ const DEFAULT_USER_CONTEXT = 'default';
 export interface UserContextSettings {
   /** The user context an attempt runs in (`BrowserSource.userContext`). */
   readonly userContext: UserContextMode;
+  /** What to do with a browser that can create no user context, when the source knows (`BrowserSource.userContext`). */
+  readonly withoutUserContexts: string | undefined;
   readonly initScripts: ConfiguredInitScripts;
   readonly userAgent: string | undefined;
   readonly locale: string | undefined;
@@ -263,6 +265,21 @@ export class AttemptUserContext {
   }
 
   /**
+   * A new user context of the browser's. A browser that refuses to create
+   * one (an Electron app has only its own) fails as `UNSUPPORTED_CAPABILITY`
+   * when the settings know what to do instead, with the browser's words.
+   */
+  private async create(): Promise<string> {
+    const { connection, settings } = this.host;
+    try {
+      return (await connection.send('browser.createUserContext', {})).userContext;
+    } catch (cause) {
+      if (settings.withoutUserContexts === undefined || !(cause instanceof BidiError)) throw cause;
+      throw new EngineError('UNSUPPORTED_CAPABILITY', `the browser cannot create a browser context (${cause.detail}). ${settings.withoutUserContexts}`, { retryable: false, cause });
+    }
+  }
+
+  /**
    * Creates a user context (the browser's own one when the settings ask for
    * it) and applies everything scoped to it: the preloaded scripts,
    * downloads, the emulated user agent, locale (and the `accept-language`
@@ -278,7 +295,7 @@ export class AttemptUserContext {
     const { connection, settings, lifetime } = this.host;
     signal.throwIfAborted();
     if (lifetime.aborted) throw abortError(lifetime, 'user context setup');
-    const { userContext } = settings.userContext === 'fresh' ? await connection.send('browser.createUserContext', {}) : { userContext: DEFAULT_USER_CONTEXT };
+    const userContext = settings.userContext === 'fresh' ? await this.create() : DEFAULT_USER_CONTEXT;
     const preloads: string[] = [];
     const overtaken = (): boolean => signal.aborted || lifetime.aborted || generation !== this.generation;
     try {

@@ -1,6 +1,7 @@
 /** A BiDi session's own state: refs a locate just proved, the tabs it opens and the ones it closes again, and the user contexts it removes or refuses to set up once the attempt closed. */
 
 import { describe, expect, it, vi } from 'vitest';
+import { connectSource } from '../../src/driver/browser-source.ts';
 import { ContextTree } from '../../src/driver/context-tree.ts';
 import { clickSources, moveSources } from '../../src/driver/input-sources.ts';
 import type { BidiSession } from '../../src/driver/session.ts';
@@ -479,5 +480,23 @@ describe('BidiSession.close', () => {
     await kept.replaceUserContext(new AbortController().signal);
     expect(fake.commands('browsingContext.close').map((command) => command.params['context'])).toEqual(['first', 'second']);
     expect(kept.tabs.list()).toEqual([]);
+  });
+});
+
+describe('a browser that can create no user context', () => {
+  const refuses = (): FakeBidi => new FakeBidi().on('browser.createUserContext', () => ({ error: 'unknown error', message: 'Failed to create browser context.' }));
+
+  it('fails as UNSUPPORTED_CAPABILITY with the browser\'s words and what to do instead, when its source knows', async () => {
+    const instead = connectSource(() => 'ws://localhost:0', 'new').userContext;
+    expect(instead).toEqual({ mode: 'fresh', instead: "Set web({ connect: { context: 'existing' } }) to drive the page it already shows." });
+    const opened = unopened(refuses(), 'chromium', 'fresh', { settings: { withoutUserContexts: 'instead' in instead ? instead.instead : undefined } });
+    await expect(opened.openUserContext(new AbortController().signal)).rejects.toMatchObject({
+      code: 'UNSUPPORTED_CAPABILITY',
+      message: "the browser cannot create a browser context (Failed to create browser context.). Set web({ connect: { context: 'existing' } }) to drive the page it already shows.",
+    });
+  });
+
+  it('fails with the browser\'s own error when its source names nothing else to do', async () => {
+    await expect(unopened(refuses()).openUserContext(new AbortController().signal)).rejects.toThrow('browser.createUserContext: unknown error: Failed to create browser context.');
   });
 });
