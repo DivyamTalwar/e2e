@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FakeBidi } from '../helpers/bidi-fake.ts';
+import { FakeBidi, type Reply } from '../helpers/bidi-fake.ts';
 import { TabWindows } from '../../src/driver/tab-windows.ts';
 
 /** One window of the fake browser: its outer size, and the chrome a tab that fills it reads. */
@@ -24,16 +24,18 @@ function browser(tabs: Readonly<Record<string, string>>, windows: Readonly<Recor
       return tabs[context] === undefined ? { error: 'no such frame', message: `Browsing Context with id ${context} not found` } : { result: { contexts: [{ context, clientWindow: tabs[context] }] } };
     })
     .on('browser.getClientWindows', () => ({ result: { clientWindows: Object.keys(windows).map(info) } }))
-    .on('script.callFunction', (params) => {
-      const { chrome } = windows[tabs[(params['target'] as { context: string }).context]!]!;
-      return { result: { type: 'success', realm: 'r', result: { type: 'object', value: [['width', { type: 'number', value: chrome.width }], ['height', { type: 'number', value: chrome.height }]] } } };
-    })
+    .on('script.callFunction', (params) => chromeRead(windows[tabs[(params['target'] as { context: string }).context]!]!.chrome))
     .on('browser.setClientWindowState', (params) => {
       const window = windows[String(params['clientWindow'])]!;
       window.width = Math.min(Number(params['width']), window.limit?.width ?? Infinity);
       window.height = Math.min(Number(params['height']), window.limit?.height ?? Infinity);
       return { result: info(String(params['clientWindow'])) };
     });
+}
+
+/** What a tab that fills a window answers the read of that window's `chrome`. */
+function chromeRead(chrome: FakeWindow['chrome']): Reply {
+  return { result: { type: 'success', realm: 'r', result: { type: 'object', value: [['width', { type: 'number', value: chrome.width }], ['height', { type: 'number', value: chrome.height }]] } } };
 }
 
 /** The window sizes `fake` was asked for, in order. */
@@ -92,11 +94,38 @@ describe('TabWindows', () => {
     await windows.hold('tab', { width: 2560, height: 965 });
   });
 
-  it('fails stale for a tab that closed, and for one whose window closed under the read', async () => {
+  it('reads a tab that closed, and one whose window is listed no more, as closed before it asks either anything', async () => {
     const fake = browser({ tab: 'gone' }, {});
     const windows = new TabWindows(fake.connection);
-    await expect(windows.hold('closed', { width: 100, height: 100 })).rejects.toMatchObject({ error: 'no such frame' });
-    await expect(windows.hold('tab', { width: 100, height: 100 })).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    const closed = { code: 'NODE_STALE', retryable: true, message: 'the tab closed while its window was sized' };
+    await expect(windows.hold('closed', { width: 100, height: 100 })).rejects.toMatchObject(closed);
+    await expect(windows.hold('tab', { width: 100, height: 100 })).rejects.toMatchObject(closed);
     expect(fake.commands('script.callFunction')).toEqual([]);
+    expect(grown(fake)).toEqual([]);
+  });
+
+  it.each([
+    ['its chrome was read', 'script.callFunction', { error: 'no such frame', message: 'Browsing Context with id tab not found' }],
+    ['it grew, the close done', 'browser.setClientWindowState', { error: 'no such client window', message: 'Client window with id w not found' }],
+    ['it grew, the close under way', 'browser.setClientWindowState', { error: 'unknown error', message: '[Exception... "Failure"  nsresult: "0x80004005 (NS_ERROR_FAILURE)"]' }],
+  ] as const)('reads a window that closed while %s as closed, whatever the browser answered', async (_when, method, reply) => {
+    const tabs: Record<string, string> = { tab: 'w' };
+    const fake = browser(tabs, { w: { width: 500, height: 600, chrome: { width: 0, height: 85 } } });
+    fake.on(method, () => {
+      delete tabs['tab'];
+      return reply;
+    });
+    await expect(new TabWindows(fake.connection).hold('tab', { width: 1280, height: 720 })).rejects.toMatchObject({
+      code: 'NODE_STALE',
+      retryable: true,
+      message: 'the tab closed while its window was sized',
+      cause: { error: reply.error },
+    });
+  });
+
+  it('keeps the browser\'s own failure for a window that is still open', async () => {
+    const fake = browser({ tab: 'w' }, { w: { width: 500, height: 600, chrome: { width: 0, height: 85 } } });
+    fake.on('browser.setClientWindowState', { error: 'unknown error', message: 'the window manager refused' });
+    await expect(new TabWindows(fake.connection).hold('tab', { width: 1280, height: 720 })).rejects.toMatchObject({ error: 'unknown error', detail: 'the window manager refused' });
   });
 });
