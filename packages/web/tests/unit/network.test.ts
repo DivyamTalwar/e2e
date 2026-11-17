@@ -615,6 +615,24 @@ describe('AttemptNetwork', () => {
       expect(await hop(fake, 'r', 'https://external.test/end', 2, { 'x-preview': 'token', 'x-route': 'routed' })).toEqual({ accept: '*/*', 'x-route': 'routed', 'x-preview': 'token' });
     });
 
+    it('leaves the headers of a posted body off every hop once a redirect turned the POST into a GET', async () => {
+      const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'a=1' } } });
+      const { net, open } = network(fake);
+      await net.bind('user-1');
+      await open('tab');
+      await net.addRoute(route('**', async (held, decisions) => {
+        await decisions.continue({ headers: { ...held.headers, 'x-route': 'routed' } });
+      }));
+      const posted = request('r', `${SITE}/form`);
+      const headers = [{ name: 'Accept', value: { type: 'string', value: '*/*' } }, { name: 'Content-Type', value: { type: 'string', value: 'application/x-www-form-urlencoded' } }];
+      fake.emit('network.beforeRequestSent', { ...posted, request: { ...(posted['request'] as object), method: 'POST', bodySize: 3, headers } });
+      await settle();
+      await settle();
+      expect(fake.commands('network.continueRequest').at(-1)?.params['headers']).toContainEqual({ name: 'content-type', value: { type: 'string', value: 'application/x-www-form-urlencoded' } });
+      expect(await hop(fake, 'r', `${SITE}/done`, 1, {})).toEqual({ accept: '*/*', 'x-route': 'routed' });
+      expect(await hop(fake, 'r', `${SITE}/again`, 2, {})).toEqual({ accept: '*/*', 'x-route': 'routed' });
+    });
+
     it('sends nothing configured on a request that starts at another origin and redirects to the app’s', async () => {
       const fake = new FakeBidi();
       const { net, open } = network(fake, { headers: true });

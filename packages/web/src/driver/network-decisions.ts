@@ -76,7 +76,7 @@ export interface NetworkRoute {
   readonly handle: (request: InterceptedRequest, decisions: RouteDecisions) => Promise<void>;
 }
 
-/** How a redirect hop of a request goes on: the route's header overrides, the method it was continued with, and the site headers the driver added to the previous hop. */
+/** How the redirect hops of a request go on: the route's header overrides, the method its first hop was continued with, and the site headers the driver added to that hop. */
 interface RedirectPolicy {
   readonly overrides?: Readonly<Record<string, string>>;
   readonly method: string;
@@ -199,8 +199,8 @@ export class RequestDecisions {
    * configured headers its request started with, to whatever origin the hop
    * names (a request that started elsewhere gets none on the way); the
    * route's overrides applied again, as Playwright does (a redirect is never
-   * routed again), without the body's headers when the redirect turned a
-   * POST into a GET. A hop with nothing to change goes on untouched.
+   * routed again), without the body's headers on every hop once a redirect
+   * turned a POST into a GET. A hop with nothing to change goes on untouched.
    */
   private redirectHeaders(event: BidiEventParams<'network.beforeRequestSent'>, record: DecisionRecord, headers: Record<string, string>): Partial<Network.ContinueRequestParameters> {
     const policy = record.redirect;
@@ -213,7 +213,6 @@ export class RequestDecisions {
       }
     }
     if (policy.injected !== undefined) applied = { ...applied, ...policy.injected };
-    record.redirect = { ...policy, method: event.request.method };
     return applied === headers ? {} : { headers: wireHeaders(applied) };
   }
 

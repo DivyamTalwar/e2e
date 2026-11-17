@@ -31,7 +31,8 @@ const ALL_BYTES = Uint8Array.from({ length: 256 }, (_, index) => index);
 
 /**
  * `/echo` answers with what it received; `/api/*` answers `network:<path>`;
- * `/binary` answers `ALL_BYTES`. Every request is counted by path.
+ * `/binary` answers `ALL_BYTES`; `/see-other` answers a 303 to `/redirect`,
+ * which answers a 302 to `/echo`. Every request is counted by path.
  */
 function startCountingServer(hits: Map<string, number>): Promise<{ server: Server; port: number }> {
   const server = createServer((request, response) => {
@@ -39,6 +40,11 @@ function startCountingServer(hits: Map<string, number>): Promise<{ server: Serve
     hits.set(pathname, (hits.get(pathname) ?? 0) + 1);
     if (pathname === '/redirect') {
       response.writeHead(302, { location: '/echo' });
+      response.end();
+      return;
+    }
+    if (pathname === '/see-other') {
+      response.writeHead(303, { location: '/redirect' });
       response.end();
       return;
     }
@@ -409,6 +415,13 @@ describe('browser.route decisions', () => {
     expect(echo.headers['x-drop']).toBeUndefined();
     expect(echo.headers['x-keep']).toBe('yes');
     expect(echo.headers['x-gate']).toBe('open-sesame');
+  });
+
+  it('continue leaves the headers of a posted body off every hop after a redirect turned the POST into a GET', async () => {
+    await browser.route('**/see-other', (route) => route.continue({ headers: { ...route.request.headers, 'x-keep': 'yes' } }));
+    const echo = await fetchEcho(`${origin}/see-other`, { method: 'POST', body: 'a=1' });
+    expect([echo.method, echo.headers['content-type'], echo.headers['x-keep']]).toEqual(['GET', undefined, 'yes']);
+    expect([hits.get('/see-other'), hits.get('/redirect'), hits.get('/echo')]).toEqual([1, 1, 1]);
   });
 
   it('continue sends a rewritten url, method, and body without touching the original', async () => {
