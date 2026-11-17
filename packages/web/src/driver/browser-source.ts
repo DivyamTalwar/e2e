@@ -1,13 +1,14 @@
 /**
  * Where the BiDi surface gets its browser: a local launch, the `connect`
- * endpoint, a browser provider's lease (one per worker or one per attempt),
- * or `attachBrowser`'s endpoint, whose open tab the attempt adopts. Each is
+ * endpoint (in a context of the attempt's own, or on the page it shows), a
+ * browser provider's lease (one per worker or one per attempt), or
+ * `attachBrowser`'s endpoint, whose open tab the attempt adopts. Each is
  * one `BrowserSource`, resolved once by `web()`; the surface asks it for a
  * browser and reads what it allows, and the source words its own limits, so
  * nothing re-derives the mode from options or branches on which source it is.
  */
 
-import type { CdpTarget } from '../options.ts';
+import { CONNECT_EXISTING, type CdpTarget, type ConnectContext } from '../options.ts';
 import {
   EngineError,
   withTimeout,
@@ -112,22 +113,31 @@ export function launchSource(browser: BrowserName, media: WebMedia): BrowserSour
   };
 }
 
-/** `web({ connect })`: a remote Chromium at the endpoint `endpoint` resolves, each attempt in a fresh user context. */
-export function connectSource(endpoint: CdpEndpointResolver): BrowserSource {
-  return cdpSource('connect.cdpEndpoint', { mode: 'fresh' }, endpoint);
+/**
+ * `web({ connect })`: a remote Chromium at the endpoint `endpoint` resolves,
+ * each attempt in a fresh user context, or, with `context` `'existing'`, on
+ * the page the browser already shows (`adoptedPage`).
+ */
+export function connectSource(endpoint: CdpEndpointResolver, context: ConnectContext): BrowserSource {
+  return cdpSource('connect.cdpEndpoint', context === 'existing' ? adoptedPage(`with ${CONNECT_EXISTING}`, 'attempt') : { mode: 'fresh' }, endpoint);
 }
 
 /**
  * `attachBrowser`: the Chromium at `cdpEndpoint`, whose attempt adopts the
- * tab the browser shows in its own user context (`shownTab`) and leaves both
- * as they are.
+ * tab the browser shows (`adoptedPage`) and leaves both as they are.
  */
 export function attachSource(cdpEndpoint: string): BrowserSource {
-  return cdpSource(
-    "attachBrowser's cdpEndpoint",
-    { mode: 'adopt-tab', limit: (what) => `${what} is unavailable on an attached browser: it replaces the browser context, and the attach drives the browser's own` },
-    () => cdpEndpoint,
-  );
+  return cdpSource("attachBrowser's cdpEndpoint", adoptedPage('on an attached browser', 'attach'), () => cdpEndpoint);
+}
+
+/**
+ * The user context of an attempt that adopts the tab the browser shows in
+ * its own user context (`foundTabs`) and creates neither a context nor a
+ * tab. Its limit names how the browser was reached (`reached`) and what
+ * drives it (`driver`).
+ */
+function adoptedPage(reached: string, driver: string): BrowserSource['userContext'] {
+  return { mode: 'adopt-tab', limit: (what) => `${what} is unavailable ${reached}: it replaces the browser context, and the ${driver} drives the browser's own` };
 }
 
 /**

@@ -14,19 +14,27 @@ import {
 } from '@e2e-dev/core/engine';
 import { BROWSER_TRAITS, isBrowserName, type BrowserName } from './browsers.ts';
 import { validateInitScripts } from './init-scripts.ts';
-import { MEDIA_KEYS, mediaProblem, type WebOptions } from './options.ts';
+import { CONNECT_CONTEXTS, MEDIA_KEYS, mediaProblem, type ConnectContext, type WebConnectOptions, type WebOptions } from './options.ts';
 import { FIELD_VALUE_CONTROL, headerProblem, originProblem } from './protected-app.ts';
 import { asBrowserProvider, type BrowserProvider } from './provider.ts';
 
 /** App fields only a device target reads. */
 const NATIVE_APP_KEYS = ['bundleId', 'appPath', 'launchArguments'] as const;
 
+/** What `checkWebOptions` reads from the options it checked. */
+export interface CheckedWebOptions {
+  readonly browser: BrowserName;
+  readonly provider: BrowserProvider | undefined;
+  /** `connect` with its `context` filled in (`'new'` when unset); undefined without `connect`. */
+  readonly connect: Required<WebConnectOptions> | undefined;
+}
+
 /**
  * Checks every option of `web(options)` and names the browser they drive:
  * the provider that leases it when `browser` is one, else the built-in
- * browser by name.
+ * browser by name, with the page a `connect` drives there.
  */
-export function checkWebOptions(options: WebOptions): { readonly browser: BrowserName; readonly provider: BrowserProvider | undefined } {
+export function checkWebOptions(options: WebOptions): CheckedWebOptions {
   if ('allowedOrigins' in options) {
     throw new ConfigurationError(
       'INVALID_CONFIG',
@@ -47,7 +55,7 @@ export function checkWebOptions(options: WebOptions): { readonly browser: Browse
       `web({ browser, connect }) names two browser sources; browser provider "${provider.name}" leases its own browsers, so remove connect`,
     );
   }
-  if (options.connect !== undefined) validateConnect(options.connect);
+  const connect = options.connect === undefined ? undefined : validateConnect(options.connect);
   if (options.connect !== undefined && typeof options.browser === 'string' && !(isBrowserName(options.browser) && BROWSER_TRAITS[options.browser].cdp)) {
     throw new ConfigurationError(
       'INVALID_CONFIG',
@@ -68,7 +76,7 @@ export function checkWebOptions(options: WebOptions): { readonly browser: Browse
   if (typeof browser !== 'string' || !isBrowserName(browser)) {
     throw new ConfigurationError('INVALID_CONFIG', `web({ browser }) drives chromium or firefox over WebDriver BiDi, got ${JSON.stringify(browser)}`);
   }
-  return { browser, provider };
+  return { browser, provider, connect };
 }
 
 /** Every option `web()` takes, kept equal to `WebOptions` by the compiler. */
@@ -117,21 +125,29 @@ function kindOf(value: unknown): string {
  * `cdpEndpoint` is the resolver `connect` attaches through. Without it the
  * attach would call an undefined resolver, so a config missing it fails
  * here, at load, instead of at worker init with `ENGINE_FAILURE: ... resolve
- * is not a function`. Any other key, a removed `reconnectEndpoint` included,
- * is refused.
+ * is not a function`. `context` is one of `CONNECT_CONTEXTS`, `'new'` when
+ * unset. Any other key, a removed `reconnectEndpoint` included, is refused.
+ * Returns the two as checked.
  */
-function validateConnect(connect: unknown): void {
+function validateConnect(connect: unknown): Required<WebConnectOptions> {
   if (!isPlainObject(connect)) {
-    throw new ConfigurationError('INVALID_CONFIG', `web({ connect }) must be a plain object: { cdpEndpoint }, got ${kindOf(connect)}`);
+    throw new ConfigurationError('INVALID_CONFIG', `web({ connect }) must be a plain object: { cdpEndpoint, context? }, got ${kindOf(connect)}`);
   }
-  rejectUnknownKeys('web({ connect })', connect, ['cdpEndpoint']);
-  const { cdpEndpoint } = connect;
+  rejectUnknownKeys('web({ connect })', connect, ['cdpEndpoint', 'context'] satisfies (keyof WebConnectOptions)[]);
+  const { cdpEndpoint, context = 'new' } = connect;
   if (cdpEndpoint === undefined) {
     throw new ConfigurationError('INVALID_CONFIG', 'web({ connect }) requires cdpEndpoint, the resolver that provisions the browser: (signal) => url');
   }
   if (typeof cdpEndpoint !== 'function') {
     throw new ConfigurationError('INVALID_CONFIG', `web({ connect: { cdpEndpoint } }) must be a resolver function (signal) => url, got ${kindOf(cdpEndpoint)}`);
   }
+  if (!CONNECT_CONTEXTS.some((known) => known === context)) {
+    throw new ConfigurationError(
+      'INVALID_CONFIG',
+      `web({ connect: { context } }) must be ${CONNECT_CONTEXTS.map((known) => JSON.stringify(known)).join(' or ')}, got ${typeof context === 'string' ? JSON.stringify(context) : kindOf(context)}`,
+    );
+  }
+  return { cdpEndpoint: cdpEndpoint as WebConnectOptions['cdpEndpoint'], context: context as ConnectContext };
 }
 
 /**

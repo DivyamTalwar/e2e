@@ -17,6 +17,15 @@ export interface CdpTarget {
   readonly headers?: Readonly<Record<string, string>> | undefined;
 }
 
+/** What `connect.context` can be: a context and a tab the engine creates for every attempt, or the page the browser already shows. */
+export const CONNECT_CONTEXTS = ['new', 'existing'] as const satisfies readonly NonNullable<WebConnectOptions['context']>[];
+
+/** One of `CONNECT_CONTEXTS`. */
+export type ConnectContext = (typeof CONNECT_CONTEXTS)[number];
+
+/** How a message names the option that has an attempt drive the page the browser already shows. */
+export const CONNECT_EXISTING = "web({ connect: { context: 'existing' } })";
+
 /**
  * Attach to a remote browser over CDP instead of launching a local one. The
  * seam a hosted-browser engine plugs into: a per-run cloud session (its
@@ -38,6 +47,14 @@ export interface WebConnectOptions {
    * credentials.
    */
   readonly cdpEndpoint: (signal: AbortSignal) => string | CdpTarget | Promise<string | CdpTarget>;
+  /**
+   * Which page a test drives. `'new'` (default) creates a browser context
+   * and a tab for every attempt. `'existing'` drives the page the browser
+   * already shows, for a host that can create neither, such as an Electron
+   * app: `app.open()` navigates that page, and nothing is cleared between
+   * attempts.
+   */
+  readonly context?: 'new' | 'existing';
 }
 
 /** HTTP basic authentication the browser answers a `401` challenge with. */

@@ -1,11 +1,12 @@
 /**
- * The tab an attempt adopts (`shownTab`), told from what the browser
+ * The tab an attempt adopts (`foundTabs`), told from what the browser
  * reports: a plain `page` target of the attempt's user context, the visible
- * one of several, and a refusal that names the tabs when none stands out.
+ * one of several, and a refusal that names the tabs when none stands out;
+ * beside it, everything open in that user context.
  */
 
 import { describe, expect, it } from 'vitest';
-import { shownTab } from '../../src/driver/shown-tab.ts';
+import { foundTabs } from '../../src/driver/found-tabs.ts';
 import { FakeBidi } from '../helpers/bidi-fake.ts';
 
 /** One top-level context as the browser reports it: its CDP target, its user context, and whether its document is visible. */
@@ -35,20 +36,20 @@ function browserWith(open: readonly Reported[]): FakeBidi {
     });
 }
 
-describe('shownTab', () => {
+describe('foundTabs', () => {
   it('is the one page target, wherever it stands among a prerendered page and a DevTools front-end, with no document read', async () => {
     const fake = browserWith([
       { context: 'prerender', type: 'page', subtype: 'prerender', visible: true },
       { context: 'devtools', type: 'other', visible: true },
       { context: 'tab', type: 'page' },
     ]);
-    expect(await shownTab(fake.connection, 'default', undefined)).toBe('tab');
+    expect(await foundTabs(fake.connection, 'default', undefined)).toEqual({ shown: 'tab', all: ['prerender', 'devtools', 'tab'] });
     expect(fake.commands('script.callFunction')).toEqual([]);
   });
 
   it('is undefined when no tab is open in the user context', async () => {
     const fake = browserWith([{ context: 'theirs', type: 'page', userContext: 'other', visible: true }, { context: 'prerender', type: 'page', subtype: 'prerender' }]);
-    expect(await shownTab(fake.connection, 'default', undefined)).toBeUndefined();
+    expect(await foundTabs(fake.connection, 'default', undefined)).toEqual({ shown: undefined, all: ['prerender'] });
   });
 
   it('is the only visible tab of several, and never a tab of another user context', async () => {
@@ -58,21 +59,21 @@ describe('shownTab', () => {
       { context: 'shown', type: 'page', visible: true },
       { context: 'closing', type: 'page', gone: true },
     ]);
-    expect(await shownTab(fake.connection, 'default', undefined)).toBe('shown');
+    expect((await foundTabs(fake.connection, 'default', undefined)).shown).toBe('shown');
     expect(fake.commands('script.callFunction').map((command) => (command.params['target'] as { context: string }).context)).toEqual(['background', 'shown', 'closing']);
   });
 
   it('stays the tab adopted before while it is open, whatever is visible, and is chosen again once it closed', async () => {
     const open = [{ context: 'adopted', type: 'page' }, { context: 'opened', type: 'page', visible: true }];
     const fake = browserWith(open);
-    expect(await shownTab(fake.connection, 'default', 'adopted')).toBe('adopted');
+    expect((await foundTabs(fake.connection, 'default', 'adopted')).shown).toBe('adopted');
     expect(fake.commands('script.callFunction')).toEqual([]);
-    expect(await shownTab(browserWith(open.slice(1)).connection, 'default', 'adopted')).toBe('opened');
+    expect((await foundTabs(browserWith(open.slice(1)).connection, 'default', 'adopted')).shown).toBe('opened');
   });
 
   it('refuses several visible tabs, naming every open one', async () => {
     const fake = browserWith([{ context: 'a', type: 'page', visible: true }, { context: 'b', type: 'page', visible: true }, { context: 'c', type: 'page' }]);
-    await expect(shownTab(fake.connection, 'default', undefined)).rejects.toMatchObject({
+    await expect(foundTabs(fake.connection, 'default', undefined)).rejects.toMatchObject({
       code: 'UNSUPPORTED_CAPABILITY',
       message: 'cannot tell which tab of the attached browser to drive: 3 are open (http://app.test/a, http://app.test/b, http://app.test/c) and 2 of them are visible. Leave one tab visible, or close the others.',
     });
@@ -80,7 +81,7 @@ describe('shownTab', () => {
 
   it('refuses several tabs when none is visible', async () => {
     const fake = browserWith([{ context: 'a', type: 'page' }, { context: 'b', type: 'page' }]);
-    await expect(shownTab(fake.connection, 'default', undefined)).rejects.toMatchObject({
+    await expect(foundTabs(fake.connection, 'default', undefined)).rejects.toMatchObject({
       code: 'UNSUPPORTED_CAPABILITY',
       message: 'cannot tell which tab of the attached browser to drive: 2 are open (http://app.test/a, http://app.test/b) and none of them is visible. Leave one tab visible, or close the others.',
     });

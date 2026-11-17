@@ -924,11 +924,15 @@ describe('BidiSession tabs', () => {
     expect(() => shared.latch.throwPending()).toThrow('no removal');
   });
 
-  it('shows the tab an attached browser had open again after a restart, and closes only the others', async () => {
-    const fake = adoptable(new FakeBidi(), 'theirs', 'mine')
+  it('shows the tab an attached browser had open again after a restart, and closes only the ones opened since', async () => {
+    const open = ['theirs', 'background'];
+    const fake = adoptable(new FakeBidi(), 'theirs', 'background', 'mine')
       .on('network.addDataCollector', { result: { collector: 'c' } })
-      .on('browsingContext.getTree', { result: { contexts: [{ context: 'theirs', userContext: 'default' }, { context: 'mine', userContext: 'default' }] } })
-      .on('browsingContext.create', { result: { context: 'mine' } });
+      .on('browsingContext.getTree', () => ({ result: { contexts: open.map((context) => ({ context, userContext: 'default' })) } }))
+      .on('browsingContext.create', () => {
+        open.push('mine');
+        return { result: { context: 'mine' } };
+      });
     const attached = unopened(fake, 'chromium', 'adopt-tab');
     await attached.openUserContext(new AbortController().signal);
     await attached.newTab();

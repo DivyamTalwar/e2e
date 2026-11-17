@@ -20,7 +20,7 @@ import { AttemptNetwork } from './network.ts';
 import { OwnNavigations } from './own-navigations.ts';
 import { PageCalls } from './page-calls.ts';
 import { BidiRefs } from './refs.ts';
-import { shownTab } from './shown-tab.ts';
+import { foundTabs } from './found-tabs.ts';
 import { AttemptTabs, type AttemptTab } from './tabs.ts';
 import { acrossNavigations, tabClosed, TabWindows } from './tab-windows.ts';
 import { AttemptUserContext, type UserContextSettings } from './user-context.ts';
@@ -97,8 +97,10 @@ export class BidiSession {
   private readonly windows: TabWindows;
   /** The attempt's first tab while it opens in the user context in use, which concurrent first uses share. */
   private creating: Promise<AttemptTab> | undefined;
-  /** The tab the attempt found open and adopted (`shownTab`), which it never closes. */
+  /** The tab the attempt found open and adopted (`foundTabs`), which it never closes. */
   private adopted: string | undefined;
+  /** What was open in the user context when the attempt first looked for a tab to adopt there: the browser's own, which a restart leaves open. Undefined until then, and for an attempt that adopts none. */
+  private found: readonly string[] | undefined;
   private readonly ended = new AbortController();
 
   constructor(
@@ -265,17 +267,27 @@ export class BidiSession {
 
   /**
    * Opens the attempt's tab in its user context, or, when the settings ask
-   * for it, adopts the tab a person sees there (`shownTab`). The documents
-   * an adopted tab already shows were open before the attempt's preloads
-   * were added, so the driver's own are run in each of them first
-   * (`AttemptUserContext.prepareOpen`).
+   * for it, adopts the tab a person sees there (`adoptTab`).
    */
   private async createContext(): Promise<AttemptTab> {
     const userContext = this.userContext.id;
     if (userContext === '') throw invalidState('the attempt has no user context to open a tab in');
-    this.adopted = this.settings.userContext === 'adopt-tab' ? await shownTab(this.connection, userContext, this.adopted) : undefined;
-    if (this.adopted !== undefined) await this.userContext.prepareOpen(await this.callableDocuments(this.adopted));
+    this.adopted = this.settings.userContext === 'adopt-tab' ? await this.adoptTab(userContext) : undefined;
     return this.openTab(userContext, this.adopted);
+  }
+
+  /**
+   * The tab a person sees in `userContext` (`foundTabs`), for the attempt
+   * to adopt; undefined when none is open. What the first read finds open
+   * is the browser's own (`found`). The documents the tab already shows
+   * were open before the attempt's preloads were added, so the driver's own
+   * are run in each of them (`AttemptUserContext.prepareOpen`).
+   */
+  private async adoptTab(userContext: string): Promise<string | undefined> {
+    const { shown, all } = await foundTabs(this.connection, userContext, this.adopted);
+    this.found ??= all;
+    if (shown !== undefined) await this.userContext.prepareOpen(await this.callableDocuments(shown));
+    return shown;
   }
 
   /**
@@ -380,13 +392,15 @@ export class BidiSession {
    * that every one is forgotten and closed, even when the new tab cannot
    * open or the restart is given up on, which then opens none under the
    * step after it. A first tab that was open before (one still opening
-   * when the restart began, the tab the attempt adopts) stays open.
+   * when the restart began, the tab the attempt adopts) stays open, and so
+   * does every tab the attempt found open when it adopted one (`found`).
    */
   async replaceTabs(signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
     const { contexts } = await this.connection.send('browsingContext.getTree', { maxDepth: 0 });
     signal.throwIfAborted();
-    const old = contexts.filter((info) => info.userContext === this.userContext.id).map((info) => info.context);
+    const kept = this.found ?? [];
+    const old = contexts.filter((info) => info.userContext === this.userContext.id && !kept.includes(info.context)).map((info) => info.context);
     await this.forgetTabs();
     let first: string | undefined;
     try {

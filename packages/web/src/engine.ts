@@ -46,15 +46,17 @@ export function attachedWeb(cdpEndpoint: string, options: WebOptions): EngineHan
 
 /**
  * The web engine for `options`, its browser from `attachTo` when given, and
- * otherwise from what `options` name. Not exported: a project that installs
- * the package compiles this module's declarations, and a driver type in an
- * exported signature would bring the whole driver's into them.
+ * otherwise from what `options` name. A source whose attempt adopts the page
+ * the browser shows serves one worker: one endpoint shows one page. Not
+ * exported: a project that installs the package compiles this module's
+ * declarations, and a driver type in an exported signature would bring the
+ * whole driver's into them.
  */
 function createWeb(options: WebOptions, attachTo?: BrowserSource): EngineHandle<WebFixtures> {
-  const { browser, provider } = checkWebOptions(options);
+  const { browser, provider, connect } = checkWebOptions(options);
   const media = obj({ colorScheme: options.colorScheme, reducedMotion: options.reducedMotion });
   const source = attachTo
-    ?? (provider !== undefined ? leaseSource(new LeasedBrowsers(provider)) : options.connect !== undefined ? connectSource(options.connect.cdpEndpoint) : launchSource(browser, media));
+    ?? (provider !== undefined ? leaseSource(new LeasedBrowsers(provider)) : connect !== undefined ? connectSource(connect.cdpEndpoint, connect.context) : launchSource(browser, media));
   // Clearing state and saved sessions replace the user context, which only an attempt in a fresh one may do; any other says why not.
   const { userContext } = source;
   const surface = new BidiSurface({
@@ -76,6 +78,7 @@ function createWeb(options: WebOptions, attachTo?: BrowserSource): EngineHandle<
     version: ownVersion(),
     spiVersion: 1,
     platform: 'web',
+    ...(userContext.mode === 'adopt-tab' ? { workers: 1 } : {}),
     prepare: (info) => surface.prepare(info),
     finish: (info) => surface.finish(info),
     doctor: (info) => surface.doctor(info),
@@ -114,7 +117,7 @@ function createWeb(options: WebOptions, attachTo?: BrowserSource): EngineHandle<
         surface.guard(operation, 'keyboard.type', (session, { signal }) => typeText(session, text, keyboardOptions.replace, signal), { input: true, traced: true }),
       press: (key, operation) => surface.guard(operation, 'keyboard.press', (session, { signal }) => session.input.press(key, signal), { input: true, traced: true }),
     },
-    validateApp: (app, info) => validateApp(app, info, browser, userContext.mode !== 'adopt-tab'),
+    validateApp: (app, info) => validateApp(app, info, browser, attachTo === undefined),
     ...(isSecret(options.basicAuth?.password) ? { secrets: [options.basicAuth.password] } : {}),
     session: {
       open: (url, operation) => surface.guard(operation, 'navigation', (session, { signal }) => goto(session, url, 'load', signal), { traced: true }),
