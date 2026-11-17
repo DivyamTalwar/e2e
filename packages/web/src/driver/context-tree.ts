@@ -20,12 +20,11 @@ export class ContextTree {
   /** Contexts destroyed while a snapshot was read, which the snapshot may still list; undefined while none is read. */
   private destroyedDuringSync: Set<string> | undefined;
 
-  /** Records `context`, with its own user context or, for a frame the event names none for, its parent's. */
-  created(context: string, userContext: string | undefined, parent: string | null | undefined): void {
+  /** Records `context`, a tab or a frame, in the user context the browser names for it. */
+  created(context: string, userContext: string, parent: string | null | undefined): void {
     if (this.nodes.has(context)) return;
-    const parentNode = parent == null ? undefined : this.nodes.get(parent);
-    this.nodes.set(context, { userContext: userContext ?? parentNode?.userContext ?? '', parent: parent ?? undefined, children: new Set() });
-    parentNode?.children.add(context);
+    this.nodes.set(context, { userContext, parent: parent ?? undefined, children: new Set() });
+    if (parent != null) this.nodes.get(parent)?.children.add(context);
   }
 
   /** Forgets a closed context and every frame in it. */
