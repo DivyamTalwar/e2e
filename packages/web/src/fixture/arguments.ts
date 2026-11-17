@@ -9,6 +9,11 @@ import type { CookieTarget } from '../driver/cookies.ts';
 import { WAIT_UNTIL, type WaitUntil } from '../driver/steering.ts';
 import { choiceProblem, MEDIA_KEYS, mediaProblem, type WebMedia } from '../options.ts';
 
+/** The app URL relative URLs resolve against; undefined for an app with no URL, which has no site either. */
+export function baseHref(context: EngineFixtureContext): string | undefined {
+  return context.app.site === undefined ? undefined : context.app.resolveUrl('');
+}
+
 /** The `waitUntil` `browser.goto` was given, `load` when it names none; refused unless it is one a navigation waits for. */
 export function requireWaitUntil(options: Parameters<Browser['goto']>[1]): WaitUntil {
   const waitUntil = options?.waitUntil;
@@ -29,8 +34,10 @@ export function requireWaitUntil(options: Parameters<Browser['goto']>[1]): WaitU
  * refused by name.
  */
 export function cookieTargets(cookies: Parameters<Browser['setCookies']>[0], context: EngineFixtureContext): CookieTarget[] {
-  // An app without a URL has no site either, and no base to read a scheme from.
-  const scheme = (): string => (context.app.site !== undefined && new URL(context.app.resolveUrl('')).protocol === 'https:' ? 'https' : 'http');
+  const scheme = (): string => {
+    const base = baseHref(context);
+    return base !== undefined && new URL(base).protocol === 'https:' ? 'https' : 'http';
+  };
   return cookies.map((cookie) => {
     // A test is JavaScript at run time, so the type alone does not rule out a cookie that names neither.
     const named: { readonly url?: string; readonly domain?: string } = cookie;

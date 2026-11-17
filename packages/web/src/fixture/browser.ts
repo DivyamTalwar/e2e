@@ -73,9 +73,6 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
   const expectation = createBrowserExpectation({
     currentUrl,
     currentTitle,
-    // An app without a URL has no site either.
-    baseHref: () => (context.app.site === undefined ? undefined : context.app.resolveUrl('')),
-    deadlineFor: (timeout, api) => new Deadline(context.operation(stepTimeout(timeout, api) ?? context.timeouts.assertion).timeoutMs),
     context,
   });
   /** One handle per tab, so the same tab is the same object for the attempt. */

@@ -11,6 +11,7 @@ import {
   matchesText,
   pollCondition,
   rejectUnknownOptions,
+  stepTimeout,
   TestError,
   toTextPattern,
   urlMatches,
@@ -18,15 +19,13 @@ import {
   type EngineFixtureContext,
 } from '@e2e-dev/core/engine';
 import { isTestErrorCode } from '../errors.ts';
+import { baseHref } from './arguments.ts';
 import type { BrowserExpectation } from './types.ts';
 
-/** What the matchers read the page through, and the budget they poll within. */
+/** What the matchers read the page through, and the attempt whose assertion budget they poll within. */
 export interface ExpectationDeps {
   currentUrl(deadline: Deadline): Promise<string>;
   currentTitle(deadline: Deadline): Promise<string>;
-  /** The app URL relative URLs resolve against; undefined without one. */
-  baseHref(): string | undefined;
-  deadlineFor(timeout: number | undefined, api: string): Deadline;
   readonly context: EngineFixtureContext;
 }
 
@@ -36,10 +35,10 @@ export interface ExpectationDeps {
  * observed URL. A string that does not parse (a relative one with no base),
  * and a RegExp, print as written.
  */
-function describeExpectedUrl(expected: string | RegExp, baseHref: string | undefined): string {
+function describeExpectedUrl(expected: string | RegExp, base: string | undefined): string {
   if (typeof expected !== 'string') return String(expected);
   try {
-    return new URL(expected, baseHref).href;
+    return new URL(expected, base).href;
   } catch {
     return expected;
   }
@@ -64,7 +63,7 @@ export function createBrowserExpectation(deps: ExpectationDeps, negated = false)
     read: (deadline: Deadline) => Promise<BrowserSample>,
     timeout: number | undefined,
   ): Promise<void> => {
-    const deadline = deps.deadlineFor(timeout, api);
+    const deadline = new Deadline(deps.context.operation(stepTimeout(timeout, api) ?? deps.context.timeouts.assertion).timeoutMs);
     // pollCondition calls onTimeout only after a read completed, so a sample is always there.
     let last: BrowserSample | undefined;
     await pollCondition({
@@ -95,7 +94,7 @@ export function createBrowserExpectation(deps: ExpectationDeps, negated = false)
       if (ignoreCase !== undefined && typeof ignoreCase !== 'boolean') {
         throw new TestError('INVALID_ARGUMENT', `expect.${negated ? 'not.' : ''}toHaveURL option ignoreCase must be a boolean`);
       }
-      const target = deps.baseHref();
+      const target = baseHref(deps.context);
       return poll(
         'toHaveURL',
         `URL ${describeExpectedUrl(expected, target)}${ignoreCase === true ? ' (ignoring case)' : ''}`,

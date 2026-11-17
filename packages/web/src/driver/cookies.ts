@@ -5,6 +5,7 @@
 
 import type { Network, Storage } from 'webdriver-bidi-protocol';
 import type { BidiConnection } from './connection.ts';
+import { bytesText } from './network-wire.ts';
 import type { BidiSession } from './session.ts';
 
 /** What every cookie carries, whichever way it names its site. */
@@ -108,7 +109,7 @@ function partialCookie({ cookie, domain, path, secure }: CookieTarget): Storage.
 function toCookie(cookie: Network.Cookie): Cookie {
   return {
     name: cookie.name,
-    value: cookie.value.type === 'string' ? cookie.value.value : Buffer.from(cookie.value.value, 'base64').toString(),
+    value: bytesText(cookie.value),
     domain: cookie.domain,
     path: cookie.path,
     ...(cookie.expiry === undefined ? {} : { expires: cookie.expiry }),
