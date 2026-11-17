@@ -7,12 +7,8 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LocatorExpression } from '@e2e-dev/core/engine';
+import { attribute, withinFrames } from '../helpers/frames.ts';
 import { byRole, startWebSession, type WebSession } from '../helpers/web-session.ts';
-
-/** Escapes HTML for a double-quoted attribute value, so a document can carry a nested `srcdoc`. */
-function attribute(html: string): string {
-  return html.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-}
 
 const TURN = 'transform: translate(60px, 40px) scale(1.2) rotate3d(1, 1, 1, 25deg)';
 const FRAME_STYLE = `border: 4px solid black; padding: 3px; margin: 20px; width: 260px; height: 200px; ${TURN}`;
@@ -20,7 +16,7 @@ const TARGET = `<style>body { margin: 0 } button { margin: 30px 0 0 40px; width:
 
 /** The target button, by its name. */
 function button(name: string, frames: readonly string[]): LocatorExpression {
-  return frames.reduceRight<LocatorExpression>((inner, selector) => ({ kind: 'frame', selector, source: inner }), byRole('button', name));
+  return withinFrames(frames, byRole('button', name));
 }
 
 describe('taps in turned frames', () => {

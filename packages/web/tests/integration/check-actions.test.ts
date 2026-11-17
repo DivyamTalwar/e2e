@@ -7,6 +7,7 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { attribute } from '../helpers/frames.ts';
 import { bySelector, startWebSession, type WebSession } from '../helpers/web-session.ts';
 import type { LocatorAction, LocatorExpression, NodeRef, SemanticNode } from '@e2e-dev/core/engine';
 
@@ -71,8 +72,8 @@ function isChecked(selector: string): Promise<boolean> {
 /** The attribute `name` of the first element `selector` matches. */
 function attributeOf(selector: string, name: string): Promise<string | null> {
   return session.browser.evaluate(
-    ({ target, attribute }: { target: string; attribute: string }) => document.querySelector(target)!.getAttribute(attribute),
-    { target: selector, attribute: name },
+    ({ target, named }: { target: string; named: string }) => document.querySelector(target)!.getAttribute(named),
+    { target: selector, named: name },
   );
 }
 
@@ -388,7 +389,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
   });
 
   it('checks an Element Plus radio-button inside a frame', async () => {
-    await session.setContent(`<p>Outer</p><iframe srcdoc="${ELEMENT_PLUS_PAGE.replaceAll('"', '&quot;')}"></iframe>`);
+    await session.setContent(`<p>Outer</p><iframe srcdoc="${attribute(ELEMENT_PLUS_PAGE)}"></iframe>`);
     await session.waitForFrames();
     expect(await perform(await targetOf(kind, { kind: 'frame', selector: 'iframe', source: bySelector('#install') }), { kind: 'check' })).toBeUndefined();
     expect(await session.browser.evaluate(() => document.querySelector('iframe')!.contentDocument!.querySelector<HTMLInputElement>('#install')!.checked)).toBe(true);

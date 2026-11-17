@@ -10,6 +10,7 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineSnapshot } from '@e2e-dev/core/engine';
 import { aroundCapture, heldByCapture } from '../helpers/capture-hooks.ts';
+import { attribute } from '../helpers/frames.ts';
 import { gate } from '../helpers/gate.ts';
 import { decodePng } from '../helpers/png.ts';
 import { startWebSession, type WebSession } from '../helpers/web-session.ts';
@@ -49,7 +50,7 @@ const PLACES: readonly (readonly [string, string])[] = [
   [
     'a frame',
     `<!doctype html><style>body { margin: 0; }</style>
-      <iframe style="display:block;border:0;width:320px;height:200px" srcdoc="${STAGE.replaceAll('"', '&quot;')}"></iframe>
+      <iframe style="display:block;border:0;width:320px;height:200px" srcdoc="${attribute(STAGE)}"></iframe>
       <script>window.stage = () => document.querySelector('iframe').contentDocument;</script>`,
   ],
 ];

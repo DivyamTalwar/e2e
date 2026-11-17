@@ -11,21 +11,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LocatorExpression, SemanticNode } from '@e2e-dev/core/engine';
 import { BidiConnection } from '../../src/driver/connection.ts';
 import { readerCall } from '../../src/in-page/readers.ts';
+import { attribute, withinFrames } from '../helpers/frames.ts';
 import { gate } from '../helpers/gate.ts';
 import { byRole, startWebSession, type WebSession } from '../helpers/web-session.ts';
-
-/** Escapes HTML for a double-quoted attribute value, so a document can carry a nested `srcdoc`. */
-function attribute(html: string): string {
-  return html.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-}
-
-/** Wraps `source` in `frame` scopes, outermost first, as a `browser.frameLocator` chain does. */
-function withinFrames(selectors: readonly string[], source: LocatorExpression): LocatorExpression {
-  return selectors.reduceRight<LocatorExpression>(
-    (inner, selector) => ({ kind: 'frame', selector, source: inner }),
-    source,
-  );
-}
 
 const TWIN_FRAME = '<iframe class="twin" title="twin" srcdoc="<p>twin</p>"></iframe>';
 const DEEP_DOCUMENT = '<button>Deep button</button>';
