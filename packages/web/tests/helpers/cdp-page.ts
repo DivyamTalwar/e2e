@@ -11,9 +11,9 @@ import type { OpenTab } from './cdp-tabs.ts';
 const ANSWER_TIMEOUT_MS = 15_000;
 
 /**
- * Evaluates `expression` in the document `tab` shows and resolves with its
- * JSON value, a promise's once it settles. Rejects with what the expression
- * threw.
+ * Evaluates `expression` in the document `tab` shows, as its user acting on
+ * the page (so it may open a tab), and resolves with its JSON value, a
+ * promise's once it settles. Rejects with what the expression threw.
  */
 export async function evaluateInTab<T>(endpoint: string, tab: Pick<OpenTab, 'id'>, expression: string): Promise<T> {
   const socket = new WebSocket(`ws://${new URL(endpoint).host}/devtools/page/${tab.id}`);
@@ -24,7 +24,7 @@ export async function evaluateInTab<T>(endpoint: string, tab: Pick<OpenTab, 'id'
         clearTimeout(timer);
         work();
       };
-      socket.addEventListener('open', () => socket.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true } })));
+      socket.addEventListener('open', () => socket.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true, userGesture: true } })));
       socket.addEventListener('error', () => settle(() => reject(new Error(`no DevTools session opened on tab ${tab.id}`))));
       socket.addEventListener('close', () => settle(() => reject(new Error(`the DevTools session on tab ${tab.id} closed before it answered ${expression}`))));
       socket.addEventListener('message', (event) => {

@@ -919,6 +919,8 @@ describe('BidiSession tabs', () => {
   it('shows the tab an attached browser had open again after a restart, and closes only the ones opened since', async () => {
     const open = ['theirs', 'background'];
     const fake = adoptable(new FakeBidi(), 'theirs', 'background', 'mine')
+      .on('script.getRealms', (params) => ({ result: { realms: [{ type: 'window', realm: `realm of ${String(params['context'])}`, origin: 'http://app.test', context: params['context'] }] } }))
+      .on('script.callFunction', (params) => ({ result: { type: 'success', realm: 'r', result: { type: 'boolean', value: (params['target'] as { realm?: string }).realm === 'realm of theirs' } } }))
       .on('network.addDataCollector', { result: { collector: 'c' } })
       .on('browsingContext.getTree', () => ({ result: { contexts: open.map((context) => ({ context, userContext: 'default' })) } }))
       .on('browsingContext.create', () => {

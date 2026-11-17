@@ -132,27 +132,38 @@ export async function childDocuments(connection: BidiConnection, context: string
 }
 
 /**
- * Whether the document `context` shows has a script context of its own, the
- * default realm of its window. Chromium gives a frame's first, empty
- * document none until a script reaches into it or the frame's first
- * navigation commits, and every document after it one before its content.
- * Without one, nothing was written into the document, and a call into it
- * would wait for the document the frame loads next.
+ * The script context of the document `context` shows: the default realm of
+ * its window, by its id; undefined when the document has none of its own.
+ * Chromium gives a frame's first, empty document none until a script reaches
+ * into it or the frame's first navigation commits, and every document after
+ * it one before its content. Without one, nothing was written into the
+ * document, and a call into it would wait for the document the frame loads
+ * next.
  */
-async function hasScriptContext(connection: BidiConnection, context: string): Promise<boolean> {
+async function scriptContext(connection: BidiConnection, context: string): Promise<string | undefined> {
   const { realms } = await connection.send('script.getRealms', { context, type: 'window' });
-  return realms.some((realm) => realm.type === 'window' && realm.sandbox === undefined);
+  return realms.find((realm) => realm.type === 'window' && realm.sandbox === undefined)?.realm;
+}
+
+/** Whether the document `context` shows has a script context of its own (`scriptContext`). */
+async function hasScriptContext(connection: BidiConnection, context: string): Promise<boolean> {
+  return (await scriptContext(connection, context)) !== undefined;
 }
 
 /**
- * Those of `contexts` whose document a call can be made into
- * (`hasScriptContext`), in their order. A context that went away since it
- * was listed (a frame the page removed, a tab that closed) has no document
- * to call into, so it is left out like one with no script context.
+ * The script context (`scriptContext`) of the document each of `contexts`
+ * shows, in their order; undefined for a document that has none. A context
+ * that went away since it was listed (a frame the page removed, a tab that
+ * closed) has no document, so it has none either.
  */
+export async function documentRealms(connection: BidiConnection, contexts: readonly string[]): Promise<(string | undefined)[]> {
+  return Promise.all(contexts.map((each) => unlessStale(scriptContext(connection, each), undefined)));
+}
+
+/** Those of `contexts` whose document a call can be made into: the ones with a script context (`documentRealms`), in their order. */
 export async function scriptedContexts(connection: BidiConnection, contexts: readonly string[]): Promise<string[]> {
-  const scripted = await Promise.all(contexts.map((each) => unlessStale(hasScriptContext(connection, each), false)));
-  return contexts.filter((_each, index) => scripted[index]);
+  const realms = await documentRealms(connection, contexts);
+  return contexts.filter((_each, index) => realms[index] !== undefined);
 }
 
 /** The iframe that holds each child context the surface entered, by child context. */
