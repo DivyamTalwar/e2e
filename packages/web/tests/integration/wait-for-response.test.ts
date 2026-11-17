@@ -176,6 +176,14 @@ describe('browser.waitForResponse bodies', () => {
     await expect(response.text()).resolves.toBe('{"ok":true}');
   });
 
+  it('resolves on the redirect a route fulfilled a request with, on Chromium', async () => {
+    await browser.route('**/api/moved', (route) => route.fulfill({ status: 302, headers: { location: '/api/full' } }));
+    // Firefox sends no response event for a redirect a route fulfilled, only the events of the hop it led to.
+    if (onFirefox) return expect(observe('/api/moved', { timeout: 500 })).rejects.toMatchObject({ code: 'ACTION_FAILED', message: expect.stringContaining('operation timed out in browser.waitForResponse') });
+    const response = await observe('/api/moved');
+    expect(response.status).toBe(302);
+  });
+
   it('keeps the status of a redirect and rejects reading its body', async () => {
     const response = await observe('/api/redirect');
     expect(response.status).toBe(302);
