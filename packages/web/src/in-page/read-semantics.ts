@@ -1,15 +1,19 @@
 /**
- * The in-page semantic reader. The driver serializes it with `toString()` and
+ * The in-page semantic reader: what of the document shows, how each node is
+ * projected, and the walk. The driver serializes it with `toString()` and
  * runs it inside the page (`readers.ts` builds the readers a document keeps
  * from its source), so it must stay one self-contained function: no imports
  * beyond types, no module-scope references, every constant inside the body.
- * That is why it has a file of its own, and why what it builds on, the name
- * computation (`accessible-name.ts`) and the DOM helpers (`dom.ts`), reaches
- * it as an argument.
+ * That is why it has a file of its own, and why what it builds on reaches it
+ * as an argument: the role computation (`roles.ts`), the name computation
+ * (`accessible-name.ts`), the modal dialog on top (`modal-dialogs.ts`), and
+ * the DOM helpers (`dom.ts`).
  */
 
 import type { createAccessibleNames } from './accessible-name.ts';
 import type { Dom } from './dom.ts';
+import type { createModalScope } from './modal-dialogs.ts';
+import type { createRoles } from './roles.ts';
 import type { RawNodeData, RawObservation, RawObservedFrame, RawObservedNode, TreeLimits } from './read-node.ts';
 
 /**
@@ -25,7 +29,9 @@ import type { RawNodeData, RawObservation, RawObservedFrame, RawObservedNode, Tr
  */
 export const createSemanticReader = (
   options: { testIdAttribute: string; secureFieldSelector: string },
+  roles: typeof createRoles,
   accessibleNames: typeof createAccessibleNames,
+  modalScopeOf: ReturnType<typeof createModalScope>,
   dom: Dom,
 ) => {
   const SKIP_TAGS = [
@@ -52,14 +58,6 @@ export const createSemanticReader = (
     'next-route-announcer',
   ];
   const OPAQUE_TAGS = ['svg', 'math', 'canvas', 'video', 'audio'];
-  /**
-   * Tags a `contenteditable` never makes an editing host. A drawn or embedded
-   * surface and a void element hold no DOM text to edit; a native control (a
-   * link, a button, a form field) has a role and a value of its own, so a fill
-   * reaches it as what it is. Chromium reports `isContentEditable` on all of
-   * them regardless.
-   */
-  const NON_HOST_TAGS = [...OPAQUE_TAGS, 'iframe', 'img', 'hr', 'br', 'wbr', 'area', 'a', 'button', 'input', 'textarea', 'select'];
   /** Options listed under one select; a country picker's tail is not worth the tokens. */
   const MAX_SELECT_OPTIONS = 60;
 
@@ -79,269 +77,7 @@ export const createSemanticReader = (
     };
   };
 
-  /** Concrete WAI-ARIA roles, excluding abstract roles that cannot label an element. */
-  const ARIA_ROLES = [
-    'alert', 'alertdialog', 'application', 'article', 'banner', 'blockquote', 'button', 'caption',
-    'cell', 'checkbox', 'code', 'columnheader', 'combobox', 'complementary', 'contentinfo', 'definition',
-    'deletion', 'dialog', 'directory', 'document', 'emphasis', 'feed', 'figure', 'form',
-    'generic', 'grid', 'gridcell', 'group', 'heading', 'img', 'insertion', 'link',
-    'list', 'listbox', 'listitem', 'log', 'main', 'mark', 'marquee', 'math',
-    'meter', 'menu', 'menubar', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'navigation', 'none',
-    'note', 'option', 'paragraph', 'presentation', 'progressbar', 'radio', 'radiogroup', 'region',
-    'row', 'rowgroup', 'rowheader', 'scrollbar', 'search', 'searchbox', 'separator', 'slider',
-    'spinbutton', 'status', 'strong', 'subscript', 'superscript', 'switch', 'tab', 'table',
-    'tablist', 'tabpanel', 'term', 'textbox', 'time', 'timer', 'toolbar', 'tooltip',
-    'tree', 'treegrid', 'treeitem',
-  ];
-  /** ARIA uses the first recognized token, then native semantics if none is recognized. */
-  const explicitRole = memoized((el: Element): string | null =>
-    (el.getAttribute('role') ?? '').split(/[ \t\n\f\r]+/).find((role) => ARIA_ROLES.indexOf(role) !== -1) ?? null);
-
-  /**
-   * True when an element carries a name of its own (HTML-AAM: `aria-label`,
-   * `aria-labelledby`, or `title`). A `<form>` or `<section>` is a landmark
-   * only when named; unnamed, it is a plain container.
-   */
-  const hasOwnName = (el: Element): boolean =>
-    ['aria-label', 'aria-labelledby', 'title'].some((attribute) => (el.getAttribute(attribute) ?? '').trim() !== '');
-
-  const SECTIONING_SCOPE = [
-    'article', 'aside', 'main', 'nav', 'section',
-    ...['article', 'complementary', 'main', 'navigation', 'region'].map((role) => `[role~="${role}"]`),
-  ].join(', ');
-
-  /**
-   * True when a `<header>` or `<footer>` is the page's, not an article's or a
-   * section's: only then is it the `banner` or `contentinfo` landmark.
-   * HTML-AAM scopes it to sectioning content and to the ARIA roles that stand
-   * for it, so a `<div role="article">` scopes it like an `<article>`.
-   */
-  const isPageLevel = (el: Element): boolean => {
-    for (let candidate: Element | null = el; candidate !== null;) {
-      if (candidate.closest(SECTIONING_SCOPE) !== null) return false;
-      const root = candidate.getRootNode();
-      candidate = root instanceof ShadowRoot ? root.host : null;
-    }
-    return true;
-  };
-
-  /**
-   * The root of a contenteditable region: editable itself, under a parent that
-   * is not. A rich-text editor (ProseMirror, TipTap, Lexical, Slate) renders
-   * its document as such a host with block children; the host is the control
-   * a person types into and the blocks are its content, so only the host is a
-   * textbox, whatever its tag: an `<article contenteditable>` is the editor,
-   * not an article. A canvas made editable to collect keystrokes is a drawn
-   * field the keyboard reaches, not a textbox; see `NON_HOST_TAGS`.
-   */
-  const isEditingHost = (el: Element): boolean =>
-    el instanceof HTMLElement &&
-    el.isContentEditable &&
-    NON_HOST_TAGS.indexOf(el.tagName.toLowerCase()) === -1 &&
-    !(el.parentElement instanceof HTMLElement && el.parentElement.isContentEditable);
-
-  const NAME_PROHIBITED_ROLES = [
-    'caption', 'code', 'deletion', 'emphasis', 'generic', 'insertion', 'paragraph', 'presentation', 'strong',
-    'subscript', 'superscript',
-  ];
-  /** Global ARIA attributes, each with the roles it does not count on, as Playwright lists them. */
-  const GLOBAL_ARIA_ATTRIBUTES: ReadonlyArray<readonly [string, readonly string[]]> = [
-    ['aria-atomic', []],
-    ['aria-busy', []],
-    ['aria-controls', []],
-    ['aria-current', []],
-    ['aria-describedby', []],
-    ['aria-details', []],
-    ['aria-dropeffect', []],
-    ['aria-flowto', []],
-    ['aria-grabbed', []],
-    ['aria-hidden', []],
-    ['aria-keyshortcuts', []],
-    ['aria-label', NAME_PROHIBITED_ROLES],
-    ['aria-labelledby', NAME_PROHIBITED_ROLES],
-    ['aria-live', []],
-    ['aria-owns', []],
-    ['aria-relevant', []],
-    ['aria-roledescription', ['generic']],
-  ];
-
-  /** Playwright's implicit role for the tags whose role some global ARIA attributes do not count on. */
-  const NAME_PROHIBITED_TAG_ROLES: Readonly<Record<string, string>> = {
-    caption: 'caption', code: 'code', del: 'deletion', em: 'emphasis', ins: 'insertion', p: 'paragraph',
-    strong: 'strong', sub: 'subscript', sup: 'superscript',
-  };
-
-  /** True when the element carries a global ARIA attribute that counts on `role`. */
-  const hasGlobalAriaAttribute = (el: Element, role: string | null): boolean =>
-    GLOBAL_ARIA_ATTRIBUTES.some(([name, prohibited]) =>
-      (role === null || prohibited.indexOf(role) === -1) && el.hasAttribute(name));
-
-  /** True when `tabindex` parses as a number, as Playwright reads it. */
-  const hasTabIndex = (el: Element): boolean => !Number.isNaN(Number(String(el.getAttribute('tabindex'))));
-
-  /** Whether a person can focus the element, as Playwright decides presentational-role conflicts. */
-  const isFocusable = (el: Element): boolean => {
-    const tag = el.tagName.toLowerCase();
-    if (['button', 'input', 'select', 'textarea', 'option', 'optgroup'].indexOf(tag) !== -1 && el.matches(':disabled')) {
-      return false;
-    }
-    if (hasTabIndex(el) || ['button', 'details', 'select', 'textarea'].indexOf(tag) !== -1) return true;
-    if (tag === 'a' || tag === 'area') return el.hasAttribute('href');
-    return tag === 'input' && !(el as HTMLInputElement).hidden;
-  };
-
-  /**
-   * WAI-ARIA presentational-role conflict resolution: `presentation` or
-   * `none` is ignored on a focusable element or one with a global ARIA
-   * attribute, and the tag's role stands.
-   */
-  const hasPresentationConflict = (el: Element): boolean =>
-    isFocusable(el) || hasGlobalAriaAttribute(el, NAME_PROHIBITED_TAG_ROLES[el.tagName.toLowerCase()] ?? null);
-
-  const implicitRole = memoized((el: Element): string | null => {
-    const explicit = explicitRole(el);
-    if (explicit !== null && !((explicit === 'presentation' || explicit === 'none') && hasPresentationConflict(el))) {
-      // The vocabulary spells ARIA's `img` as `image`.
-      return explicit === 'img' ? 'image' : explicit;
-    }
-    // Ahead of the tag: an editor's host is the control, whatever landmark or
-    // structure its tag would otherwise be.
-    if (isEditingHost(el)) return 'textbox';
-    const tag = el.tagName.toLowerCase();
-    const type = (el.getAttribute('type') ?? '').toLowerCase();
-    switch (tag) {
-      case 'a':
-        return el.hasAttribute('href') ? 'link' : null;
-      case 'button':
-        return 'button';
-      // HTML-AAM: a select that shows several rows is a listbox; only a
-      // one-row drop-down is a combobox.
-      case 'select':
-        return el.hasAttribute('multiple') || (el as HTMLSelectElement).size > 1 ? 'listbox' : 'combobox';
-      case 'textarea':
-        return 'textbox';
-      case 'img':
-        return el.getAttribute('alt') === '' && !el.getAttribute('title') && !hasGlobalAriaAttribute(el, null) && !hasTabIndex(el)
-          ? 'presentation'
-          : 'image';
-      // An inline icon is a picture whether or not anything names it, as
-      // Playwright reads it; Chrome ignores an unnamed one.
-      case 'svg':
-        return 'image';
-      case 'nav':
-        return 'navigation';
-      case 'main':
-        return 'main';
-      case 'aside':
-        return 'complementary';
-      case 'header':
-        return isPageLevel(el) ? 'banner' : null;
-      case 'footer':
-        return isPageLevel(el) ? 'contentinfo' : null;
-      case 'section':
-        return hasOwnName(el) ? 'region' : null;
-      case 'form':
-        return hasOwnName(el) ? 'form' : null;
-      case 'article':
-        return 'article';
-      case 'figure':
-        return 'figure';
-      case 'hr':
-        return 'separator';
-      case 'progress':
-        return 'progressbar';
-      case 'meter':
-        return 'meter';
-      // HTML-AAM: `<menu>` is a list; only `role="menu"` is a menu.
-      case 'menu':
-        return 'list';
-      case 'fieldset':
-      case 'details':
-      case 'optgroup':
-      case 'address':
-        return 'group';
-      case 'option':
-        return 'option';
-      case 'h1':
-      case 'h2':
-      case 'h3':
-      case 'h4':
-      case 'h5':
-      case 'h6':
-        return 'heading';
-      case 'li':
-        return 'listitem';
-      case 'ul':
-      case 'ol':
-        return 'list';
-      case 'table':
-        return 'table';
-      // Rows and cells carry the structure a table's controls belong to: a
-      // "Delete" button means one thing per row, and only the row says which.
-      case 'thead':
-      case 'tbody':
-      case 'tfoot':
-        return 'rowgroup';
-      case 'tr':
-        return 'row';
-      // A grid's cells are the interactive kind, as Playwright reads them.
-      case 'td': {
-        const table = el.closest('table');
-        const tableRole = table === null ? null : explicitRole(table);
-        return tableRole === 'grid' || tableRole === 'treegrid' ? 'gridcell' : 'cell';
-      }
-      case 'th': {
-        const scope = (el.getAttribute('scope') ?? '').toLowerCase();
-        if (scope === 'row' || scope === 'rowgroup') return 'rowheader';
-        if (scope === 'col' || scope === 'colgroup') return 'columnheader';
-        const previous = el.previousElementSibling;
-        const next = el.nextElementSibling;
-        if (previous === null && next === null) {
-          const row = el.parentElement;
-          const table = row?.tagName.toLowerCase() === 'tr' ? row.closest('table') : null;
-          return table !== null && (table as HTMLTableElement).rows.length <= 1 ? null : 'columnheader';
-        }
-        if (previous?.tagName.toLowerCase() === 'th' && next?.tagName.toLowerCase() === 'th') return 'columnheader';
-        const hasDataNeighbor = [previous, next].some((cell) =>
-          cell?.tagName.toLowerCase() === 'td' && ((cell.textContent ?? '').trim() !== '' || cell.children.length > 0));
-        return hasDataNeighbor ? 'rowheader' : 'columnheader';
-      }
-      case 'dialog':
-        return 'dialog';
-      case 'output':
-        return 'status';
-      case 'input':
-        // HTML-AAM: a text field with suggestions from a datalist is a combobox.
-        // `list` resolves the attribute to a datalist element, null for anything else.
-        // The `type` property, not the attribute: a type the browser does not know is `text`.
-        if ((el as HTMLInputElement).list !== null && ['text', 'search', 'tel', 'url', 'email'].indexOf((el as HTMLInputElement).type) !== -1) return 'combobox';
-        switch (type) {
-          case 'button':
-          case 'submit':
-          case 'reset':
-          case 'image':
-          // A file input is its picker button, as Chrome and Playwright read it.
-          case 'file':
-            return 'button';
-          case 'checkbox':
-            return 'checkbox';
-          case 'radio':
-            return 'radio';
-          case 'range':
-            return 'slider';
-          case 'number':
-            return 'spinbutton';
-          case 'search':
-            return 'searchbox';
-          case 'hidden':
-            return null;
-          default:
-            return 'textbox';
-        }
-      default:
-        return null;
-    }
-  });
+  const { explicitRole, implicitRole, isEditingHost } = roles(memoized, OPAQUE_TAGS);
 
   /** Rendered text as a person sees it: innerText, aria-hidden glyphs included. */
   const textOf = (el: Element): string => {
@@ -589,7 +325,7 @@ export const createSemanticReader = (
    * Chromium computes it as the inherited `interactivity: inert`, and a
    * browser without that property (Firefox) has it read from the `inert`
    * attributes up the flat tree. A modal dialog's inertness of the rest of the
-   * page is in neither; the walk reads it from the dialog (`modalScopeOf`).
+   * page is in neither; the walk reads it from the dialog (`createModalScope`).
    */
   const isInert = memoized((el: Element): boolean => {
     if (el.hasAttribute('inert') || styleOf(el)?.getPropertyValue('interactivity') === 'inert') return true;
@@ -597,113 +333,8 @@ export const createSemanticReader = (
     return parent !== null && isInert(parent);
   });
 
-  /**
-   * The order the context's init script saw each modal dialog shown in, when
-   * it ran in this document. Same literal as `MODAL_ORDER_KEY`; the reader
-   * cannot import it.
-   */
-  const modalOrder = (globalThis as Record<symbol, WeakMap<Element, number> | undefined>)[
-    Symbol.for('e2e.modalDialogOrder')
-  ];
-
-  /**
-   * Whether `el` is an open modal `<dialog>`. `dialog:modal`, not `:modal`,
-   * which a fullscreen element matches too; a browser that cannot parse the
-   * selector has no modal to read, rather than a reader that throws.
-   */
-  const isOpenModalDialog = (el: Element): boolean => {
-    if (el.localName !== 'dialog') return false;
-    try {
-      return el.matches('dialog:modal');
-    } catch {
-      return false;
-    }
-  };
-
-  /**
-   * Every open modal dialog under `root`, in tree order, through open and
-   * closed shadow roots alike: `querySelectorAll` stops at a shadow boundary,
-   * so each host's root is searched on its own.
-   */
-  const openModalDialogsIn = (root: Document | ShadowRoot, found: Element[] = []): Element[] => {
-    for (const el of Array.from(root.querySelectorAll('*'))) {
-      if (isOpenModalDialog(el)) found.push(el);
-      const shadow = dom.shadowOf(el);
-      if (shadow !== null) openModalDialogsIn(shadow, found);
-    }
-    return found;
-  };
-
   /** An element's parent in the flat tree (`dom.parentOf`), kept for the read: a closed root's slots are searched once per element. */
   const flatParentOf = memoized(dom.parentOf);
-
-  /** Whether `el` is `container` or under it in the flat tree. */
-  const isInFlatTree = (el: Element, container: Element): boolean => {
-    for (let current: Element | null = el; current !== null; current = flatParentOf(current)) {
-      if (current === container) return true;
-    }
-    return false;
-  };
-
-  /**
-   * The modal dialog on top of several open ones, the only one left live: the
-   * innermost one holding focus, since `showModal()` moves focus into the
-   * dialog it shows and inert content cannot take focus back, and a modal
-   * nested in another leaves the outer one's own controls inert; else the
-   * one the init script saw shown last (`modalOrder`), for a page that
-   * blurred. Tree order alone is wrong: `showModal()` on a later dialog, then
-   * an earlier one, leaves the earlier one on top. When the record never saw
-   * one of them (opened by a `show-modal` command, or before the script ran),
-   * nothing tells which is on top, and none is picked: a guess can drop the
-   * one dialog that takes input, which is worse than listing the page.
-   */
-  const topModalOf = (dialogs: readonly Element[]): Element | undefined => {
-    if (dialogs.length <= 1) return dialogs[0];
-    const open = new Set(dialogs);
-    for (let current = focusedElement; current !== null; current = flatParentOf(current)) {
-      if (open.has(current)) return current;
-    }
-    let top: Element | undefined;
-    let topOrder = 0;
-    for (const dialog of dialogs) {
-      const order = modalOrder?.get(dialog);
-      if (order === undefined) return undefined;
-      if (order > topOrder) {
-        top = dialog;
-        topOrder = order;
-      }
-    }
-    return top;
-  };
-
-  /** What an open modal dialog leaves of the page for the walk (`modalScopeOf`). */
-  interface ModalScope {
-    /**
-     * Where an element sits: `inside` the dialog's flat tree, which stays
-     * live; an `ancestor` the dialog sits under, through shadow hosts, walked
-     * to reach it and never listed; or `outside`, which is inert.
-     */
-    readonly placeOf: (el: Element) => 'inside' | 'ancestor' | 'outside';
-  }
-
-  /**
-   * Everything outside the modal dialog on top is inert (HTML's "blocked by a
-   * modal dialog"), as Chrome's tree drops it, though it still paints: the
-   * page behind, a lower modal dialog, a popover opened outside the dialog,
-   * and a frame's whole document, which the engine then never enters. What
-   * stays is the dialog and its flat-tree descendants, light children slotted
-   * into it from outside its shadow root included. Its ancestors drop out of
-   * the tree too, but are walked, since the dialog and those slotted children
-   * are reached through them. Undefined when no modal dialog is open, or when
-   * none can be told to be on top (`topModalOf`).
-   */
-  const modalScopeOf = (doc: Document): ModalScope | undefined => {
-    const dialog = topModalOf(openModalDialogsIn(doc));
-    if (dialog === undefined) return undefined;
-    const ancestors = new Set<Element>();
-    for (let up = dom.parentOrHostOf(dialog); up !== null; up = dom.parentOrHostOf(up)) ancestors.add(up);
-    return { placeOf: (el) => (ancestors.has(el) ? 'ancestor' : isInFlatTree(el, dialog) ? 'inside' : 'outside') };
-  };
 
   /** A closed select has no option boxes; explicit exclusions still remove choices it does not offer. */
   const isOfferedOption = (option: HTMLOptionElement): boolean => {
@@ -904,8 +535,9 @@ export const createSemanticReader = (
   const names = accessibleNames({ implicitRole, explicitRole, isHidden, isEditingHost, shadowRootOf: dom.shadowOf, styleOf, memoized }, options.secureFieldSelector);
 
   /**
-   * How a read projects one node, expressed as data so `describe` stays
-   * branch-free. The tree's is the model-bound projection: bounded line
+   * How a read projects one node, expressed as data: `describe` reads every
+   * difference between the two reads off these fields and never asks which
+   * read it serves. The tree's is the model-bound projection: bounded line
    * text (`lineTextOf`), a bounded attribute projection, hrefs reduced to
    * origin+path, the root document named by its title, a list row, a
    * status, or an alert named from its content, and no value on a checkbox
@@ -914,9 +546,12 @@ export const createSemanticReader = (
    * (`LOCATOR`).
    */
   interface Projection {
+    /** The attributes kept beside the `aria-` ones; null keeps all. */
     readonly attributes: readonly string[] | null;
-    readonly textLimit: number | null;
-    readonly nameLimit: number | null;
+    /** Where text, an editor's value, and a selection are cut; `Infinity` cuts nothing. */
+    readonly textLimit: number;
+    /** Where a name is cut; `Infinity` cuts nothing. */
+    readonly nameLimit: number;
     readonly redactHref: boolean;
     readonly documentRoot: boolean;
     readonly checkableValue: boolean;
@@ -956,8 +591,7 @@ export const createSemanticReader = (
       // model-bound projection.
       const rendered = textOf(el).replace(/﻿/g, '');
       const text = (el.textContent ?? '').replace(/﻿/g, '');
-      value = text === '' || (text.trim() === '' && rendered === '\n') ? '' : rendered;
-      if (projection.textLimit !== null) value = value.slice(0, projection.textLimit);
+      value = (text === '' || (text.trim() === '' && rendered === '\n') ? '' : rendered).slice(0, projection.textLimit);
     }
     // A native control's state is the control's, as Playwright reads it: a
     // stale aria-checked on a checkbox or aria-selected on an option says
@@ -980,11 +614,7 @@ export const createSemanticReader = (
     // type, so this node's `secure` flag and the screenshot mask agree by
     // construction.
     const secure = el.matches(options.secureFieldSelector);
-    let selection: string | null = null;
-    if (focusedElement === el && !secure) {
-      selection = selectedTextOf(el);
-      if (selection !== null && projection.textLimit !== null) selection = selection.slice(0, projection.textLimit);
-    }
+    const selection = focusedElement === el && !secure ? (selectedTextOf(el)?.slice(0, projection.textLimit) ?? null) : null;
 
     let inputPurpose: RawNodeData['inputPurpose'] = 'none';
     if (secure) inputPurpose = 'password';
@@ -1011,11 +641,9 @@ export const createSemanticReader = (
       }
     }
 
-    let text = secure ? '' : projection.text(el);
-    if (projection.textLimit !== null) text = text.slice(0, projection.textLimit);
+    const text = (secure ? '' : projection.text(el)).slice(0, projection.textLimit);
 
-    let name = projection.name(el);
-    if (projection.nameLimit !== null && name !== null) name = name.slice(0, projection.nameLimit);
+    let name = projection.name(el)?.slice(0, projection.nameLimit) ?? null;
     const isDocumentRoot = projection.documentRoot && tag === 'html';
     if (isDocumentRoot) name = el.ownerDocument.title;
 
@@ -1072,8 +700,8 @@ export const createSemanticReader = (
   /** A locate's projection: the full locator-read surface, nothing bounded or redacted. */
   const LOCATOR: Projection = {
     attributes: null,
-    textLimit: null,
-    nameLimit: null,
+    textLimit: Infinity,
+    nameLimit: Infinity,
     redactHref: false,
     documentRoot: false,
     checkableValue: true,
@@ -1180,7 +808,7 @@ export const createSemanticReader = (
       // this walk already pays one `getComputedStyle` per node.
       const style = styleOf(el);
       if (hidesSubtree(el, style)) return;
-      // Outside an open modal dialog everything is inert (`modalScopeOf`); the
+      // Outside an open modal dialog everything is inert (`createModalScope`); the
       // dialog's ancestors are walked to reach it and list nothing of their own.
       const place = modal === undefined ? 'inside' : modal.placeOf(el);
       if (place === 'outside') return;
@@ -1262,7 +890,7 @@ export const createSemanticReader = (
 
     // Read before the walk: the page behind a modal dialog comes first in tree
     // order, and would otherwise spend the node budget the dialog needs.
-    const modal = modalScopeOf(root.ownerDocument);
+    const modal = modalScopeOf(flatParentOf);
     // The root is the document the screen shows, listed whatever its own box: a
     // page of fixed controls leaves `<html>` with no height of its own.
     nodes[include(root, -1)]!.states.hidden = false;

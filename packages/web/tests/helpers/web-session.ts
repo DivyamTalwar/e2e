@@ -28,6 +28,8 @@ import { BROWSER_NAMES, isBrowserName, type BrowserName } from '../../src/browse
 import { createAccessibleNames } from '../../src/in-page/accessible-name.ts';
 import { CLOSED_SHADOW_ROOTS_KEY } from '../../src/in-page/closed-shadow.ts';
 import { createDom } from '../../src/in-page/dom.ts';
+import { createModalScope, MODAL_ORDER_KEY } from '../../src/in-page/modal-dialogs.ts';
+import { createRoles } from '../../src/in-page/roles.ts';
 import { createSemanticReader } from '../../src/in-page/read-semantics.ts';
 import { SECURE_FIELD_SELECTOR, type RawNodeData } from '../../src/in-page/read-node.ts';
 
@@ -290,7 +292,12 @@ export async function startWebSession(options: WebSessionOptions = {}): Promise<
 
   /** What the in-page reader's `read` answers for the first element `selector` matches, on a reader built for this one call. */
   const readElement = (read: 'describe' | 'labels', selector: string) => session.browser.evaluate(
-    `({ selector, options }) => (${createSemanticReader.toString()})(options, (${createAccessibleNames.toString()}), (${createDom.toString()})(${JSON.stringify(CLOSED_SHADOW_ROOTS_KEY)})).${read}(document.querySelector(selector))`,
+    `({ selector, options }) => {
+      const dom = (${createDom.toString()})(${JSON.stringify(CLOSED_SHADOW_ROOTS_KEY)});
+      const modalScopeOf = (${createModalScope.toString()})(${JSON.stringify(MODAL_ORDER_KEY)}, dom);
+      const reader = (${createSemanticReader.toString()})(options, (${createRoles.toString()}), (${createAccessibleNames.toString()}), modalScopeOf, dom);
+      return reader.${read}(document.querySelector(selector));
+    }`,
     { selector, options: { testIdAttribute: 'data-testid', secureFieldSelector: SECURE_FIELD_SELECTOR } },
   );
 
