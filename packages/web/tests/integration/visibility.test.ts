@@ -101,6 +101,11 @@ describe('a role query on a display: contents element', () => {
     ['text that lays out a box', '<span id="target" role="button" style="display:contents">Save</span>', 1],
     ['text under a display: none ancestor', '<div style="display:none"><span id="target" role="button" style="display:contents">Save</span></div><p>x</p>', 0],
     ['text in its own visibility: hidden', '<span id="target" role="button" style="display:contents;visibility:hidden">Save</span><p>x</p>', 0],
+    ['text a closed <details> folds away', '<details><summary>More</summary><span id="target" role="button" style="display:contents">Save</span></details>', 0],
+    ['text a closed <details> folds away, under another display: contents element', '<details><summary>More</summary><div style="display:contents"><span id="target" role="button" style="display:contents">Save</span></div></details>', 0],
+    ['text in the body of an open <details>', '<details open><summary>More</summary><span id="target" role="button" style="display:contents">Save</span></details>', 1],
+    ['text in the summary of a closed <details>', '<details><summary>More <span id="target" role="button" style="display:contents">Save</span></summary><p>x</p></details>', 1],
+    ['text a content-visibility: hidden ancestor skips', '<div style="content-visibility:hidden"><span id="target" role="button" style="display:contents">Save</span></div><p>x</p>', 0],
   ])('matches the element only while its hidden state reads false: %s', async (_case, html, count) => {
     await page.setContent(html);
     expect((await page.locate(byRole('button'))).length).toBe(count);

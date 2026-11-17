@@ -213,11 +213,13 @@ export const createSemanticReader = (
 
   /**
    * True for a text node its parent, a `display: contents` element of
-   * `style`, shows: one that lays out to a box a person can see and paints
-   * in the parent's `visibility`, which a range's box does not reflect.
+   * `style`, shows: one that lays out to a box a person can see, where the
+   * browser renders the parent (`isUnrendered`) and in the parent's
+   * `visibility`. A range's box reflects neither: Chromium lays one out for
+   * text in content it skips.
    */
   const showsText = (node: Node, style: CSSStyleDeclaration): boolean => {
-    if (style.visibility !== 'visible') return false;
+    if (style.visibility !== 'visible' || isUnrendered(node.parentElement!)) return false;
     const range = node.ownerDocument!.createRange();
     range.selectNode(node);
     const rect = range.getBoundingClientRect();
@@ -255,22 +257,28 @@ export const createSemanticReader = (
   });
 
   /**
+   * True for content the browser renders none of, whatever its own style:
+   * what a `content-visibility: hidden` ancestor skips (`isSkippedContent`)
+   * and what a closed `<details>` folds away (`isInClosedDetails`).
+   */
+  const isUnrendered = (el: Element): boolean => isSkippedContent(el) || isInClosedDetails(el);
+
+  /**
    * Render visibility, the one Playwright's `toBeVisible` and `toBeHidden`
    * read, so a semantic `hidden` state and the platform's own filter agree:
    * `display: none` or a `visibility` other than `visible` on any element (an
-   * SVG included), content a `content-visibility: hidden` ancestor skips or a
-   * closed `<details>` folds away, and a box with no width or no height.
-   * `aria-hidden` is not in it: it removes a node from the accessibility tree
-   * (`hidesSubtree`, a role query) while the node still paints, as a spinner
-   * marked decorative does. `display: contents` generates no box of its own
-   * while every child still paints (Shopify's one-page checkout form is one),
-   * so such an element is shown when some child element or text is
-   * (`showsText`), and hidden when nothing under it is: text under a hidden
-   * one is hidden, where Playwright calls it visible.
+   * SVG included), content the browser renders none of (`isUnrendered`), and
+   * a box with no width or no height. `aria-hidden` is not in it: it removes
+   * a node from the accessibility tree (`hidesSubtree`, a role query) while
+   * the node still paints, as a spinner marked decorative does. `display:
+   * contents` generates no box of its own while every child still paints
+   * (Shopify's one-page checkout form is one), so such an element is shown
+   * when some child element or text is (`showsText`), and hidden when
+   * nothing under it is: text under a hidden one is hidden, where Playwright
+   * calls it visible.
    */
   const isHidden = (el: Element, style = styleOf(el)): boolean => {
-    if (style === undefined) return true;
-    if (isSkippedContent(el)) return true;
+    if (style === undefined || isUnrendered(el)) return true;
     if (style.display === 'contents') {
       for (let child = el.firstChild; child !== null; child = child.nextSibling) {
         if (child instanceof Element && !isHidden(child)) return false;
@@ -279,7 +287,6 @@ export const createSemanticReader = (
       return true;
     }
     if (style.display === 'none' || style.visibility !== 'visible') return true;
-    if (isInClosedDetails(el)) return true;
     const rect = el.getBoundingClientRect();
     return !(rect.width > 0 && rect.height > 0);
   };
