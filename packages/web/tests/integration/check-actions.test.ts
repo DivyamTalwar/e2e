@@ -7,9 +7,10 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { KINDS, targetOf, type Target } from '../helpers/action-target.ts';
 import { attribute } from '../helpers/frames.ts';
 import { bySelector, startWebSession, type WebSession } from '../helpers/web-session.ts';
-import type { LocatorAction, LocatorExpression, NodeRef, SemanticNode } from '@e2e-dev/core/engine';
+import type { LocatorAction, SemanticNode } from '@e2e-dev/core/engine';
 
 let session: WebSession;
 let origin: string;
@@ -28,21 +29,6 @@ afterAll(async () => {
 beforeEach(async () => {
   await session.startAttempt();
 });
-
-const KINDS = ['test', 'agent'] as const;
-
-/** The caller an action runs for and the node it acts on. */
-interface Target {
-  readonly origin: (typeof KINDS)[number];
-  readonly ref: NodeRef;
-}
-
-/** The one node `selector` (or an expression) locates, acted on for `origin`. */
-async function targetOf(kind: (typeof KINDS)[number], selector: string | LocatorExpression): Promise<Target> {
-  const [node, ...rest] = await session.locate(typeof selector === 'string' ? bySelector(selector) : selector);
-  if (node === undefined || rest.length > 0) throw new Error(`expected one node for ${JSON.stringify(selector)}`);
-  return { origin: kind, ref: node.ref };
-}
 
 /** A refusal waits out the whole deadline, so the cases that expect one take a short one. */
 const REFUSAL_TIMEOUT_MS = 500;
@@ -89,7 +75,7 @@ describe.each(KINDS)('for the %s', (kind) => {
     await session.setContent(`
       <div id="plan"><label><input type="radio" name="plan" id="pro"
         onchange="document.getElementById('plan').innerHTML = '<p>Pro selected</p>'">Pro</label></div>`);
-    expect(await perform(await targetOf(kind, '#pro'), { kind: 'check' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, '#pro'), { kind: 'check' })).toBeUndefined();
     expect(await textOf('#plan')).toBe('Pro selected');
   });
 
@@ -97,19 +83,19 @@ describe.each(KINDS)('for the %s', (kind) => {
     await session.setContent(`
       <div id="terms"><label><input type="checkbox" id="box"
         onchange="document.getElementById('terms').innerHTML = '<label><input type=checkbox id=box>Agree</label>'">Agree</label></div>`);
-    expect(await perform(await targetOf(kind, '#box'), { kind: 'check' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, '#box'), { kind: 'check' })).toBeUndefined();
     expect(await isChecked('#box')).toBe(false);
   });
 
   it('checks a radio that navigates on change', async () => {
     await session.open(`${origin}/`);
-    expect(await perform(await targetOf(kind, '#pro'), { kind: 'check' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, '#pro'), { kind: 'check' })).toBeUndefined();
     await session.browser.waitForURL(`${origin}/next`);
   });
 
   it('checks and unchecks a checkbox, and clicks nothing already in the wanted state', async () => {
     await session.setContent(`${COUNT_CLICKS}<label><input type="checkbox" id="box">Notify</label>`);
-    const target = await targetOf(kind, '#box');
+    const target = await targetOf(session, kind, '#box');
     expect(await perform(target, { kind: 'check' })).toBeUndefined();
     expect(await perform(target, { kind: 'check' })).toBeUndefined();
     expect(await isChecked('#box')).toBe(true);
@@ -122,7 +108,7 @@ describe.each(KINDS)('for the %s', (kind) => {
     await session.setContent(`
       <div role="checkbox" id="box" aria-checked="false" tabindex="0"
         onclick="this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true'))">Notify</div>`);
-    expect(await perform(await targetOf(kind, '#box'), { kind: 'check' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, '#box'), { kind: 'check' })).toBeUndefined();
     expect(await attributeOf('#box', 'aria-checked')).toBe('true');
   });
 
@@ -131,7 +117,7 @@ describe.each(KINDS)('for the %s', (kind) => {
       <label><input type="checkbox" id="box"
         onclick="const box = this; const next = box.checked; event.preventDefault();
           setTimeout(() => { box.checked = next; }, 300)">Notify</label>`);
-    expect(await perform(await targetOf(kind, '#box'), { kind: 'check' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, '#box'), { kind: 'check' })).toBeUndefined();
     expect(await isChecked('#box')).toBe(true);
   });
 
@@ -139,7 +125,7 @@ describe.each(KINDS)('for the %s', (kind) => {
     await session.setContent(`
       <button role="switch" id="toggle" aria-checked="true"
         onclick="setTimeout(() => this.setAttribute('aria-checked', String(this.getAttribute('aria-checked') !== 'true')), 300)">Wi-Fi</button>`);
-    expect(await perform(await targetOf(kind, '#toggle'), { kind: 'uncheck' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, '#toggle'), { kind: 'uncheck' })).toBeUndefined();
     expect(await attributeOf('#toggle', 'aria-checked')).toBe('false');
   });
 
@@ -147,7 +133,7 @@ describe.each(KINDS)('for the %s', (kind) => {
     await session.setContent(`
       <div id="terms"><label><input type="checkbox" id="box" onclick="event.preventDefault();
         setTimeout(() => { document.getElementById('terms').innerHTML = '<label><input type=checkbox id=box>Agree</label>'; }, 300)">Agree</label></div>`);
-    expect(await perform(await targetOf(kind, '#box'), { kind: 'check' })).toMatchObject({
+    expect(await perform(await targetOf(session, kind, '#box'), { kind: 'check' })).toMatchObject({
       code: 'NOT_ACTIONABLE',
       message: 'check clicked the control but its checked state did not change before the control was replaced',
     });
@@ -155,7 +141,7 @@ describe.each(KINDS)('for the %s', (kind) => {
 
   it('fails a click that left the control as it was', async () => {
     await session.setContent('<label><input type="checkbox" id="box" onclick="event.preventDefault()">Locked</label>');
-    expect(await perform(await targetOf(kind, '#box'), { kind: 'check' }, UNCHANGED_TIMEOUT_MS)).toMatchObject({
+    expect(await perform(await targetOf(session, kind, '#box'), { kind: 'check' }, UNCHANGED_TIMEOUT_MS)).toMatchObject({
       code: 'NOT_ACTIONABLE',
       message: 'check clicked the control but its checked state did not change',
     });
@@ -163,7 +149,7 @@ describe.each(KINDS)('for the %s', (kind) => {
 
   it('refuses to uncheck a radio without clicking it', async () => {
     await session.setContent(`${COUNT_CLICKS}<label><input type="radio" name="plan" id="pro" checked>Pro</label>`);
-    expect(await perform(await targetOf(kind, '#pro'), { kind: 'uncheck' })).toMatchObject({ code: 'NOT_ACTIONABLE' });
+    expect(await perform(await targetOf(session, kind, '#pro'), { kind: 'uncheck' })).toMatchObject({ code: 'NOT_ACTIONABLE' });
     expect(await clicks()).toBe(0);
   });
 
@@ -171,13 +157,13 @@ describe.each(KINDS)('for the %s', (kind) => {
     await session.setContent(`
       <div role="radio" id="pro" aria-checked="true" tabindex="0"
         onclick="this.setAttribute('aria-checked', 'false')">Pro</div>`);
-    expect(await perform(await targetOf(kind, '#pro'), { kind: 'uncheck' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, '#pro'), { kind: 'uncheck' })).toBeUndefined();
     expect(await attributeOf('#pro', 'aria-checked')).toBe('false');
   });
 
   it('fails an ARIA radio whose click keeps it checked, naming the radio group', async () => {
     await session.setContent('<div role="radio" id="pro" aria-checked="true" tabindex="0">Pro</div>');
-    expect(await perform(await targetOf(kind, '#pro'), { kind: 'uncheck' }, UNCHANGED_TIMEOUT_MS)).toMatchObject({
+    expect(await perform(await targetOf(session, kind, '#pro'), { kind: 'uncheck' }, UNCHANGED_TIMEOUT_MS)).toMatchObject({
       code: 'NOT_ACTIONABLE',
       message: expect.stringContaining('another radio in its group'),
     });
@@ -185,14 +171,14 @@ describe.each(KINDS)('for the %s', (kind) => {
 
   it('refuses a control that cannot be checked', async () => {
     await session.setContent('<button id="go">Go</button>');
-    expect(await perform(await targetOf(kind, '#go'), { kind: 'check' })).toMatchObject({ code: 'NOT_ACTIONABLE' });
+    expect(await perform(await targetOf(session, kind, '#go'), { kind: 'check' })).toMatchObject({ code: 'NOT_ACTIONABLE' });
   });
 });
 
 describe('a control gone before the click', () => {
   it('stays a retryable stale node: nothing was dispatched', async () => {
     await session.setContent('<label><input type="checkbox" id="box">Notify</label>');
-    const target = await targetOf('agent', '#box');
+    const target = await targetOf(session, 'agent', '#box');
     await session.browser.evaluate(() => { document.getElementById('box')!.remove(); return null; });
     expect(await perform(target, { kind: 'check' })).toMatchObject({ code: 'NODE_STALE', retryable: true });
   });
@@ -236,13 +222,13 @@ function urlOf(): Promise<string> {
 describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
   it.each(ELEMENT_PLUS_CASES)('checks an Element Plus %s', async (_, selector) => {
     await session.setContent(ELEMENT_PLUS_PAGE);
-    expect(await perform(await targetOf(kind, selector), { kind: 'check' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, selector), { kind: 'check' })).toBeUndefined();
     expect(await isChecked(selector)).toBe(true);
   });
 
   it.each(ELEMENT_PLUS_CASES)('taps an Element Plus %s', async (_, selector) => {
     await session.setContent(ELEMENT_PLUS_PAGE);
-    expect(await perform(await targetOf(kind, selector), { kind: 'tap' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, selector), { kind: 'tap' })).toBeUndefined();
     expect(await isChecked(selector)).toBe(true);
   });
 
@@ -252,10 +238,10 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
       for (const id of ['agree', 'large']) (document.getElementById(id) as HTMLInputElement).checked = true;
       return null;
     });
-    expect(await perform(await targetOf(kind, '#agree'), { kind: 'uncheck' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, '#agree'), { kind: 'uncheck' })).toBeUndefined();
     expect(await isChecked('#agree')).toBe(false);
     const before = await clicks();
-    expect(await perform(await targetOf(kind, '#large'), { kind: 'uncheck' })).toMatchObject({ code: 'NOT_ACTIONABLE' });
+    expect(await perform(await targetOf(session, kind, '#large'), { kind: 'uncheck' })).toMatchObject({ code: 'NOT_ACTIONABLE' });
     expect(await isChecked('#large')).toBe(true);
     expect(await clicks()).toBe(before);
   });
@@ -263,7 +249,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
   it.each(ELEMENT_PLUS_CASES)('still refuses an Element Plus %s under a modal', async (_, selector) => {
     await session.setContent(`${ELEMENT_PLUS_PAGE}<div class="modal"></div>`);
     for (const action of [{ kind: 'check' }, { kind: 'tap' }] as const) {
-      expect(await perform(await targetOf(kind, selector), action, REFUSAL_TIMEOUT_MS)).toMatchObject({ code: 'NOT_ACTIONABLE' });
+      expect(await perform(await targetOf(session, kind, selector), action, REFUSAL_TIMEOUT_MS)).toMatchObject({ code: 'NOT_ACTIONABLE' });
       expect(await isChecked(selector)).toBe(false);
     }
   });
@@ -272,7 +258,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
     for (const action of [{ kind: 'check' }, { kind: 'tap' }] as const) {
       await session.setContent(`${ELEMENT_PLUS_PAGE}<div class="modal"></div>
         <script>setTimeout(() => document.querySelector('.modal').remove(), 300)</script>`);
-      expect(await perform(await targetOf(kind, selector), action)).toBeUndefined();
+      expect(await perform(await targetOf(session, kind, selector), action)).toBeUndefined();
       expect(await isChecked(selector)).toBe(true);
     }
   });
@@ -282,7 +268,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
       for (const action of [{ kind: 'check' }, { kind: 'tap' }] as const) {
         await session.setContent(`<style>${ELEMENT_PLUS_CSS}</style><div id="dialog" style="${display}">${ELEMENT_PLUS_CONTROLS}</div>
           <script>setTimeout(() => document.getElementById('dialog').removeAttribute('style'), 300)</script>`);
-        expect(await perform(await targetOf(kind, selector), action)).toBeUndefined();
+        expect(await perform(await targetOf(session, kind, selector), action)).toBeUndefined();
         expect(await isChecked(selector)).toBe(true);
       }
     }
@@ -294,7 +280,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
         style="position:absolute;left:200px;top:100px;opacity:0;z-index:-1"><span
         style="position:absolute;left:190px;top:90px;width:40px;height:40px;background:#fff"></span></label>`);
     for (const action of [{ kind: 'check' }, { kind: 'tap' }] as const) {
-      expect(await perform(await targetOf(kind, '#r'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({
+      expect(await perform(await targetOf(session, kind, '#r'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({
         code: 'NOT_ACTIONABLE',
         message: expect.stringContaining('intercepts pointer events'),
       });
@@ -307,7 +293,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
       <input type="checkbox" id="c" style="display:none">
       <label for="c" style="display:none">A</label>
       <label for="c">B</label>`);
-    expect(await perform(await targetOf(kind, '#c'), { kind: 'check' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, '#c'), { kind: 'check' })).toBeUndefined();
     expect(await isChecked('#c')).toBe(true);
   });
 
@@ -316,7 +302,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
       <input type="checkbox" id="c" style="display:none">
       <label for="c" style="visibility:hidden">A</label>
       <label for="c">B</label>`);
-    expect(await perform(await targetOf(kind, '#c'), { kind: 'check' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, '#c'), { kind: 'check' })).toBeUndefined();
     expect(await isChecked('#c')).toBe(true);
   });
 
@@ -325,7 +311,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
       <label class="el-radio-button"><input class="el-radio-button__original-radio" type="radio" name="mode" id="install">
         <a href="#went" class="el-radio-button__inner">安装</a></label>`);
     for (const action of [{ kind: 'check' }, { kind: 'tap' }] as const) {
-      expect(await perform(await targetOf(kind, '#install'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({
+      expect(await perform(await targetOf(session, kind, '#install'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({
         code: 'NOT_ACTIONABLE',
         message: expect.stringContaining('intercepts pointer events'),
       });
@@ -339,7 +325,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
       <input type="checkbox" id="c" style="display:none">
       <label for="c" style="display:inline-block"><a href="#went">Terms</a></label>`);
     for (const action of [{ kind: 'check' }, { kind: 'tap' }] as const) {
-      expect(await perform(await targetOf(kind, '#c'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({
+      expect(await perform(await targetOf(session, kind, '#c'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({
         code: 'NOT_ACTIONABLE',
         message: expect.stringContaining('not visible'),
       });
@@ -351,7 +337,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
   it('still refuses an Element Plus radio-button a disabled fieldset holds', async () => {
     await session.setContent(`<style>${ELEMENT_PLUS_CSS}</style><fieldset disabled>${ELEMENT_PLUS_CONTROLS}</fieldset>`);
     for (const action of [{ kind: 'check' }, { kind: 'tap' }] as const) {
-      expect(await perform(await targetOf(kind, '#install'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({
+      expect(await perform(await targetOf(session, kind, '#install'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({
         code: 'NOT_ACTIONABLE',
         message: expect.stringContaining('not enabled'),
       });
@@ -364,7 +350,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
       <input type="checkbox" id="c" style="display:none">
       <label for="c" style="display:none">A</label>`);
     for (const action of [{ kind: 'check' }, { kind: 'tap' }] as const) {
-      expect(await perform(await targetOf(kind, '#c'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({
+      expect(await perform(await targetOf(session, kind, '#c'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({
         code: 'NOT_ACTIONABLE',
         message: `${action.kind} did not become actionable in time: the control and its labels are not visible`,
       });
@@ -375,7 +361,7 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
   it('still refuses a disabled Element Plus radio-button', async () => {
     await session.setContent(ELEMENT_PLUS_PAGE.replace('id="install"', 'id="install" disabled'));
     for (const action of [{ kind: 'check' }, { kind: 'tap' }] as const) {
-      expect(await perform(await targetOf(kind, '#install'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({ code: 'NOT_ACTIONABLE' });
+      expect(await perform(await targetOf(session, kind, '#install'), action, REFUSAL_TIMEOUT_MS)).toMatchObject({ code: 'NOT_ACTIONABLE' });
       expect(await isChecked('#install')).toBe(false);
     }
   });
@@ -384,21 +370,21 @@ describe.each(KINDS)('a control its own label covers, for the %s', (kind) => {
     await session.setContent(`<div id="host"></div><script>
       document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = ${JSON.stringify(ELEMENT_PLUS_PAGE)};
     </script>`);
-    expect(await perform(await targetOf(kind, '#install'), { kind: 'check' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, '#install'), { kind: 'check' })).toBeUndefined();
     expect(await session.browser.evaluate(() => document.getElementById('host')!.shadowRoot!.querySelector<HTMLInputElement>('#install')!.checked)).toBe(true);
   });
 
   it('checks an Element Plus radio-button inside a frame', async () => {
     await session.setContent(`<p>Outer</p><iframe srcdoc="${attribute(ELEMENT_PLUS_PAGE)}"></iframe>`);
     await session.waitForFrames();
-    expect(await perform(await targetOf(kind, { kind: 'frame', selector: 'iframe', source: bySelector('#install') }), { kind: 'check' })).toBeUndefined();
+    expect(await perform(await targetOf(session, kind, { kind: 'frame', selector: 'iframe', source: bySelector('#install') }), { kind: 'check' })).toBeUndefined();
     expect(await session.browser.evaluate(() => document.querySelector('iframe')!.contentDocument!.querySelector<HTMLInputElement>('#install')!.checked)).toBe(true);
   });
 
   it('clicks nothing when cancelled while its stand-in read is in flight', async () => {
     for (const [selector, action] of [['#install', { kind: 'tap' }], ['#install', { kind: 'check' }], ['#plain', { kind: 'tap' }]] as const) {
       await session.setContent(`${ELEMENT_PLUS_PAGE}<input type="checkbox" id="plain">`);
-      const target = await targetOf(kind, selector);
+      const target = await targetOf(session, kind, selector);
       // Holds the page's main thread, so the read waits behind it until after the abort.
       await session.browser.evaluate(() => {
         setTimeout(() => {
