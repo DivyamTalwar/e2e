@@ -270,6 +270,24 @@ describe('web({ headers, basicAuth })', () => {
     }
   });
 
+  it.each([
+    ['the response the credentials got, not on its challenge', PROTECTED_CREDENTIAL.password, 200, 'Protected'],
+    ['the 401 when the credentials are refused', 'refused', 401, 'Unauthorized'],
+  ])('resolves a response wait on %s', async (_name, password, status, heading) => {
+    const engine = web({ basicAuth: { username: PROTECTED_CREDENTIAL.username, password } });
+    try {
+      await boot(engine, app, artifactsDir, 'w1');
+      const [response, shown] = await Promise.all([
+        browserOf(engine, app).waitForResponse('**/protected'),
+        headingAt(engine, 'w1', `${app.url}/protected`),
+      ]);
+      expect([shown, response.status]).toEqual([heading, status]);
+      await expect(response.text()).resolves.toContain(`<h1>${heading}</h1>`);
+    } finally {
+      await shutdown(engine);
+    }
+  });
+
   it('answers a challenge on each hop of a redirect through credential origins, once per hop', async () => {
     const gate = await startGate();
     const listed = gate.url.replace('127.0.0.1', 'localhost');

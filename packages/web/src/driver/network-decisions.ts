@@ -95,8 +95,11 @@ export interface DecisionRecord {
   redirect?: RedirectPolicy;
   /** The body a route fulfilled its hop in flight with, which a response wait reads since the browser keeps none. */
   fulfilledBody?: Buffer;
-  /** Whether the basic-auth challenge of its hop in flight was answered once. */
-  authAnswered?: boolean;
+  /**
+   * What became of the basic-auth challenge of its hop in flight: `answered`
+   * with the credentials, once, or let `through` as the 401 the page gets.
+   */
+  challenge?: 'answered' | 'through';
 }
 
 /** What a decision reads and writes of the user context that holds the request; the binding provides it. */
@@ -170,10 +173,10 @@ export class RequestDecisions {
    * origin gets the credentials, once on each hop of its request, so every
    * credential origin a redirect leads through is answered; one from any
    * other origin, a second one on the same hop (the credentials were
-   * refused), and any without credentials go through as the 401. Firefox's
-   * default is a login prompt BiDi neither reports nor dismisses, which
-   * stalls the navigation, so there challenges are held even without
-   * credentials.
+   * refused), and any without credentials go through as the 401. The record
+   * keeps which it was (`challenge`). Firefox's default is a login prompt
+   * BiDi neither reports nor dismisses, which stalls the navigation, so
+   * there challenges are held even without credentials.
    */
   answerChallenge(event: BidiEventParams<'network.authRequired'>, record: DecisionRecord | undefined): void {
     const request = event.request.request;
@@ -181,10 +184,9 @@ export class RequestDecisions {
     if (record === undefined) {
       answer = { request, action: 'default' };
     } else {
-      const credentials = this.options.protectedApp.credentialsFor(record.url ?? event.request.url);
-      const refused = credentials === undefined || record.authAnswered === true;
-      if (!refused) record.authAnswered = true;
-      answer = refused ? { request, action: 'cancel' } : { request, action: 'provideCredentials', credentials: { type: 'password', ...credentials } };
+      const credentials = record.challenge === undefined ? this.options.protectedApp.credentialsFor(record.url ?? event.request.url) : undefined;
+      record.challenge = credentials === undefined ? 'through' : 'answered';
+      answer = credentials === undefined ? { request, action: 'cancel' } : { request, action: 'provideCredentials', credentials: { type: 'password', ...credentials } };
     }
     void this.connection.send('network.continueWithAuth', answer).catch((cause: unknown) => this.fail(cause));
   }

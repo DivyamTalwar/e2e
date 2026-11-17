@@ -41,6 +41,13 @@ interface RequestRecord extends DecisionRecord {
   waits: number;
   /** Told how its hop in flight ends, with what failed the load if anything did: one for each response wait that matched the hop. */
   loads: ((failure: Error | null) => void)[];
+  /**
+   * Each hands a response wait the response it matched, which answers the
+   * hop in flight with a basic-auth challenge not decided yet: the waits are
+   * handed it when it goes through to the page as the 401, and never when
+   * the hop is sent again with credentials.
+   */
+  parked: (() => void)[];
   /** Its response body as the collector kept it, read once for every wait that matched it. */
   body?: Promise<Buffer>;
 }
@@ -88,7 +95,7 @@ export class NetworkBinding implements DecisionScope {
   private listeners: (() => void)[] = [];
   /** The listeners that tell how every request ended, and that the connection closed. */
   private readonly offSettle: (() => void)[];
-  /** Fails each response wait that has matched no response yet. */
+  /** Fails each response wait still waiting for its response; one that has it, or gave up, is out. */
   private readonly waits = new Set<(failure: Error) => void>();
   private readonly decisions: RequestDecisions;
   private closed = false;
@@ -189,9 +196,20 @@ export class NetworkBinding implements DecisionScope {
     if (this.holds(event)) this.decisions.decide(event, record, event.context !== null && this.blank.has(event.context));
   }
 
-  /** A basic-auth challenge one of the binding's intercepts holds is answered, with its request's record when the request is the attempt's. */
+  /**
+   * A basic-auth challenge one of the binding's intercepts holds is
+   * answered, with its request's record when the request is the attempt's.
+   * The response waits parked on the challenge's 401 are handed it when it
+   * goes through; credentials make the browser send the hop again, so the
+   * 401 is no response of the page's and the waits go on waiting.
+   */
   private onAuth(event: BidiEventParams<'network.authRequired'>): void {
-    if (this.holds(event)) this.decisions.answerChallenge(event, this.options.ours(event) ? this.record(event.request.request, event.context ?? '') : undefined);
+    if (!this.holds(event)) return;
+    const record = this.options.ours(event) ? this.record(event.request.request, event.context ?? '') : undefined;
+    this.decisions.answerChallenge(event, record);
+    if (record === undefined) return;
+    const parked = record.parked.splice(0);
+    if (record.challenge === 'through') for (const claim of parked) claim();
   }
 
   /**
@@ -256,7 +274,7 @@ export class NetworkBinding implements DecisionScope {
   /** The record of `request`, made on first sight, from `context`. */
   private record(request: string, context: string): RequestRecord {
     let record = this.requests.get(request);
-    if (record === undefined) this.requests.set(request, (record = { context, counted: false, settled: false, waits: 0, loads: [] }));
+    if (record === undefined) this.requests.set(request, (record = { context, counted: false, settled: false, waits: 0, loads: [], parked: [] }));
     return record;
   }
 
@@ -265,7 +283,7 @@ export class NetworkBinding implements DecisionScope {
    * `context`: where the hop goes, and whether it counts as in flight, as a
    * request of the attempt's tab does unless it is an EventSource stream,
    * which never settles. A hop further along the redirects starts without
-   * the fulfilled body and the answered challenge of the hop before it; the
+   * the fulfilled body and the decided challenge of the hop before it; the
    * redirect count tells it from a hop Firefox announces again, as it does
    * when it resends one with credentials.
    */
@@ -274,7 +292,7 @@ export class NetworkBinding implements DecisionScope {
     if (record.redirectCount !== event.redirectCount) {
       record.redirectCount = event.redirectCount;
       delete record.fulfilledBody;
-      delete record.authAnswered;
+      delete record.challenge;
     }
     record.context = context;
     record.url = event.request.url;
@@ -309,7 +327,8 @@ export class NetworkBinding implements DecisionScope {
 
   /**
    * A request's hop finished, with the `failure` that ended its load if one
-   * did; the response waits that matched the hop are told. The request
+   * did; the response waits that matched the hop are told, after any still
+   * parked on a challenge nobody decided are handed its 401. The request
    * collector lets go of the hop's body: routes read it only while the first
    * hop is held, and a redirect seldom carries it on. A redirect hop
    * (`mayRedirect`) stops counting and its record stays for the next hop; a
@@ -321,6 +340,7 @@ export class NetworkBinding implements DecisionScope {
     const record = this.requests.get(id);
     if (record !== undefined) {
       this.stopCounting(record);
+      for (const claim of record.parked.splice(0)) claim();
       for (const ended of record.loads.splice(0)) ended(failure);
     }
     const ours = !this.closed && this.options.ours(event);
@@ -368,9 +388,12 @@ export class NetworkBinding implements DecisionScope {
    * session's subscription); start the wait before the action that triggers
    * the response. The wait joins the request's record as the headers arrive,
    * so the ledger tells it how the load ends, even one that completes in the
-   * same burst as its headers. Its body comes from the response collector,
-   * and reading it waits for the load to finish, then takes the body from
-   * the collector so the browser keeps it no longer.
+   * same burst as its headers. The response to a basic-auth challenge the
+   * binding may yet answer is parked on the record instead
+   * (`pendingChallenge`), until the challenge is decided. Its body comes
+   * from the response collector, and reading it waits for the load to
+   * finish, then takes the body from the collector so the browser keeps it
+   * no longer.
    */
   async waitForResponse(matches: (url: string) => boolean, signal: AbortSignal): Promise<ObservedResponse> {
     const connection = this.connection;
@@ -383,9 +406,15 @@ export class NetworkBinding implements DecisionScope {
       fail = reject;
       offStart = connection.on('network.responseStarted', (event) => {
         if (claimed !== undefined || this.closed || !onPage(event.context) || !matches(stripHash(event.response.url))) return;
-        claimed = this.record(event.request.request, event.context ?? '');
-        claimed.waits += 1;
-        resolve({ event, record: claimed, loaded: hopLoaded(claimed) });
+        const record = this.record(event.request.request, event.context ?? '');
+        const claim = (): void => {
+          if (claimed !== undefined || !this.waits.has(fail)) return;
+          claimed = record;
+          record.waits += 1;
+          resolve({ event, record, loaded: hopLoaded(record) });
+        };
+        if (this.pendingChallenge(event.response, record)) record.parked.push(claim);
+        else claim();
       });
     });
     first.catch(() => undefined);
@@ -420,6 +449,17 @@ export class NetworkBinding implements DecisionScope {
       offStart();
       this.waits.delete(fail);
     }
+  }
+
+  /**
+   * Whether `response` answers the hop of `record` in flight with a
+   * basic-auth challenge the binding may yet answer, so it is not known to
+   * be the page's: it names a challenge, while challenges are held and none
+   * of the hop went through. Firefox reports a challenge's response before
+   * the challenge; Chromium only the response the page gets, after it.
+   */
+  private pendingChallenge(response: Network.ResponseData, record: RequestRecord): boolean {
+    return this.installed.has('authRequired') && record.challenge !== 'through' && (response.authChallenges ?? []).length > 0;
   }
 
   /** Ends every response wait still pending with `failure`, as when the connection closes: one that matched no response yet, and one whose response is still loading. */

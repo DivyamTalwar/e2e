@@ -224,6 +224,94 @@ describe('AttemptNetwork', () => {
     });
   });
 
+  describe('a response wait on a request whose basic-auth challenge is held', () => {
+    type Emitted = readonly [method: string, params: Record<string, unknown>];
+    const url = `${SITE}/private`;
+    /** The request's hop starts, held by no intercept. */
+    const sent: Emitted = ['network.beforeRequestSent', request('r', url, [])];
+    /** A held challenge of the hop. */
+    const challenged: Emitted = ['network.authRequired', { ...request('r', url), response: { status: 401 } }];
+    /** The hop's response as `event` reports it: a 401 names a `scheme` challenge. */
+    const response = (event: 'responseStarted' | 'responseCompleted', status: number, scheme = 'Basic'): Emitted =>
+      [`network.${event}`, { ...request('r', url, []), response: { url, status, headers: [], ...(status === 401 ? { authChallenges: [{ scheme, realm: 'preview' }] } : {}) } }];
+
+    /** A wait for the request's response on `browser`, with `credentials` configured or not, and the status it resolved with so far. */
+    async function waitOn(browser: BrowserName, credentials: boolean) {
+      const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'the page' } } });
+      const { net, open } = network(fake, { ...(credentials ? { credentials: { username: 'ada', password: 'secret' } } : {}), browser });
+      await net.bind('user-1');
+      await open('tab');
+      const resolved: number[] = [];
+      const waiting = net.waitForResponse((matched) => matched === url, AbortSignal.timeout(5_000));
+      void waiting.then((matched) => resolved.push(matched.status), () => undefined);
+      await settle();
+      /** Emits `events` and lets the wait settle on them. */
+      const emit = async (...events: Emitted[]): Promise<void> => {
+        for (const [method, params] of events) fake.emit(method, params);
+        await settle();
+      };
+      return { fake, waiting, resolved, emit };
+    }
+
+    it('keeps the 401 of a challenge it answers with credentials from the wait, which resolves on the response they got, as Firefox reports them', async () => {
+      const { fake, waiting, resolved, emit } = await waitOn('firefox', true);
+      await emit(sent, response('responseStarted', 401), challenged, sent);
+      expect(fake.commands('network.continueWithAuth').map((command) => command.params['action'])).toEqual(['provideCredentials']);
+      expect(resolved).toEqual([]);
+      await emit(response('responseStarted', 200), response('responseCompleted', 200));
+      expect(resolved).toEqual([200]);
+      await expect((await waiting).body().then(String)).resolves.toBe('the page');
+    });
+
+    it.each<[string, boolean, Emitted[]]>([
+      ['the credentials were refused', true, [sent, response('responseStarted', 401), challenged, sent, response('responseStarted', 401)]],
+      ['there are no credentials', false, [sent, response('responseStarted', 401)]],
+    ])('hands the wait the 401 once its challenge goes through because %s, as Firefox reports them', async (_name, credentials, events) => {
+      const { fake, waiting, resolved, emit } = await waitOn('firefox', credentials);
+      await emit(...events);
+      expect(resolved).toEqual([]);
+      await emit(challenged);
+      expect(fake.commands('network.continueWithAuth').at(-1)?.params['action']).toBe('cancel');
+      expect(resolved).toEqual([401]);
+      await emit(response('responseCompleted', 401));
+      await expect((await waiting).body().then(String)).resolves.toBe('the page');
+    });
+
+    it('hands the wait a challenge the browser raises to nobody once its response completed', async () => {
+      const { waiting, resolved, emit } = await waitOn('firefox', true);
+      await emit(sent, response('responseStarted', 401, 'Bearer'));
+      expect(resolved).toEqual([]);
+      await emit(response('responseCompleted', 401, 'Bearer'));
+      expect(resolved).toEqual([401]);
+      await expect((await waiting).body().then(String)).resolves.toBe('the page');
+    });
+
+    it.each<[string, boolean, Emitted[]]>([
+      ['no challenge is held', false, []],
+      ['its challenge already went through', true, [challenged, challenged]],
+    ])('hands the wait a 401 on its headers where %s, as Chromium reports them', async (_name, credentials, challenges) => {
+      const { resolved, emit } = await waitOn('chromium', credentials);
+      await emit(sent, ...challenges, response('responseStarted', 401));
+      expect(resolved).toEqual([401]);
+    });
+
+    it('leaves a wait that ended with its match still parked out of the request', async () => {
+      const fake = new FakeBidi();
+      const { net, open } = network(fake, { browser: 'firefox' });
+      await net.bind('user-1');
+      await open('tab');
+      const ending = new AbortController();
+      const waiting = net.waitForResponse(() => true, ending.signal);
+      await settle();
+      for (const [method, params] of [sent, response('responseStarted', 401)]) fake.emit(method, params);
+      ending.abort();
+      await expect(waiting).rejects.toThrow();
+      for (const [method, params] of [challenged, response('responseCompleted', 401)]) fake.emit(method, params);
+      await settle();
+      expect(fake.commands('network.disownData').map((command) => command.params)).toEqual([{ dataType: 'response', collector: 'collector-1', request: 'r' }]);
+    });
+  });
+
   it('refuses a URL rewrite on Firefox before the request goes, and fails the request', async () => {
     const fake = new FakeBidi();
     const { net, open } = network(fake, { browser: 'firefox' });
