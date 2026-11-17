@@ -8,7 +8,7 @@ describe('browser.evaluate error boundaries', () => {
   let browser: Browser;
 
   beforeAll(async () => {
-    session = await startWebSession({ timeoutMs: 1_000, startAttempt: false });
+    session = await startWebSession({ startAttempt: false });
   });
 
   beforeEach(async () => {
@@ -34,14 +34,6 @@ describe('browser.evaluate error boundaries', () => {
     ['() => { throw new Error("page.evaluate: Target closed"); }', 'page.evaluate: Target closed'],
   ])('preserves the message of a page exception: %s', async (source, message) => {
     await expect(browser.evaluate(source)).rejects.toMatchObject({ code: 'EVALUATE_FAILED', message });
-  });
-
-  it('keeps a call that outlives its budget as a timeout', async () => {
-    await expect(browser.evaluate('() => new Promise(() => {})')).rejects.toMatchObject({
-      code: 'ACTION_FAILED',
-      message: expect.stringMatching(/^operation timed out/),
-      cause: expect.objectContaining({ code: 'OPERATION_TIMEOUT' }),
-    });
   });
 
   it.each(['restart', 'reset'] as const)('keeps a tab closed by %s during evaluation as infrastructure', async (replace) => {
@@ -151,5 +143,27 @@ describe('browser.evaluate error boundaries', () => {
     await session.setContent('<script>delete window.Array; delete window.JSON; delete Object.prototype.__proto__;</script>');
     await expect(browser.evaluate((n: number) => ({ items: [n, 'two'] }), 1)).resolves.toEqual({ items: [1, 'two'] });
     await expect(browser.evaluate('() => [1, 2]')).resolves.toEqual([1, 2]);
+  });
+});
+
+// A session of its own: its budget is every operation's, and a state reset takes longer than 1 s on a busy machine.
+describe('browser.evaluate on a 1 s action budget', () => {
+  let session: WebSession;
+
+  beforeAll(async () => {
+    session = await startWebSession({ timeoutMs: 1_000 });
+  });
+
+  afterAll(async () => {
+    await session.close();
+  });
+
+  it('keeps a call that outlives its budget as a timeout', async () => {
+    await session.setContent('<title>Evaluate</title>');
+    await expect(session.browser.evaluate('() => new Promise(() => {})')).rejects.toMatchObject({
+      code: 'ACTION_FAILED',
+      message: expect.stringMatching(/^operation timed out/),
+      cause: expect.objectContaining({ code: 'OPERATION_TIMEOUT' }),
+    });
   });
 });
