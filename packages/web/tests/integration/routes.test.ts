@@ -17,6 +17,7 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { TestError } from '@e2e-dev/core/engine';
 import type { Browser, WebRoute } from '../../src/fixture/types.ts';
+import { gate } from '../helpers/gate.ts';
 import { browserFixture, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 interface Echo {
@@ -266,8 +267,7 @@ describe('browser.route decisions', () => {
       document.body.append(link);
       return null;
     }, null);
-    let release!: () => void;
-    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const { held: pending, release } = gate();
     const trigger = async (): Promise<void> => {
       // The click is scheduled past the evaluate, so a download navigation racing it cannot fail the trigger: the trigger stays pending.
       await browser.evaluate(() => { setTimeout(() => document.querySelector<HTMLAnchorElement>('a')!.click(), 0); return null; }, null);
@@ -304,8 +304,7 @@ describe('browser.route decisions', () => {
       document.body.append(link);
       return null;
     }, null);
-    let release!: () => void;
-    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const { held: pending, release } = gate();
     const trigger = async (): Promise<void> => {
       await browser.evaluate(() => { document.querySelector<HTMLAnchorElement>('a')!.click(); return null; }, null);
       await pending;

@@ -7,6 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readerCall, readerInstallCall, READERS_INIT_SCRIPT } from '../../src/in-page/readers.ts';
+import { gate } from '../helpers/gate.ts';
 import { bySelector, byTestId, startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
 
@@ -100,8 +101,7 @@ describe('document readers', () => {
     const declarations = recordCalls(false);
     const page = await startWebSession();
     sessions.push(page);
-    let releaseCover!: () => void;
-    const coverHeld = new Promise<void>((resolve) => { releaseCover = resolve; });
+    const { held: coverHeld, release: releaseCover } = gate();
     page.serve('/cover-gone', (_request, response) => { void coverHeld.then(() => response.end('gone')); });
     await page.setContent(`
       <div data-testid="feed" style="height: 200px; overflow: auto"><div style="height: 2000px">rows</div></div>

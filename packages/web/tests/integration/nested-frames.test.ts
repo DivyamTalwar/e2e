@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LocatorExpression, SemanticNode } from '@e2e-dev/core/engine';
 import { BidiConnection } from '../../src/driver/connection.ts';
 import { readerCall } from '../../src/in-page/readers.ts';
+import { gate } from '../helpers/gate.ts';
 import { byRole, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 /** Escapes HTML for a double-quoted attribute value, so a document can carry a nested `srcdoc`. */
@@ -166,8 +167,7 @@ describe('a frame located through before its document loaded', () => {
 
   /** Appends an iframe `#late` whose document the server holds back; resolves with what lets it load. */
   async function appendLateFrame(pathname: string): Promise<() => void> {
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
+    const { held, release } = gate();
     const late = page.serve(pathname, (_request, response) => {
       void held.then(() => {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });

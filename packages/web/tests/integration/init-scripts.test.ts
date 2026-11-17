@@ -13,6 +13,7 @@ import { secrets } from 'e2e';
 import type { EngineHandle } from '@e2e-dev/core/engine';
 import type { Browser } from '../../src/fixture/types.ts';
 import { web, type WebOptions } from '../../src/index.ts';
+import { gate } from '../helpers/gate.ts';
 import { bySelector, cleanup, initInfo, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 declare global {
@@ -130,10 +131,8 @@ describe('init scripts', () => {
     'runs an init script in the document a frame loads when the engine %s while the frame shows its first, empty one',
     async (read) => {
       await attempt({ initScripts: ['(window.ranIn ??= []).push(document.URL);'] }, async (browser, session) => {
-        let requested!: () => void;
-        const reached = new Promise<void>((resolve) => { requested = resolve; });
-        let release!: () => void;
-        const held = new Promise<void>((resolve) => { release = resolve; });
+        const { held: reached, release: requested } = gate();
+        const { held, release } = gate();
         const slow = session.serve('/slow-frame', (_request, response) => {
           requested();
           void held.then(() => {

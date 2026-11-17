@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Browser } from '../../src/index.ts';
+import { gate } from '../helpers/gate.ts';
 import { startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 describe('browser.evaluate error boundaries', () => {
@@ -44,8 +45,7 @@ describe('browser.evaluate error boundaries', () => {
   });
 
   it.each(['restart', 'reset'] as const)('keeps a tab closed by %s during evaluation as infrastructure', async (replace) => {
-    let dispatched!: () => void;
-    const evaluating = new Promise<void>((resolve) => { dispatched = resolve; });
+    const { held: evaluating, release: dispatched } = gate();
     session.serve('/evaluating', (_request, response) => {
       dispatched();
       response.end();

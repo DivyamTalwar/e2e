@@ -5,6 +5,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { newOwner, removeAbandonedStaging, withCacheLock, writeOwner, type LockOwner } from '../../src/install/lock.ts';
+import { gate } from '../helpers/gate.ts';
 
 const FAST = { heartbeatMs: 20, staleMs: 300, pollMs: 10 };
 
@@ -39,10 +40,10 @@ describe('withCacheLock', () => {
   it('runs one holder at a time, says whom the waiter waits for, and removes the lock after', async () => {
     const order: string[] = [];
     const logs: string[] = [];
-    let releaseFirst = () => {};
+    const { held, release: releaseFirst } = gate();
     const first = withCacheLock(cache, { log: () => {} }, async () => {
       order.push('first start');
-      await new Promise<void>((resolve) => { releaseFirst = resolve; });
+      await held;
       order.push('first end');
     }, FAST);
     await sleep(30);

@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { BidiInput, DispatchScope } from '../../src/driver/input.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
 import { FakeBidi } from '../helpers/bidi-fake.ts';
+import { gate } from '../helpers/gate.ts';
 
 /** Input on one fake tab with a 100 by 100 viewport. */
 function input(): BidiInput {
@@ -20,8 +21,7 @@ describe('DispatchScope', () => {
     const keyboard = input();
     const waiting = new DispatchScope();
     const typing = new DispatchScope();
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
+    const { held, release } = gate();
     const waited = waiting.run(async () => {
       await held;
     });

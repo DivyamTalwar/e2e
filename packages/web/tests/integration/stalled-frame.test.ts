@@ -6,6 +6,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { WebRoute } from '../../src/fixture/types.ts';
+import { gate } from '../helpers/gate.ts';
 import { decodePng } from '../helpers/png.ts';
 import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
@@ -35,8 +36,7 @@ afterAll(async () => {
 
 /** Opens a page holding an iframe whose request for `/held.html` never gets an answer. */
 async function pageWithHeldFrame(attributes = ''): Promise<void> {
-  let routed!: () => void;
-  const routeReady = new Promise<void>((resolve) => (routed = resolve));
+  const { held: routeReady, release: routed } = gate();
   await session.browser.route('**/held.html', (route) => new Promise<void>((release) => {
     held.push({ route, release });
     routed();

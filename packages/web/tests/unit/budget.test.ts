@@ -8,6 +8,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { afterTrigger, TriggerFailure } from '../../src/driver/budget.ts';
+import { gate } from '../helpers/gate.ts';
 
 const never = new Promise<never>(() => undefined);
 const waitForever = (): Promise<never> => never;
@@ -16,8 +17,7 @@ const timedOut = (triggerMs: number | undefined): Error => new Error(triggerMs =
 
 describe('afterTrigger', () => {
   it('runs the wait once the trigger returned, and resolves with it', async () => {
-    let release: () => void = () => undefined;
-    const trigger = new Promise<void>((resolve) => (release = resolve));
+    const { held: trigger, release } = gate();
     let waits = 0;
     const waited = afterTrigger(() => trigger, async () => {
       waits += 1;
@@ -83,8 +83,7 @@ describe('afterTrigger', () => {
 
   it.each(['the budget ran out', 'it was cancelled'])('never starts the wait of a trigger that returns after %s', async (ending) => {
     const controller = new AbortController();
-    let release: () => void = () => undefined;
-    const trigger = new Promise<void>((resolve) => (release = resolve));
+    const { held: trigger, release } = gate();
     let waits = 0;
     const waited = afterTrigger(() => trigger, async () => {
       waits += 1;

@@ -7,6 +7,7 @@ import { DialogRouter, type Dialog } from '../../src/driver/dialogs.ts';
 import { TestError } from '@e2e-dev/core/engine';
 import { describe, expect, it, vi } from 'vitest';
 import { ErrorLatch } from '../../src/errors.ts';
+import { gate } from '../helpers/gate.ts';
 
 /** A native dialog of `type` saying `text`, whose answers are recorded. */
 function fakeDialog(text = 'are you sure?', type: Dialog['type'] = 'confirm') {
@@ -165,10 +166,7 @@ describe('ErrorLatch', () => {
   it('settles with what a tracked path still running latches once it finishes', async () => {
     const latch = new ErrorLatch();
     const router = new DialogRouter(latch);
-    let release!: () => void;
-    const waiting = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const { held: waiting, release } = gate();
     router.add(async (dialog) => {
       await dialog.accept();
       await waiting;
@@ -204,10 +202,7 @@ describe('ErrorLatch', () => {
 
   it('waits only for the paths running when it was called, so one starting during the wait is no timeout', async () => {
     const latch = new ErrorLatch();
-    let startNext!: () => void;
-    const first = new Promise<void>((resolve) => {
-      startNext = resolve;
-    });
+    const { held: first, release: startNext } = gate();
     latch.track('route', first);
     void first.then(() => latch.track('route', new Promise<void>((resolve) => setTimeout(resolve, 50))));
     const settling = latch.settle(budget());

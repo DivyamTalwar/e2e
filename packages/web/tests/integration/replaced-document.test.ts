@@ -17,6 +17,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { gate } from '../helpers/gate.ts';
 import { callOf } from '../helpers/page-call.ts';
 import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
@@ -112,8 +113,7 @@ describe('a document replaced under a call or input', () => {
   /** Serves a fresh path that holds every request until `release`, readable from any origin; `reached` resolves with the first. */
   function held(): { readonly url: string; readonly reached: Promise<void>; readonly release: () => void } {
     const holding = new Set<() => void>();
-    let reach = (): void => undefined;
-    const reached = new Promise<void>((resolve) => { reach = resolve; });
+    const { held: reached, release: reach } = gate();
     served += 1;
     const url = page.serve(`/held-${String(served)}`, (_request, response) => {
       holding.add(() => response.writeHead(204, { 'access-control-allow-origin': '*' }).end());

@@ -16,6 +16,7 @@ import { ProtectedApp } from '../../src/protected-app.ts';
 import { afterDispatch, BidiError, classify } from '../../src/errors.ts';
 import type { NodeRef } from '@e2e-dev/core/engine';
 import { FakeBidi, settle, type Reply, type SentCommand } from '../helpers/bidi-fake.ts';
+import { gate } from '../helpers/gate.ts';
 import { callOf } from '../helpers/page-call.ts';
 import { ElementRef } from '../../src/driver/script.ts';
 
@@ -572,10 +573,9 @@ function numbered(fake: FakeBidi): FakeBidi {
  * count is on.
  */
 function holdNetwork(fake: FakeBidi, held: BidiSession): () => Promise<void> {
-  let release: () => void = () => undefined;
-  const gate = new Promise<void>((resolve) => (release = resolve));
+  const { held: released, release } = gate();
   fake.on('session.subscribe', async () => {
-    await gate;
+    await released;
     return { result: { subscription: 's' } };
   });
   const tracking = held.network.track();
@@ -796,8 +796,8 @@ describe('BidiSession tabs', () => {
   });
 
   it('fails a tab open stale when a reset forgot the tab while it was being shown', async () => {
-    let sized: () => void = () => undefined;
-    const fake = numbered(new FakeBidi()).on('browsingContext.setViewport', () => new Promise((resolve) => (sized = () => resolve({ result: {} }))));
+    const { held: sizing, release: sized } = gate();
+    const fake = numbered(new FakeBidi()).on('browsingContext.setViewport', () => sizing.then(() => ({ result: {} })));
     const resetting = unopened(fake);
     await resetting.openUserContext(new AbortController().signal);
     const opening = resetting.ensureContext();
@@ -854,10 +854,10 @@ describe('BidiSession tabs', () => {
   });
 
   it('keeps its tabs when a restart is given up on before it closed them', async () => {
-    let listed: () => void = () => undefined;
+    const { held: listing, release: listed } = gate();
     const fake = new FakeBidi();
     const held = await session(fake);
-    fake.on('browsingContext.getTree', () => new Promise((resolve) => (listed = () => resolve({ result: { contexts: [{ context: 'tab', userContext: 'mine' }] } }))));
+    fake.on('browsingContext.getTree', () => listing.then(() => ({ result: { contexts: [{ context: 'tab', userContext: 'mine' }] } })));
     const givenUp = new AbortController();
     const restarting = held.replaceTabs(givenUp.signal);
     await settle();
@@ -934,9 +934,9 @@ describe('BidiSession tabs', () => {
 
 describe('BidiSession.close', () => {
   it('removes a user context that a reset opened after the attempt closed', async () => {
-    let created: (reply: { result: unknown }) => void = () => undefined;
+    const { held: creating, release: created } = gate<Reply>();
     const fake = new FakeBidi()
-      .on('browser.createUserContext', () => new Promise((resolve) => (created = resolve)))
+      .on('browser.createUserContext', () => creating)
       .on('network.addDataCollector', { result: { collector: 'c' } });
     const closing = unopened(fake);
     const opening = closing.openUserContext(new AbortController().signal);

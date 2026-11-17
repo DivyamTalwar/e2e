@@ -15,6 +15,7 @@ import { BROWSER_TRAITS } from '../../src/browsers.ts';
 import { web } from '../../src/index.ts';
 import { LeasedBrowsers, type BrowserLease, type BrowserProvider, type BrowserReleaseContext, type BrowserRequest } from '../../src/provider.ts';
 import { FakeBidi } from '../helpers/bidi-fake.ts';
+import { gate } from '../helpers/gate.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
 
 vi.mock('../../src/driver/launch.ts', async (importOriginal) => ({
@@ -414,8 +415,7 @@ describe('worker scope', () => {
     const fake = fakeBrowser('context');
     connectCdp.mockResolvedValueOnce(fake.browser);
     const { env } = await prepared(cloud.impl, 1);
-    let grant!: () => void;
-    const granted = new Promise<void>((resolve) => { grant = resolve; });
+    const { held: granted, release: grant } = gate();
     const inner = cloud.impl.acquire.bind(cloud.impl);
     let requested = false;
     cloud.impl.acquire = async (request) => { requested = true; await granted; return inner(request); };
@@ -566,8 +566,7 @@ describe('attempt scope', () => {
   it('gives back a lease that arrives after the attempt was cancelled or ended, and never commits it', async () => {
     for (const how of ['aborted', 'ended'] as const) {
       const cloud = provider({ scope: 'attempt' });
-      let grant!: () => void;
-      const granted = new Promise<void>((resolve) => { grant = resolve; });
+      const { held: granted, release: grant } = gate();
       const inner = cloud.impl.acquire.bind(cloud.impl);
       cloud.impl.acquire = async (request) => { await granted; return inner(request); };
       const worker = web({ browser: cloud.impl });
@@ -866,7 +865,7 @@ describe('recording', () => {
 
   it('shares a stop that timed out and is still in flight, so ending the attempt never stops a recording twice', async () => {
     let stops = 0;
-    let finish!: () => void;
+    const { held: finishing, release: finish } = gate();
     const slow: BrowserProvider = {
       ...provider().impl,
       async record(): Promise<ProviderRecording> {
@@ -874,7 +873,7 @@ describe('recording', () => {
           startedAt: '2026-09-28T10:00:00.000Z',
           async stop({ dir }) {
             stops += 1;
-            await new Promise<void>((resolve) => { finish = resolve; });
+            await finishing;
             writeFileSync(path.join(dir, 'replay.mp4'), 'mp4');
             return { file: 'replay.mp4' };
           },

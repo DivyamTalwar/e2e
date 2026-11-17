@@ -10,6 +10,7 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineSnapshot } from '@e2e-dev/core/engine';
 import { aroundCapture, heldByCapture } from '../helpers/capture-hooks.ts';
+import { gate } from '../helpers/gate.ts';
 import { decodePng } from '../helpers/png.ts';
 import { startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
@@ -174,8 +175,7 @@ it('takes the mask off a document it masked after another document could not be 
   await session.setContent(`${PLACES[0]![1]}<iframe srcdoc="<p>Frame</p>"></iframe>`);
   await session.waitForFrames();
   const send = BidiConnection.prototype.send;
-  let frameFailed!: () => void;
-  const whenFrameFailed = new Promise<void>((resolve) => (frameFailed = resolve));
+  const { held: whenFrameFailed, release: frameFailed } = gate();
   vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(async function (this: BidiConnection, method, params) {
     if (method === 'script.callFunction' && (params as { functionDeclaration: string }).functionDeclaration === maskSecureFields.toString()) {
       const { contexts } = await this.send('browsingContext.getTree', { maxDepth: 0 });
@@ -226,10 +226,8 @@ it('plays a cancelled animation again when the capture goes stale, and stops it 
 it('keeps an animation cancelled for a capture that overlaps the one that cancelled it', async () => {
   await session.setContent(PLACES[0]![1]);
   let second: Promise<Awaited<ReturnType<typeof capture>>> | undefined;
-  let secondMasked!: () => void;
-  const whenSecondMasked = new Promise<void>((resolve) => (secondMasked = resolve));
-  let firstDone!: () => void;
-  const whenFirstDone = new Promise<void>((resolve) => (firstDone = resolve));
+  const { held: whenSecondMasked, release: secondMasked } = gate();
+  const { held: whenFirstDone, release: firstDone } = gate();
   aroundCapture({
     before: async (order) => {
       if (order === 1) {
@@ -307,8 +305,7 @@ it('undoes its masking in a document as it leaves under the capture', async () =
   await session.open(masked);
   expect(await session.browser.evaluate(heldByCapture)).toBe('0 hosts, 0 sheets, 1 animations');
   const during: string[] = [];
-  let left!: () => void;
-  const whenLeft = new Promise<void>((resolve) => (left = resolve));
+  const { held: whenLeft, release: left } = gate();
   aroundCapture({
     before: async (order) => {
       if (order > 1) return;

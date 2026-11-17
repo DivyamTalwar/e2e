@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ArtifactPaths } from '../../src/driver/artifact-paths.ts';
 import { AttemptDownloads, type RemoteDownloads } from '../../src/driver/downloads.ts';
 import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import { gate } from '../helpers/gate.ts';
 
 describe('AttemptDownloads.save', () => {
   let artifactsDir: string;
@@ -124,8 +125,7 @@ describe('AttemptDownloads.save', () => {
     local = attemptDownloads();
     const filepath = path.join(local.dir, 'report.txt');
     writeFileSync(filepath, 'finished in time');
-    let release: () => void = () => undefined;
-    const pending = new Promise<void>((resolve) => (release = resolve));
+    const { held: pending, release } = gate();
     const waited = local.save(1, () => {
       download('report.txt', filepath);
       return pending;

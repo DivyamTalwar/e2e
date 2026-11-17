@@ -14,6 +14,7 @@ import { BROWSER_TRAITS } from '../../src/browsers.ts';
 import { web } from '../../src/index.ts';
 import type { BrowserProvider } from '../../src/provider.ts';
 import { FakeBidi } from '../helpers/bidi-fake.ts';
+import { gate } from '../helpers/gate.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
 
 vi.mock('../../src/driver/launch.ts', async (importOriginal) => ({ ...(await importOriginal<object>()), connectBidiOverCdp: vi.fn() }));
@@ -76,8 +77,8 @@ describe('a reset given up on', () => {
     await engine.init!(info(await prepared(leases)));
     await engine.startAttempt!(attempt('a1'));
     await engine.session!.open!('https://app.test/', op());
-    let land: () => void = () => undefined;
-    fake.peer.on('browser.createUserContext', () => new Promise((resolve) => (land = () => resolve({ result: { userContext: 'uc-late' } }))));
+    const { held: landing, release: land } = gate();
+    fake.peer.on('browser.createUserContext', () => landing.then(() => ({ result: { userContext: 'uc-late' } })));
     await expect(engine.session!.reset!(op(300))).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
     await expect(engine.session!.open!('https://app.test/', op())).resolves.toBeUndefined();
     land();

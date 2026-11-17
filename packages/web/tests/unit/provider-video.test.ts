@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { ProviderRecording } from '@e2e-dev/core/engine';
 import { ProviderVideo } from '../../src/driver/provider-video.ts';
 import type { LeaseRecording } from '../../src/provider.ts';
+import { gate } from '../helpers/gate.ts';
 
 describe('ProviderVideo', () => {
   const dirs: string[] = [];
@@ -36,9 +37,9 @@ describe('ProviderVideo', () => {
 
   it('stops a start that landed after its budget ran out, and keeps the recording started after it', async () => {
     const stopped: string[] = [];
-    let land!: (started: LeaseRecording) => void;
+    const { held: landing, release: land } = gate<LeaseRecording>();
     const starts = [
-      () => new Promise<LeaseRecording>((resolve) => { land = resolve; }),
+      () => landing,
       async () => recording('second', stopped),
     ];
     const video = new ProviderVideo(async () => starts.shift()!(), artifactsDir(), new AbortController().signal);
@@ -54,9 +55,9 @@ describe('ProviderVideo', () => {
 
   it('stops a recording that started once the attempt had ended, and never keeps it', async () => {
     const stopped: string[] = [];
-    let land!: (started: LeaseRecording) => void;
+    const { held: landing, release: land } = gate<LeaseRecording>();
     const ended = new AbortController();
-    const video = new ProviderVideo(() => new Promise<LeaseRecording>((resolve) => { land = resolve; }), artifactsDir(), ended.signal);
+    const video = new ProviderVideo(() => landing, artifactsDir(), ended.signal);
     const starting = video.start(new AbortController().signal);
     ended.abort();
     land(recording('late', stopped));

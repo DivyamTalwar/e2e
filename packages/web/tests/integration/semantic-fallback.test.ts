@@ -8,14 +8,14 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readerCall } from '../../src/in-page/readers.ts';
+import { gate } from '../helpers/gate.ts';
 import { decodePng } from '../helpers/png.ts';
 import { byTestId, flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
 
 /** Holds every tree read's reply until `release` runs; the read itself runs in the page. */
 function stallTreeReads(): { release: () => void } {
-  let release!: () => void;
-  const released = new Promise<void>((resolve) => { release = resolve; });
+  const { held: released, release } = gate();
   const send = BidiConnection.prototype.send;
   vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(function (this: BidiConnection, method, params) {
     const reply = send.call(this, method, params);

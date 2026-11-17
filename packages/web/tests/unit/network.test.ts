@@ -15,6 +15,7 @@ import type { NetworkRoute } from '../../src/driver/network-decisions.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
 import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import { gate } from '../helpers/gate.ts';
 
 const SITE = 'http://app.test';
 
@@ -647,8 +648,7 @@ describe('AttemptNetwork', () => {
       const { net, open, lifetime } = network(fake, { site: origin });
       await net.bind('user-1');
       await open('tab');
-      let failed: (cause: unknown) => void = () => undefined;
-      const failure = new Promise<unknown>((resolve) => (failed = resolve));
+      const { held: failure, release: failed } = gate<unknown>();
       await net.addRoute(route('**', async (_request, decisions) => {
         await decisions.fetch({ signal: new AbortController().signal, timeoutMs: 5_000 }).catch(failed);
         await decisions.abort();
@@ -1116,11 +1116,11 @@ describe('AttemptNetwork', () => {
   it('removes a route in call order with an addition still queued behind a tab change', async () => {
     const fake = new FakeBidi();
     const { net, open } = network(fake, { headers: true });
-    let release: () => void = () => undefined;
+    const { held, release } = gate();
     let intercepts = 0;
     fake.on('network.addIntercept', async () => {
       intercepts += 1;
-      if (intercepts === 1) await new Promise<void>((resolve) => (release = resolve));
+      if (intercepts === 1) await held;
       return { result: { intercept: `intercept-${intercepts}` } };
     });
     await net.bind('user-1');
