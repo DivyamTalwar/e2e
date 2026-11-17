@@ -197,13 +197,14 @@ export class NetworkBinding implements DecisionScope {
    * other client drives it covers every tab, so a tab the app opens is held
    * from its first request; otherwise it covers the open tabs exactly, so
    * other clients keep their own requests, and a change of tabs replaces it,
-   * the new one in place before the old goes.
+   * the new one in place before the old goes. Adding that one is tried again
+   * while tabs close under it, and none is added once they all closed.
    */
   private async ensureIntercept(phase: InterceptPhase, wanted: boolean): Promise<void> {
     const connection = this.connection;
     const old = this.installed.get(phase);
     if (this.options.exclusive) {
-      if (wanted && old === undefined) this.installed.set(phase, (await this.addIntercept(phase, undefined))!);
+      if (wanted && old === undefined) this.installed.set(phase, await this.addIntercept(phase));
       if (!wanted && old !== undefined) {
         this.installed.delete(phase);
         await alreadyGone(connection.send('network.removeIntercept', { intercept: old.id }), connection);
@@ -213,32 +214,27 @@ export class NetworkBinding implements DecisionScope {
     const open = (): string[] => [...this.tops].filter((context) => this.options.contexts.owner(context) !== undefined);
     const target = wanted ? open() : [];
     if (target.length === 0 ? old === undefined : old?.covers === target.join('\n')) return;
-    const added = target.length === 0 ? undefined : await this.addIntercept(phase, open);
+    let added: InstalledIntercept | undefined;
+    let [first, ...rest] = target;
+    while (first !== undefined && added === undefined) {
+      try {
+        added = await this.addIntercept(phase, [first, ...rest]);
+      } catch (cause) {
+        const left = open();
+        if (left.length === rest.length + 1) throw cause;
+        [first, ...rest] = left;
+      }
+    }
     if (added === undefined) this.installed.delete(phase);
     else this.installed.set(phase, added);
     if (old !== undefined) await alreadyGone(connection.send('network.removeIntercept', { intercept: old.id }), connection);
   }
 
-  /**
-   * Adds an intercept of `phase` for the tabs `open` lists (every tab
-   * without it), trying again while tabs close under it; undefined once
-   * every tab it was for closed.
-   */
-  private async addIntercept(phase: InterceptPhase, open: (() => string[]) | undefined): Promise<InstalledIntercept | undefined> {
-    for (;;) {
-      const contexts = open?.() ?? [];
-      if (open !== undefined && contexts.length === 0) return undefined;
-      try {
-        const { intercept } = await this.connection.send('network.addIntercept', {
-          phases: [phase],
-          ...(open === undefined ? {} : { contexts: contexts as [string, ...string[]] }),
-        });
-        this.intercepts.add(intercept);
-        return { id: intercept, covers: contexts.join('\n') };
-      } catch (cause) {
-        if (open === undefined || open().length === contexts.length) throw cause;
-      }
-    }
+  /** Adds an intercept of `phase` for the tabs `contexts` lists, every tab when it lists none, and records it. */
+  private async addIntercept(phase: InterceptPhase, contexts?: [string, ...string[]]): Promise<InstalledIntercept> {
+    const { intercept } = await this.connection.send('network.addIntercept', { phases: [phase], ...(contexts === undefined ? {} : { contexts }) });
+    this.intercepts.add(intercept);
+    return { id: intercept, covers: contexts?.join('\n') ?? '' };
   }
 
   /** The context's response collector, added once however many waits ask at the same time. */
