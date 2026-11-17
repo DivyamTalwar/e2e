@@ -200,7 +200,9 @@ export class RequestDecisions {
    * names (a request that started elsewhere gets none on the way); the
    * route's overrides applied again, as Playwright does (a redirect is never
    * routed again), without the body's headers on every hop once a redirect
-   * turned a POST into a GET. A hop with nothing to change goes on untouched.
+   * turned the request into a GET: Fetch makes a GET of a POST on a 301 or
+   * 302 and of every method but HEAD on a 303, and drops the body with its
+   * headers. A hop with nothing to change goes on untouched.
    */
   private redirectHeaders(event: BidiEventParams<'network.beforeRequestSent'>, record: DecisionRecord, headers: Record<string, string>): Partial<Network.ContinueRequestParameters> {
     const policy = record.redirect;
@@ -208,7 +210,7 @@ export class RequestDecisions {
     let applied = headers;
     if (policy.overrides !== undefined) {
       applied = applyHeaderOverrides(applied, policy.overrides, this.options.traits.continueAddsCookies);
-      if (policy.method === 'POST' && event.request.method === 'GET') {
+      if (policy.method !== 'GET' && event.request.method === 'GET') {
         for (const name of REQUEST_BODY_HEADERS) delete applied[name];
       }
     }
@@ -409,7 +411,7 @@ const FORBIDDEN_HEADERS = new Set([
   'trailer', 'transfer-encoding', 'upgrade', 'via',
 ]);
 
-/** The headers of a request body, which a redirect from a POST to a GET drops. */
+/** The headers of a request body, which a redirect that turns the request into a GET drops. */
 const REQUEST_BODY_HEADERS = ['content-encoding', 'content-language', 'content-location', 'content-type'];
 
 /** Whether a route may not override header `name` (with `value`), Playwright's rule. */

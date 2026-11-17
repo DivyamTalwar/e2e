@@ -417,9 +417,9 @@ describe('browser.route decisions', () => {
     expect(echo.headers['x-gate']).toBe('open-sesame');
   });
 
-  it('continue leaves the headers of a posted body off every hop after a redirect turned the POST into a GET', async () => {
+  it.each(['POST', 'PUT'])('continue leaves the headers of a request body off every hop after a redirect turned the %s into a GET', async (method) => {
     await browser.route('**/see-other', (route) => route.continue({ headers: { ...route.request.headers, 'x-keep': 'yes' } }));
-    const echo = await fetchEcho(`${origin}/see-other`, { method: 'POST', body: 'a=1' });
+    const echo = await fetchEcho(`${origin}/see-other`, { method, body: 'a=1' });
     expect([echo.method, echo.headers['content-type'], echo.headers['x-keep']]).toEqual(['GET', undefined, 'yes']);
     expect([hits.get('/see-other'), hits.get('/redirect'), hits.get('/echo')]).toEqual([1, 1, 1]);
   });

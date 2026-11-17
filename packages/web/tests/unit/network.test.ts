@@ -615,7 +615,7 @@ describe('AttemptNetwork', () => {
       expect(await hop(fake, 'r', 'https://external.test/end', 2, { 'x-preview': 'token', 'x-route': 'routed' })).toEqual({ accept: '*/*', 'x-route': 'routed', 'x-preview': 'token' });
     });
 
-    it('leaves the headers of a posted body off every hop once a redirect turned the POST into a GET', async () => {
+    it.each(['POST', 'PUT'])('leaves the headers of a request body off every hop once a redirect turned the %s into a GET', async (method) => {
       const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'a=1' } } });
       const { net, open } = network(fake);
       await net.bind('user-1');
@@ -625,7 +625,7 @@ describe('AttemptNetwork', () => {
       }));
       const posted = request('r', `${SITE}/form`);
       const headers = [{ name: 'Accept', value: { type: 'string', value: '*/*' } }, { name: 'Content-Type', value: { type: 'string', value: 'application/x-www-form-urlencoded' } }];
-      fake.emit('network.beforeRequestSent', { ...posted, request: { ...(posted['request'] as object), method: 'POST', bodySize: 3, headers } });
+      fake.emit('network.beforeRequestSent', { ...posted, request: { ...(posted['request'] as object), method, bodySize: 3, headers } });
       await settle();
       await settle();
       expect(fake.commands('network.continueRequest').at(-1)?.params['headers']).toContainEqual({ name: 'content-type', value: { type: 'string', value: 'application/x-www-form-urlencoded' } });
