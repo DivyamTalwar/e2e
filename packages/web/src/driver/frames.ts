@@ -117,6 +117,12 @@ export async function hasScriptContext(connection: BidiConnection, context: stri
   return realms.some((realm) => realm.type === 'window' && realm.sandbox === undefined);
 }
 
+/** Those of `contexts` whose document a call can be made into (`hasScriptContext`), in their order. */
+export async function scriptedContexts(connection: BidiConnection, contexts: readonly string[]): Promise<string[]> {
+  const scripted = await Promise.all(contexts.map((each) => hasScriptContext(connection, each)));
+  return contexts.filter((_each, index) => scripted[index]);
+}
+
 /** The iframe that holds each child context the surface entered, by child context. */
 export class FrameRegistry {
   private readonly holders = new Map<string, NodeTarget>();

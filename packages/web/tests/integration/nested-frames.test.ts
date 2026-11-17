@@ -201,6 +201,21 @@ describe('a frame located through before its document loaded', () => {
     await tapInFrame();
   });
 
+  it('types, inserts text and drags in the page while a frame still waits for its document', async () => {
+    const release = await appendLateFrame('/late-frame-typing');
+    await page.browser.evaluate(() => {
+      const field = Object.assign(document.createElement('input'), { id: 'field' });
+      document.body.prepend(field);
+      field.focus();
+      return null;
+    });
+    await page.engine.keyboard!.type('a', { replace: false }, page.op(3_000));
+    await page.browser.keyboard.type('\u3053');
+    await page.engine.performAt!({ x: 5, y: 5 }, { kind: 'dragTo', target: { x: 40, y: 5 } }, page.op(3_000));
+    expect(await page.browser.evaluate(() => document.querySelector<HTMLInputElement>('#field')!.value)).toBe('a\u3053');
+    release();
+  });
+
   it('sees a tap land in a frame whose window the page reached into before its document loaded', async () => {
     const release = await appendLateFrame('/late-frame-reached');
     // The browser keeps a window a script touched for the document that loads next: the kept window of `listen` (`in-page/hit-interceptor.ts`).

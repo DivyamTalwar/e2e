@@ -14,7 +14,7 @@ import { ArtifactPaths } from './artifact-paths.ts';
 import type { ContextTree } from './context-tree.ts';
 import { AttemptDownloads, type RemoteDownloads } from './downloads.ts';
 import { BidiError, ErrorLatch, invalidState, releaseQuietly, unlessStale } from '../errors.ts';
-import { FrameRegistry } from './frames.ts';
+import { FrameRegistry, scriptedContexts } from './frames.ts';
 import type { BidiBrowser } from './launch.ts';
 import { AttemptNetwork } from './network.ts';
 import { OwnNavigations } from './own-navigations.ts';
@@ -379,6 +379,15 @@ export class BidiSession {
   async currentUrl(context = this.requireContext()): Promise<string> {
     const { contexts } = await this.connection.send('browsingContext.getTree', { root: context, maxDepth: 0 });
     return contexts[0]?.url ?? '';
+  }
+
+  /**
+   * The documents of `documentContexts` a call can be made into: one with no
+   * script context yet (`hasScriptContext`) would hold the call until its
+   * frame's first navigation commits.
+   */
+  async callableDocuments(context: string): Promise<string[]> {
+    return scriptedContexts(this.connection, await this.documentContexts(context));
   }
 
   /** `context` and every frame document under it. */

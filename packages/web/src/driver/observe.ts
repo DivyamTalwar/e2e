@@ -24,7 +24,7 @@ import {
 } from '@e2e-dev/core/engine';
 import { SECURE_FIELD_SELECTOR, type RawNodeData, type RawObservedNode } from '../in-page/read-node.ts';
 import { cancelled, isStale, releaseQuietly, unlessStale } from '../errors.ts';
-import { contentContext, hasScriptContext, inViewport, pageParts, placeInFrame, resolveFrames, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
+import { contentContext, inViewport, pageParts, placeInFrame, resolveFrames, scriptedContexts, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
 import { computedStyle, domReady } from '../in-page/document.ts';
 import { maskSecureFields, unmaskSecureFields } from '../in-page/mask.ts';
 import type { FrameBox } from '../in-page/create-readers.ts';
@@ -320,9 +320,9 @@ async function maskedCapture(session: BidiSession, viewport: ViewportSize): Prom
   ];
   try {
     let count = 0;
-    const scripted = await Promise.all(documents.map((each) => hasScriptContext(session.connection, each)));
-    const bare = documents.filter((_each, index) => !scripted[index]);
-    for (const each of documents.filter((_each, index) => scripted[index])) {
+    const scripted = await scriptedContexts(session.connection, documents);
+    const bare = documents.filter((each) => !scripted.includes(each));
+    for (const each of scripted) {
       count += await session.page.run(maskSecureFields, [SECURE_FIELD_SELECTOR, token], each);
       masked.push(each);
     }
@@ -332,8 +332,8 @@ async function maskedCapture(session: BidiSession, viewport: ViewportSize): Prom
     held = (await Promise.all(masked.map((each) => session.page.run(unmaskSecureFields, [token], each)))).every(Boolean);
     masked.length = 0;
     const after = await session.documentContexts(context);
-    const loaded = await Promise.all(bare.map((each) => hasScriptContext(session.connection, each)));
-    if (!held || navigated || loaded.includes(true) || after.length !== documents.length || after.some((each, index) => each !== documents[index])) {
+    const loaded = await scriptedContexts(session.connection, bare);
+    if (!held || navigated || loaded.length > 0 || after.length !== documents.length || after.some((each, index) => each !== documents[index])) {
       throw new EngineError('NODE_STALE', 'the page changed while its screenshot was masked', { retryable: true, cause: 'failed' in captured ? captured.failed : undefined });
     }
     if ('failed' in captured) throw captured.failed;

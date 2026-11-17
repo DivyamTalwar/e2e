@@ -138,7 +138,7 @@ export async function performAt(session: BidiSession, point: ViewportPoint, acti
 
 /** Types into whatever holds focus, in any document of the tab, refusing when nothing there takes keystrokes. */
 export async function typeText(session: BidiSession, text: string, replace: boolean, signal: AbortSignal): Promise<void> {
-  const documents = await session.documentContexts(session.requireContext());
+  const documents = await session.callableDocuments(session.requireContext());
   const editable = await Promise.all(documents.map((context) =>
     unlessStale(session.page.run(focusTakesKeys, [], context), false)));
   if (!editable.includes(true)) {
@@ -178,7 +178,7 @@ export async function typeInto(session: BidiSession, text: string, signal: Abort
       await session.input.send([typeSource(run.graphemes.join(''))], signal);
       continue;
     }
-    contexts ??= await session.documentContexts(session.requireContext());
+    contexts ??= await session.callableDocuments(session.requireContext());
     for (let left = run.graphemes; left.length > 0;) {
       signal.throwIfAborted();
       session.input.mutated();
@@ -535,7 +535,7 @@ async function dragTo(session: BidiSession, source: NodeTarget, target: NodeTarg
  */
 async function drag(session: BidiSession, from: ViewportPoint, to: () => Promise<ViewportPoint>, durationMs: number, signal: AbortSignal): Promise<void> {
   const context = session.requireContext();
-  const documents = await session.documentContexts(context);
+  const documents = await session.callableDocuments(context);
   if (session.browser.traits.cdp) await chromiumDrag(session.input, session.connection, context, documents, from, to, durationMs, signal);
   else await firefoxDrag(session.input, session.connection, documents, from, to, durationMs, signal);
 }
