@@ -22,7 +22,7 @@ import type { EngineHandle, Secret } from '@e2e-dev/core/engine';
 import type { Browser } from '../../src/index.ts';
 import { PROTECTED_CREDENTIAL, startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { browserFixture, byRole, cleanup, initInfo, operation, testWeb as web } from '../helpers/web-session.ts';
+import { browserFixture, byRole, cleanup, initInfo, onFirefox, operation, testWeb as web } from '../helpers/web-session.ts';
 
 async function boot(
   engine: EngineHandle,
@@ -89,11 +89,16 @@ function startCacheable(): Promise<Pick<FixtureApp, 'url' | 'close'> & { readonl
   });
 }
 
+/** Names an empty icon for a page, so no browser requests `/favicon.ico` for it. */
+const NO_ICON = '<link rel="icon" href="data:,">';
+
 /**
  * A gate that challenges every request for the fixture's credential. With
  * it, `/hop?to=<url>` answers a redirect to `to`, `/locked` challenges
  * again whatever was sent, and any other path answers a page headed
- * `Through`. `asked` keeps the headers of the requests it got, by path.
+ * `Through`. `asked` keeps the headers of the requests it got, by path. Its
+ * pages name an empty icon, so Firefox asks the gate for none: that request
+ * would be challenged at `/` beside the test's own.
  */
 function startGate(): Promise<Pick<FixtureApp, 'url' | 'close'> & { readonly asked: Map<string, IncomingHttpHeaders[]> }> {
   const asked = new Map<string, IncomingHttpHeaders[]>();
@@ -102,7 +107,7 @@ function startGate(): Promise<Pick<FixtureApp, 'url' | 'close'> & { readonly ask
     asked.set(url.pathname, [...(asked.get(url.pathname) ?? []), request.headers]);
     if (request.headers.authorization !== AUTHORIZATION || url.pathname === '/locked') {
       response.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'www-authenticate': 'Basic realm="gate"' });
-      response.end('<!doctype html><title>Gate</title><h1>Unauthorized</h1>');
+      response.end(`<!doctype html><title>Gate</title>${NO_ICON}<h1>Unauthorized</h1>`);
       return;
     }
     const to = url.searchParams.get('to');
@@ -112,7 +117,7 @@ function startGate(): Promise<Pick<FixtureApp, 'url' | 'close'> & { readonly ask
       return;
     }
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    response.end('<!doctype html><title>Gate</title><h1>Through</h1>');
+    response.end(`<!doctype html><title>Gate</title>${NO_ICON}<h1>Through</h1>`);
   });
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
@@ -378,6 +383,38 @@ describe('web({ headers, basicAuth })', () => {
       expect(await headingAt(engine, 'b4', through(`${gate.url.replace('127.0.0.1', 'localhost')}/landing`))).toBe('Through');
       expect(routed).toEqual(['/landing', '/hop']);
       expect(sent('/landing')).toEqual([['routed', undefined], ['routed', AUTHORIZATION]]);
+    } finally {
+      await shutdown(engine);
+      await gate.close();
+    }
+  });
+
+  it('runs a route once for a request the browser sends again with the credentials it holds for the realm', async () => {
+    const gate = await startGate();
+    const engine = web({ basicAuth: PROTECTED_CREDENTIAL });
+    try {
+      await boot(engine, gate, artifactsDir, 'b5');
+      const browser = browserOf(engine, gate);
+      const routed: string[] = [];
+      // The override names no authorization header.
+      await browser.route(/\/(api\/me|app\/data)$/, async (route) => {
+        routed.push(new URL(route.request.url).pathname);
+        await route.continue({ headers: { 'x-route': 'routed' } });
+      });
+      const sent = (pathname: string) => gate.asked.get(pathname)?.map((headers) => [headers['x-route'], headers.authorization]);
+      const fetched = (pathname: string) => browser.evaluate(async (target) => (await fetch(target)).status, pathname);
+      // The page's challenge is answered, and the browser keeps the credentials for the realm, under /app/.
+      expect(await headingAt(engine, 'b5', `${gate.url}/app/page`)).toBe('Through');
+      // Outside /app/ the request goes bare, and the browser answers its challenge from the realm itself, raising none.
+      const [response, status] = await Promise.all([browser.waitForResponse('**/api/me'), fetched('/api/me')]);
+      expect([status, response.status]).toEqual([200, 200]);
+      expect(routed).toEqual(['/api/me']);
+      expect(sent('/api/me')).toEqual([['routed', undefined], ['routed', AUTHORIZATION]]);
+      // Inside it Chromium adds the credentials as the request goes. Firefox has them on the held request,
+      // where the override leaves them out, so the gate challenges it and the driver answers.
+      expect(await fetched('/app/data')).toBe(200);
+      expect(routed).toEqual(['/api/me', '/app/data']);
+      expect(sent('/app/data')).toEqual(onFirefox ? [['routed', undefined], ['routed', AUTHORIZATION]] : [['routed', AUTHORIZATION]]);
     } finally {
       await shutdown(engine);
       await gate.close();

@@ -7,8 +7,8 @@
  * decision (`network.continueRequest`, `provideResponse`, or `failRequest`),
  * after any fetch of its own a route makes of it. A held basic-auth
  * challenge is answered here too (`continueWithAuth`). The binding hands
- * each request over with its record, where a decision keeps what the
- * request's later hops and a response wait read.
+ * each request over with its record when its hop starts, where a decision
+ * keeps what the request's later hops and a response wait read.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -139,20 +139,20 @@ export class RequestDecisions {
   ) {}
 
   /**
-   * Decides a held request as Playwright does. One with no `record` is not
-   * the attempt's (another user context's, or of no frame) and goes on
-   * untouched. So does a hop whose challenge was answered with credentials:
-   * Firefox announces it again when it sends it with them, carrying what it
-   * was continued with the first time, and deciding it again would run a
-   * route twice for one request and apply header overrides that leave the
-   * credentials out. Of the attempt's others, a redirect hop goes on with
-   * what its first hop was continued with, a CORS preflight is answered
-   * while routes are set, a request of a `blank`-served tab gets a blank
-   * page, and the rest go through the routes.
+   * Decides a held request as Playwright does. One with no `record` goes on
+   * untouched: it is not the attempt's (another user context's, or of no
+   * frame), or its hop was announced before. Firefox announces a hop again
+   * when it sends it again with credentials, carrying what it was continued
+   * with the first time, and deciding it again would run a route twice for
+   * one request and apply header overrides that leave the credentials out.
+   * Of the others, a redirect hop goes on with what its first hop was
+   * continued with, a CORS preflight is answered while routes are set, a
+   * request of a `blank`-served tab gets a blank page, and the rest go
+   * through the routes.
    */
   decide(event: BidiEventParams<'network.beforeRequestSent'>, record: DecisionRecord | undefined, blank: boolean): void {
     const request = event.request.request;
-    if (record === undefined || record.challenge === 'answered') {
+    if (record === undefined) {
       this.pass(request);
       return;
     }

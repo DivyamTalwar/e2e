@@ -224,7 +224,10 @@ describe('AttemptNetwork', () => {
     });
   });
 
-  it('sends a hop Firefox announces again with credentials on as it is, past the routes and the redirect headers', async () => {
+  it.each([
+    ['its challenge was answered with', true],
+    ['the browser holds for the realm, which raise no challenge', false],
+  ])('sends a hop on as it is, past the routes and the redirect headers, when Firefox announces it again with the credentials %s', async (_name, challenged) => {
     const fake = new FakeBidi();
     const second = 'http://other.test/private';
     const { net, open } = network(fake, { headers: true, credentials: { username: 'ada', password: 'secret' }, credentialOrigins: [new URL(second).origin], browser: 'firefox' });
@@ -242,17 +245,19 @@ describe('AttemptNetwork', () => {
       await settle();
       return fake.commands('network.continueRequest').at(-1)?.params;
     };
-    const challenged = { ...request('r', `${SITE}/private`), response: { status: 401 } };
+    /** Hop `count` is announced again at `url`, after its challenge when one is raised, and what it was continued with. */
+    const resent = (url: string, count: number): Promise<Record<string, unknown> | undefined> => {
+      if (challenged) fake.emit('network.authRequired', { ...request('r', `${SITE}/private`), response: { status: 401 } });
+      return announced(url, count);
+    };
     const overridden = { request: 'r', headers: expect.arrayContaining([{ name: 'x-route', value: { type: 'string', value: 'routed' } }, { name: 'x-preview', value: { type: 'string', value: 'token' } }]) };
     expect(await announced(`${SITE}/private`, 0)).toEqual(overridden);
-    fake.emit('network.authRequired', challenged);
-    expect(await announced(`${SITE}/private`, 0)).toEqual({ request: 'r' });
+    expect(await resent(`${SITE}/private`, 0)).toEqual({ request: 'r' });
     fake.emit('network.responseCompleted', { ...request('r', `${SITE}/private`, []), response: { url: `${SITE}/private`, status: 302, headers: LOCATION } });
     expect(await announced(second, 1)).toEqual(overridden);
-    fake.emit('network.authRequired', challenged);
-    expect(await announced(second, 1)).toEqual({ request: 'r' });
+    expect(await resent(second, 1)).toEqual({ request: 'r' });
     expect(routed).toBe(1);
-    expect(fake.commands('network.continueWithAuth').map((command) => command.params['action'])).toEqual(['provideCredentials', 'provideCredentials']);
+    expect(fake.commands('network.continueWithAuth').map((command) => command.params['action'])).toEqual(challenged ? ['provideCredentials', 'provideCredentials'] : []);
   });
 
   describe('a response wait on a request whose basic-auth challenge is held', () => {

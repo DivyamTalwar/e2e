@@ -187,9 +187,10 @@ export class NetworkBinding implements DecisionScope {
   }
 
   /**
-   * A request started a hop. The attempt's own, from a frame, is recorded;
-   * one an intercept of the binding holds is decided, with its record when
-   * it has one.
+   * A request started a hop, or the browser announces one again. The
+   * attempt's own, from a frame, is recorded; one an intercept of the
+   * binding holds is decided, with its record when the hop is the attempt's
+   * and starts with the event.
    */
   private onRequest(event: BidiEventParams<'network.beforeRequestSent'>): void {
     const record = event.context !== null && this.options.ours(event) ? this.started(event, event.context) : undefined;
@@ -279,17 +280,21 @@ export class NetworkBinding implements DecisionScope {
   }
 
   /**
-   * The record of the attempt's request whose hop `event` starts in
-   * `context`: where the hop goes, and whether it counts as in flight, as a
+   * Records the hop of the attempt's request that `event` announces in
+   * `context`: where it goes, and whether it counts as in flight, as a
    * request of the attempt's tab does unless it is an EventSource stream,
-   * which never settles. A hop further along the redirects starts without
-   * the fulfilled body and the decided challenge of the hop before it; the
-   * redirect count tells it from a hop Firefox announces again, as it does
-   * when it resends one with credentials.
+   * which never settles. Returns the record when the hop starts with the
+   * event, which a new redirect count tells: it starts without the
+   * fulfilled body and the decided challenge of the hop before it. Under
+   * the count of the hop in flight Firefox announces that hop again, each
+   * time it sends it again with credentials: the ones its challenge was
+   * answered with, or the ones it holds for the realm, which raise no
+   * challenge. Nothing is returned for it, so a hop is decided once.
    */
-  private started(event: BidiEventParams<'network.beforeRequestSent'>, context: string): RequestRecord {
+  private started(event: BidiEventParams<'network.beforeRequestSent'>, context: string): RequestRecord | undefined {
     const record = this.record(event.request.request, context);
-    if (record.redirectCount !== event.redirectCount) {
+    const starts = record.redirectCount !== event.redirectCount;
+    if (starts) {
       record.redirectCount = event.redirectCount;
       delete record.fulfilledBody;
       delete record.challenge;
@@ -298,7 +303,7 @@ export class NetworkBinding implements DecisionScope {
     record.url = event.request.url;
     record.settled = false;
     record.counted = this.options.onPage(context) && headerRecord(event.request.headers)['accept'] !== 'text/event-stream';
-    return record;
+    return starts ? record : undefined;
   }
 
   /** The body the request collector kept for `request`; undefined when there is no collector or it kept none (too large, a stream). */
