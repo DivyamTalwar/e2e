@@ -17,7 +17,7 @@ import path from 'node:path';
 import type { Network, Storage } from 'webdriver-bidi-protocol';
 import { EngineError, TestError, type JsonValue, type OperationContext, type TextPattern } from '@e2e-dev/core/engine';
 import type { BrowserTraits } from '../browsers.ts';
-import { BidiError, releaseQuietly } from '../errors.ts';
+import { asError, BidiError, releaseQuietly } from '../errors.ts';
 import { lowercaseNames, type ProtectedApp } from '../protected-app.ts';
 import type { BidiConnection, BidiEventParams } from './connection.ts';
 import { CONTENT_TYPES } from './content-types.ts';
@@ -258,7 +258,7 @@ export class RequestDecisions {
    */
   private fail(cause: unknown): void {
     if (cancelledRequest(cause)) return;
-    this.options.onFailure(cause instanceof Error ? cause : new Error(String(cause)));
+    this.options.onFailure(asError(cause));
   }
 
   /** Runs the matching routes newest first, then lets the request through with the site headers. */

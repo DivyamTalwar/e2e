@@ -17,6 +17,11 @@ export function message(cause: unknown): string {
   return text.replace(ANSI_PATTERN, '');
 }
 
+/** A thrown value as an `Error`: itself when it is one, else an `Error` of its text. */
+export function asError(cause: unknown): Error {
+  return cause instanceof Error ? cause : new Error(String(cause));
+}
+
 /** An operation the engine's state rules out now. */
 export function invalidState(text: string): EngineError {
   return new EngineError('INVALID_STATE', text, { retryable: false });

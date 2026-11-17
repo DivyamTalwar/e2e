@@ -10,6 +10,7 @@ import type { AppLogEntry } from '@e2e-dev/core/engine';
 import type { ContextTree } from './context-tree.ts';
 import type { BidiSession } from './session.ts';
 import type { BidiConnection } from './connection.ts';
+import { asError } from '../errors.ts';
 import { callFunction } from './script.ts';
 
 /** The events every session subscribes to for as long as the browser runs. */
@@ -197,9 +198,4 @@ function consoleText(text: string, stackTrace: Script.StackTrace | undefined): s
 /** A browser's own request for a site icon the app never served, which the app log leaves out. */
 function isMissingFavicon(url: string, status: number): boolean {
   return status === 404 && URL.canParse(url) && new URL(url).pathname === '/favicon.ico';
-}
-
-/** A thrown value as an Error, for the latch. */
-function asError(cause: unknown): Error {
-  return cause instanceof Error ? cause : new Error(String(cause));
 }

@@ -2,7 +2,7 @@
 
 import type { Commands, Event as BidiEvent, Message } from 'webdriver-bidi-protocol';
 import { EngineError } from '@e2e-dev/core/engine';
-import { BidiError } from '../errors.ts';
+import { asError, BidiError } from '../errors.ts';
 
 /** A text transport carrying BiDi messages: a WebSocket, or the Chromium mapper's process. */
 export interface BidiTransport {
@@ -61,7 +61,7 @@ export class BidiConnection {
         this.transport.send(JSON.stringify({ id, method, params }));
       } catch (cause) {
         this.pending.delete(id);
-        reject(cause instanceof Error ? cause : new Error(String(cause)));
+        reject(asError(cause));
       }
     });
   }

@@ -14,7 +14,7 @@ import { EngineError, raceAbort, withTimeout } from '@e2e-dev/core/engine';
 import { BROWSER_TRAITS, type BrowserName, type BrowserTraits } from '../browsers.ts';
 import { endpointLine, spawnWatched, stopped, type Watchdog } from './browser-watchdog.ts';
 import { ChromiumCdp } from './cdp.ts';
-import { cancelled, releaseQuietly } from '../errors.ts';
+import { cancelled, message, releaseQuietly } from '../errors.ts';
 import { chromiumArgs, firefoxArgs } from './launch-flags.ts';
 import { chromiumMapper } from './mapper-transport.ts';
 import type { CdpTarget, WebMedia } from '../options.ts';
@@ -172,7 +172,7 @@ async function open(spec: BidiOpen): Promise<BidiBrowser> {
 /** A launch or attach failure as the engine reports it: a classified error passes, anything else names what failed. */
 function launchFailure(what: string, cause: unknown): EngineError {
   if (cause instanceof EngineError) return cause;
-  return new EngineError('ENGINE_FAILURE', `${what}: ${cause instanceof Error ? cause.message : String(cause)}`, { retryable: false, cause });
+  return new EngineError('ENGINE_FAILURE', `${what}: ${message(cause)}`, { retryable: false, cause });
 }
 
 /**
