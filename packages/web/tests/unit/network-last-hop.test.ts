@@ -50,6 +50,23 @@ describe('the last hop of a request', () => {
     expect(next).toEqual({ request: 'r' });
   });
 
+  it.each([204, 304])('reads the body of a %s as empty without asking the browser for it', async (status) => {
+    const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'never read' } } });
+    const { net, open } = network(fake);
+    await net.bind('user-1');
+    await open('tab');
+    const waiting = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
+    await settle();
+    fake.emit('network.beforeRequestSent', request('r', START));
+    await settle();
+    const answer = { ...request('r', START), isBlocked: false, response: responseData(START, status) };
+    fake.emit('network.responseStarted', answer);
+    fake.emit('network.responseCompleted', answer);
+    expect(await (await waiting).body()).toEqual(Buffer.alloc(0));
+    expect(fake.commands('network.getData')).toEqual([]);
+    expect(fake.commands('network.disownData').map((command) => command.params)).toContainEqual(expect.objectContaining({ dataType: 'response', request: 'r' }));
+  });
+
   it.each([301, 302, 303, 307, 308])('takes a %s that names no Location as the last hop', async (status) => {
     const { released, next } = await answered(status, []);
     expect(released).toBe(true);

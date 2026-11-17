@@ -507,6 +507,10 @@ export class NetworkBinding implements DecisionScope {
           if (isRedirect(event.response)) throw new Error('Response body is unavailable for redirect responses');
           await loaded;
           if (record.fulfilledBody !== undefined) return record.fulfilledBody;
+          if (endsAtItsHeaders(event.response)) {
+            void releaseQuietly(connection.send('network.disownData', { dataType: 'response', collector, request }));
+            return Buffer.alloc(0);
+          }
           record.body ??= connection.send('network.getData', { dataType: 'response', request, collector, disown: true }).then((data) => bytesOf(data.bytes));
           return await record.body;
         } finally {
@@ -590,6 +594,15 @@ function hopLoaded(record: RequestRecord): Promise<void> {
   });
   loaded.catch(() => undefined);
   return loaded;
+}
+
+/**
+ * Whether `response` ends at its headers: a 204 and a 304 cannot carry
+ * content (RFC 9110, section 6.4.1), so a read of its body asks the browser
+ * for nothing. Firefox answers `network.getData` for a 304 seconds late.
+ */
+function endsAtItsHeaders(response: Network.ResponseData): boolean {
+  return response.status === 204 || response.status === 304;
 }
 
 /** `headers` without the cookie headers, which a response wait leaves out as Playwright's `response.headers()` does. */

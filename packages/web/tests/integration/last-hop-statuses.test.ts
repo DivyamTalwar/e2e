@@ -80,6 +80,7 @@ describe('the 3xx response that ends a request', () => {
     ]);
     expect(response.status).toBe(304);
     expect(validators).toEqual([undefined, '"v1"']);
+    expect(await response.body()).toEqual(Buffer.alloc(0));
     await browser.goto(page, { waitUntil: 'networkidle' });
     expect(validators).toEqual([undefined, '"v1"', '"v1"']);
     expect(await browser.evaluate(() => (window as unknown as { revalidated?: number }).revalidated ?? 0)).toBe(1);
