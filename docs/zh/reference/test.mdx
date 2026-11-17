@@ -578,7 +578,7 @@ test('renames the workspace', async ({ workspace, screen }) => {
 | 错误用法 | 失败位置和错误 |
 | --- | --- |
 | 值不是由函数组成的普通对象、名称为空、使用核心名称（`agent`、`app`、`screen`、`platform`、`session`），或名称已由链中更早的 `extend` 定义 | 导入时抛出 `COLLECTION_ERROR`，指出测试夹具名称 |
-| 使用测试目标引擎提供的名称（Playwright 测试目标上的 `browser`） | 尝试的 `beforeEach` 阶段，`TEST_SETUP_FAILED` |
+| 使用测试目标引擎提供的名称（网页端测试目标上的 `browser`） | 尝试的 `beforeEach` 阶段，`TEST_SETUP_FAILED` |
 | 定义未调用 `use` 就返回 | 尝试的 `beforeEach` 阶段，`TEST_SETUP_FAILED` |
 | 定义调用了两次 `use` | 尝试的清理阶段，`TEST_SETUP_FAILED` |
 | 定义在 `use` 之前抛出异常 | 尝试的 `beforeEach` 阶段，使用该错误 |
