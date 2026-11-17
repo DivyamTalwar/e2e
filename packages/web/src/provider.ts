@@ -49,7 +49,12 @@ export interface BrowserRequest {
   readonly attemptId?: string | undefined;
   /** The run's environment: where a provider reads its token from, never `process.env`. */
   readonly env: Readonly<Record<string, string | undefined>>;
-  /** Aborts on interrupt, and when the attempt that needs the browser is cancelled or exceeds its budget. */
+  /**
+   * Aborts when the browser is no longer wanted. In `prepare`, on interrupt.
+   * For a per-attempt lease, when the attempt is cancelled or exceeds its
+   * budget. For a worker's replacement, when the worker is disposed or the
+   * replacement takes more than 60 seconds.
+   */
   readonly signal: AbortSignal;
   /** Reports one line of progress to the run's reporter (a session URL to watch), from the runner and from a worker alike. */
   readonly log: (line: string) => void;

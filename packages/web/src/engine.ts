@@ -2,7 +2,7 @@
  * The web engine for e2e: a browser driven over WebDriver BiDi, built with
  * the public `defineEngine`, validated by the same rules and graded by the
  * same capabilities as any other engine. Core imports nothing from here; this
- * package imports the contract from `e2e/engine` and contributes the `browser`
+ * package imports the contract from `@e2e-dev/core/engine` and contributes the `browser`
  * fixture the way a device engine contributes `device`.
  */
 

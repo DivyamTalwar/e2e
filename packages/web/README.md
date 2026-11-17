@@ -6,13 +6,21 @@ Firefox natively, Chromium through the chromium-bidi mapper.
 
 `e2e` ships no engine of its own: every target names the engine that drives
 it, and this package is the one for browsers. It implements the public
-`e2e/engine` contract, so a device or desktop engine plugs into the same
-seam with no privilege either way.
+`@e2e-dev/core/engine` contract (`e2e/engine` to the runner), so a device or
+desktop engine plugs into the same seam with no privilege either way.
 
 ## Install
 
 ```bash
 npm install --save-dev e2e @e2e-dev/web
+```
+
+To drive a browser from a program without the test runner, install
+[`@e2e-dev/core`](https://www.npmjs.com/package/@e2e-dev/core) instead of `e2e`, and
+import `web` from `@e2e-dev/web/engine`:
+
+```bash
+npm install @e2e-dev/core @e2e-dev/web
 ```
 
 ```ts title="e2e.config.ts"
@@ -51,11 +59,13 @@ Set `connect.cdpEndpoint` to attach over the Chrome DevTools Protocol rather
 than launch. The resolver is async and called at worker init, and again at the
 start of any attempt that finds the session dropped, so a hosted browser whose
 endpoint is provisioned per run (a cloud session URL that is not known at
-config load) resolves each time it is needed. The resolver receives an
-`AbortSignal` that fires when the init or attempt is cancelled or exceeds its
-budget; a browser that connects after that is detached, never used. CDP attach
-is chromium-only, and disposing the engine detaches the session without
-killing the remote process the host owns.
+config load) resolves each time it is needed. An attach the init or attempt
+gave up on keeps going, and the next attempt uses its browser. The resolver
+receives an `AbortSignal` that aborts when the worker is disposed, or the
+attach takes more than 60 seconds: a resolver that provisions a session should
+stop and release it then, since a browser that arrives after that is detached.
+CDP attach is chromium-only, and disposing the engine detaches the session
+without killing the remote process the host owns.
 
 ```ts
 engine: web({
@@ -134,13 +144,15 @@ user cache (`~/Library/Caches/e2e/browsers`, `~/.cache/e2e/browsers`, or
 `%LOCALAPPDATA%\e2e\browsers`). Under pnpm, run the bin by name:
 `pnpm exec e2e-web install chromium --with-deps`.
 
-Chromium video needs an ffmpeg with VP9: `E2E_FFMPEG_PATH`, else a system
-`ffmpeg`, else a pinned build the first recording downloads. `install ffmpeg`
-fetches it ahead of time.
+Chromium video needs an ffmpeg with VP9: `E2E_FFMPEG_PATH`, else the pinned
+build when it is already installed, else a system `ffmpeg`. With none of
+them, the first recording downloads the pinned build. `install ffmpeg` fetches
+it ahead of time.
 
 `--with-deps` also installs the system libraries a slim Debian or Ubuntu image
 lacks. `E2E_BROWSERS_DOWNLOAD_HOST` names a mirror, and downloads honor
-`HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY`.
+`HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY` (on Node 22 and Node 24 before
+24.14, with `NODE_USE_ENV_PROXY=1`).
 
 ## Documentation
 
