@@ -97,7 +97,8 @@ jobs:
 
   test:
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 15
+    # Every package's tests in a row: about 16 minutes with the web engine's on both browsers.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
