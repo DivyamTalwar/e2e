@@ -176,6 +176,31 @@ describe('input', () => {
     expect(await log()).toEqual(onFirefox ? [] : ['card']);
   });
 
+  it.each([
+    ['a source the first step of the drag leaves', 80, 30],
+    ['a source the first step of the drag stays on', 600, 300],
+  ])('ends an HTML5 drag from %s with its drop and no pointer or mouse release, as a person\'s drag does, and takes a tap after it', async (_name, width, height) => {
+    await page.setContent(`<div id=card draggable=true style="width:${String(width)}px;height:${String(height)}px">card</div><div id=done style="margin-top:20px;width:200px;height:100px">done</div>
+      <script>
+        window.log = [];
+        for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'pointercancel', 'click', 'dragstart', 'drop', 'dragend']) {
+          addEventListener(type, (event) => log.push(type + ':' + event.target.id), true);
+        }
+        card.addEventListener('dragstart', (event) => event.dataTransfer.setData('text/plain', 'card'));
+        done.addEventListener('dragover', (event) => event.preventDefault());
+        done.addEventListener('drop', (event) => event.preventDefault());
+      </script>`);
+    const drop = page.browser.locator('#card').dragTo(page.browser.locator('#done'));
+    if (onFirefox) await expect(drop).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' });
+    else await drop;
+    // Firefox drops no drag the page starts, so the drag it refuses ends without a drop and its release reaches the page, with a click on what holds both ends.
+    expect(await page.browser.evaluate('window.log.splice(0).filter((line) => !line.startsWith("pointercancel")).map((line) => line.replace(/:(?!card|done).*$/, ":"))')).toEqual(onFirefox
+      ? ['pointerdown:card', 'mousedown:card', 'dragstart:card', 'dragend:card', 'pointerup:done', 'mouseup:done', 'click:']
+      : ['pointerdown:card', 'mousedown:card', 'dragstart:card', 'drop:done', 'dragend:card']);
+    await page.browser.locator('#done').tap();
+    expect(await page.browser.evaluate('window.log')).toEqual(['pointerdown:done', 'mousedown:done', 'pointerup:done', 'mouseup:done', 'click:done']);
+  });
+
   it('refuses a pointer target outside the viewport before sending anything, and takes its far edge', async () => {
     await page.setContent('<button style="width:200px;height:100px" onmouseleave="window.left = true">hover me</button>');
     await page.browser.mouse.move(50, 50);

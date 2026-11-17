@@ -55,6 +55,11 @@ function dragStarted(): Promise<boolean> | boolean {
  * there through `dragPath`, and releases; a drag the page starts on the
  * first move carries its data to the drop. The first move is one discrete
  * step, and the rest of a drag the page did not start take `durationMs`.
+ * The button of a drag the page started is released before its enter,
+ * over, and drop are dispatched: Chromium takes the release of a drag in
+ * progress for its end and tells the page nothing of it, as with a
+ * person's drag, where one sent after the drop reaches the page as a
+ * `pointerup` and a `mouseup` no person's drag ends with.
  * Every input goes through `input`, the scripts and the drag event
  * subscription through `connection`. Once `signal` aborts, nothing more is
  * dispatched; however it ends, interception is off and the button is up
@@ -102,6 +107,8 @@ export async function chromiumDrag(
       pressed = false;
       return;
     }
+    await input.send(releaseSources(), signal);
+    pressed = false;
     await input.dragEvent('dragEnter', first!, data, signal);
     for (const point of rest) await input.dragEvent('dragOver', point, data, signal);
     await input.dragEvent('drop', last, data, signal);
