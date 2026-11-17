@@ -3,8 +3,10 @@
  * request-stage pause reaches the mapper after the hop's
  * `Network.requestWillBeSent`, whichever Chrome sent first, a load the
  * renderer starts over is continued with what its first pause was continued
- * with, a paused request's post data is answered from its pause, and a
- * site icon's pauses, whose events the mapper drops, are answered instead.
+ * with, a paused request's post data is answered from its pause until the
+ * mapper answers the pause, a site icon's pauses, whose events the mapper
+ * drops, are answered instead, and a request is forgotten on every session
+ * once its load ends on any.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -212,7 +214,7 @@ describe('cdpFixups restarted loads', () => {
 describe('cdpFixups request bodies', () => {
   const base64 = (bytes: number[] | string): string => Buffer.from(bytes as never).toString('base64');
   /** A request-stage pause of `networkId` whose request Chrome lists `entries` for, each its bytes or none; `undefined` for a request without a body. */
-  const posting = (networkId: string, entries: readonly (string | null)[] | undefined, hop = 0): string => paused(networkId, hop, 's', {
+  const posting = (networkId: string, entries: readonly (string | null)[] | undefined, hop = 0, sessionId = 's'): string => paused(networkId, hop, sessionId, {
     request: {
       url: 'http://app.test/upload',
       method: 'POST',
@@ -261,7 +263,72 @@ describe('cdpFixups request bodies', () => {
   it('sends the browser the command for a request that is not paused: one never held, another session\'s, one whose load ended', () => {
     const command = { id: 11, method: 'Network.getRequestPostData', params: { requestId: 'r' }, sessionId: 's' };
     expect(fix([willBeSent('r'), asked('r')]).sent).toEqual([command]);
-    expect(fix([willBeSent('r', 'other'), posting('r', [base64('a=1')]).replace('"sessionId":"s"', '"sessionId":"other"'), asked('r')]).sent).toEqual([command]);
+    expect(fix([willBeSent('r', 'other'), posting('r', [base64('a=1')], 0, 'other'), asked('r')]).sent).toEqual([command]);
     expect(fix([willBeSent('r'), posting('r', [base64('a=1')]), finished('r'), asked('r')]).sent).toEqual([command]);
+  });
+
+  it('keeps the body no longer than the pause: once the mapper continued, fulfilled, or failed it, the browser is asked', () => {
+    const command = { id: 11, method: 'Network.getRequestPostData', params: { requestId: 'r' }, sessionId: 's' };
+    for (const method of ['Fetch.continueRequest', 'Fetch.fulfillRequest', 'Fetch.failRequest']) {
+      const answered = { id: 7, method, params: { requestId: pauseId('r') }, sessionId: 's' };
+      const { delivered, sent } = fix([willBeSent('r'), posting('r', [base64('a=1')]), { mapper: JSON.stringify(answered) }, asked('r')]);
+      expect(answer(delivered)).toBeUndefined();
+      expect(sent).toEqual([answered, command]);
+    }
+  });
+
+  it('answers from the pause of a load that started over after its first pause was answered', () => {
+    const again = JSON.stringify({ method: 'Fetch.requestPaused', sessionId: 's', params: { requestId: pauseId('r', 0, 'again'), networkId: 'r', request: { url: 'http://app.test/upload', method: 'POST', hasPostData: true, postDataEntries: [{ bytes: base64('b=2') }] } } });
+    const { delivered } = fix([willBeSent('r'), posting('r', [base64('a=1')]), continued(pauseId('r')), again, asked('r')]);
+    expect(answer(delivered)).toMatchObject({ result: { postData: base64('b=2') } });
+  });
+
+  it('forgets a request paused on one session once its load ends on another, as a worker\'s fetch does: the browser is asked for its body', () => {
+    const command = { id: 11, method: 'Network.getRequestPostData', params: { requestId: 'r' }, sessionId: 'page' };
+    const fetched = [willBeSent('r', 'worker'), posting('r', [base64('a=1')], 0, 'page')];
+    expect(answer(fix([...fetched, asked('r', 'page')]).delivered)).toMatchObject({ result: { postData: base64('a=1') } });
+    const { delivered, sent } = fix([...fetched, finished('r', 'worker'), asked('r', 'page')]);
+    expect(answer(delivered)).toBeUndefined();
+    expect(sent).toEqual([command]);
+  });
+});
+
+describe('cdpFixups across sessions', () => {
+  const headers = [{ name: 'x-gate', value: 'open' }];
+
+  it('forgets what a pause was continued with once the load ends on another session, as a document that commits in another process does', () => {
+    const { sent } = fix([
+      willBeSent('r', 'parent'),
+      paused('r', 0, 'parent'),
+      continued(pauseId('r'), { headers }, 'parent'),
+      finished('r', 'frame'),
+      restarted('r', 'parent'),
+      continued(pauseId('r', 0, 'again'), {}, 'parent'),
+    ]);
+    expect(sent.at(-1)).toEqual({ id: 7, method: 'Fetch.continueRequest', params: { requestId: pauseId('r', 0, 'again') }, sessionId: 'parent' });
+  });
+
+  it('hands a pause held on one session on when its request ends on another', () => {
+    expect(reorder([willBeSent('r', 'parent'), paused('r', 0, 'parent'), paused('r', 1, 'parent'), finished('r', 'frame')]))
+      .toEqual([willBeSent('r', 'parent'), paused('r', 0, 'parent'), finished('r', 'frame'), paused('r', 1, 'parent')]);
+  });
+
+  it('hands a response ExtraInfo held on one session on before the end that arrives on another', () => {
+    expect(reorder([willBeSent('r', 'parent'), responseInfo('r', 401, 'parent'), responseInfo('r', 200, 'parent'), finished('r', 'frame')]))
+      .toEqual([willBeSent('r', 'parent'), responseInfo('r', 401, 'parent'), responseInfo('r', 200, 'parent'), finished('r', 'frame')]);
+  });
+
+  it('leaves another request of the session alone when one ends elsewhere', () => {
+    const { sent } = fix([
+      willBeSent('kept', 'page'),
+      paused('kept', 0, 'page'),
+      continued(pauseId('kept'), { headers }, 'page'),
+      willBeSent('r', 'worker'),
+      paused('r', 0, 'page'),
+      finished('r', 'worker'),
+      restarted('kept', 'page'),
+      continued(pauseId('kept', 0, 'again'), {}, 'page'),
+    ]);
+    expect(sent.at(-1)).toEqual({ id: 7, method: 'Fetch.continueRequest', params: { requestId: pauseId('kept', 0, 'again'), headers }, sessionId: 'page' });
   });
 });

@@ -40,10 +40,21 @@
  * without a word, and has no answer for a body that is one such file. The
  * pause carries the body as the browser will send it (`postDataEntries`,
  * one entry without bytes for each part it cannot report: a file on disk, a
- * stream). For a request paused at the request stage the command is
- * answered here from its pause, and never reaches the browser: the bytes of
- * every entry, `NO_POST_DATA` for a request without a body, as Chrome
- * answers, and `UNREPORTED_POST_DATA` when an entry has no bytes.
+ * stream). From a request's pause at the request stage until the mapper
+ * answers it (continues, fulfills, or fails it), the command is answered
+ * here from the pause, and never reaches the browser: the bytes of every
+ * entry, `NO_POST_DATA` for a request without a body, as Chrome answers,
+ * and `UNREPORTED_POST_DATA` when an entry has no bytes. The body is kept no
+ * longer than that.
+ *
+ * Sessions: a request is kept per CDP session, and Chrome reports one
+ * request on more than one. A dedicated worker's script and its fetches are
+ * paused on the page's session and end on the worker's; a frame's document
+ * that commits in another process is paused on the session of the process
+ * the frame leaves and ends on that of the process it joins. Request ids
+ * are unique across the browser (a renderer's are its process id and a
+ * count, a document's is its loader's token), so the end of a request's
+ * load on any session releases what every session keeps of it.
  */
 
 /** Chrome's own failure of `Network.getRequestPostData` for a request without a body. */
@@ -57,7 +68,15 @@ interface PostDataEntry {
   readonly bytes?: string;
 }
 
-/** What the fixups keep of one request of a CDP session, from its first event until its load ends. */
+/** A request-stage pause the mapper was handed and has yet to continue, fulfill, or fail. */
+interface UnansweredPause {
+  /** Its Fetch id. */
+  readonly id: string;
+  /** The body it reported, part by part, as one part without bytes when it listed none; undefined for a request without one. */
+  readonly posted: readonly PostDataEntry[] | undefined;
+}
+
+/** What the fixups keep of one request of a CDP session, from its first event there until its load ends, on that session or another. */
 interface RequestHops {
   /** Whether a `Network.requestWillBeSent` announced any hop of it. */
   sent: boolean;
@@ -73,8 +92,8 @@ interface RequestHops {
   pauses: string[];
   /** What the mapper continued the first of `pauses` with, beside the id. */
   overrides?: Record<string, unknown>;
-  /** The body the latest of `pauses` reported, part by part, as one part without bytes when it listed none; undefined for a request without one. */
-  posted?: readonly PostDataEntry[];
+  /** The latest of `pauses`, until the mapper answers it. */
+  unanswered?: UnansweredPause;
 }
 
 /** The requests of one CDP session, by request id, and the ones a pause handed on belongs to, by Fetch id. */
@@ -141,8 +160,11 @@ function parseCommand(message: string): CdpCommand {
   return JSON.parse(message) as CdpCommand;
 }
 
-/** The commands of the mapper's the fixups change or answer. */
-const SENT = ['"Fetch.continueRequest"', '"Network.getRequestPostData"'];
+/** The commands of the mapper's that answer a request-stage pause. */
+const ANSWERS = ['Fetch.continueRequest', 'Fetch.fulfillRequest', 'Fetch.failRequest'];
+
+/** The commands of the mapper's the fixups read: the answers of a pause, of which a continue may change, and the one they answer themselves. */
+const SENT = [...ANSWERS, 'Network.getRequestPostData'].map((method) => `"${method}"`);
 
 /**
  * What `Network.getRequestPostData` answers for a request paused with the
@@ -169,10 +191,11 @@ function isSiteIcon(message: CdpMessage): boolean {
  * hop, and none of a site icon's pauses, which are answered on `write`, the
  * mapper's CDP socket. `send` takes each command of the mapper's and writes
  * it, its continue of a restarted load with what the load's first pause was
- * continued with; its `Network.getRequestPostData` for a paused request is
- * answered from the pause instead. Every other message passes through in
- * order, unparsed unless it names one of the events or commands the fixups
- * depend on.
+ * continued with; its `Network.getRequestPostData` for a request whose pause
+ * it has yet to answer is answered from the pause instead. A request is
+ * forgotten on every session once its load ends on any. Every other message
+ * passes through in order, unparsed unless it names one of the events or
+ * commands the fixups depend on.
  */
 export function cdpFixups(deliver: (message: string) => void, write: (message: string) => void): CdpFixups {
   const sessions = new Map<string, SessionRequests>();
@@ -194,8 +217,8 @@ export function cdpFixups(deliver: (message: string) => void, write: (message: s
   /**
    * Hands a request-stage pause on: to the mapper, or for a site icon,
    * straight back to the browser. One the mapper gets is kept by its Fetch
-   * id for the mapper's continue of it, with the body it reports: a
-   * redirect hop's starts the hop in flight, any other joins the pauses
+   * id for the mapper's answer of it, with the body it reports until then:
+   * a redirect hop's starts the hop in flight, any other joins the pauses
    * that hop already has.
    */
   const pause = (message: string, parsed: CdpMessage = parse(message)): void => {
@@ -215,10 +238,23 @@ export function cdpFixups(deliver: (message: string) => void, write: (message: s
       }
       hops.pauses.push(params.requestId);
       byPause.set(params.requestId, hops);
-      if (params.request?.hasPostData === true) hops.posted = params.request.postDataEntries ?? [{}];
-      else delete hops.posted;
+      hops.unanswered = { id: params.requestId, posted: params.request?.hasPostData === true ? (params.request.postDataEntries ?? [{}]) : undefined };
     }
     deliver(message);
+  };
+  /**
+   * Forgets request `id` on every session that keeps it, its load having
+   * ended on one of them; the pauses still held for a hop of it go to the
+   * mapper first.
+   */
+  const forget = (id: string): void => {
+    for (const requests of sessions.values()) {
+      const hops = requests.byId.get(id);
+      if (hops === undefined) continue;
+      for (const held of hops.held.splice(0)) pause(held);
+      for (const paused of hops.pauses) requests.byPause.delete(paused);
+      requests.byId.delete(id);
+    }
   };
   const receive = (message: string): void => {
     if (!WATCHED.some((method) => message.includes(method))) {
@@ -250,9 +286,11 @@ export function cdpFixups(deliver: (message: string) => void, write: (message: s
       deliver(message);
       return;
     }
-    if (method === 'Network.responseReceived' || method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
-      const hops = params?.requestId === undefined ? undefined : sessions.get(sessionId)?.byId.get(params.requestId);
-      for (const info of hops?.heldInfos.splice(0) ?? []) deliver(info);
+    const ended = (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') && params?.requestId !== undefined ? params.requestId : undefined;
+    if (method === 'Network.responseReceived' && params?.requestId !== undefined) {
+      for (const info of sessions.get(sessionId)?.byId.get(params.requestId)?.heldInfos.splice(0) ?? []) deliver(info);
+    } else if (ended !== undefined) {
+      for (const { byId } of sessions.values()) for (const info of byId.get(ended)?.heldInfos.splice(0) ?? []) deliver(info);
     }
     deliver(message);
     if (method === 'Network.requestWillBeSent' && params?.requestId !== undefined) {
@@ -268,13 +306,8 @@ export function cdpFixups(deliver: (message: string) => void, write: (message: s
       hops.redirects++;
       const held = hops.held.shift();
       if (held !== undefined) pause(held);
-    } else if ((method === 'Network.loadingFinished' || method === 'Network.loadingFailed') && params?.requestId !== undefined) {
-      const requests = sessions.get(sessionId);
-      const hops = requests?.byId.get(params.requestId);
-      if (requests === undefined || hops === undefined) return;
-      for (const held of hops.held.splice(0)) pause(held);
-      for (const id of hops.pauses) requests.byPause.delete(id);
-      requests.byId.delete(params.requestId);
+    } else if (ended !== undefined) {
+      forget(ended);
     } else if (method === 'Target.detachedFromTarget' && params?.sessionId !== undefined) {
       sessions.delete(params.sessionId);
     }
@@ -288,14 +321,19 @@ export function cdpFixups(deliver: (message: string) => void, write: (message: s
     const requests = sessions.get(parsed.sessionId ?? '');
     const named = parsed.params?.['requestId'];
     if (parsed.method === 'Network.getRequestPostData' && typeof named === 'string') {
-      const paused = requests?.byId.get(named);
-      if (paused === undefined || paused.pauses.length === 0) write(message);
+      const paused = requests?.byId.get(named)?.unanswered;
+      if (paused === undefined) write(message);
       else deliver(JSON.stringify({ id: parsed.id, ...postDataAnswer(paused.posted), ...(parsed.sessionId === undefined ? {} : { sessionId: parsed.sessionId }) }));
       return;
     }
-    const pauseId = parsed.method === 'Fetch.continueRequest' ? named : undefined;
-    const hops = typeof pauseId === 'string' ? requests?.byPause.get(pauseId) : undefined;
+    const pauseId = parsed.method !== undefined && ANSWERS.includes(parsed.method) && typeof named === 'string' ? named : undefined;
+    const hops = pauseId === undefined ? undefined : requests?.byPause.get(pauseId);
     if (hops === undefined) {
+      write(message);
+      return;
+    }
+    if (hops.unanswered?.id === pauseId) delete hops.unanswered;
+    if (parsed.method !== 'Fetch.continueRequest') {
       write(message);
       return;
     }
