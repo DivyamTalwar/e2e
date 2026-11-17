@@ -431,8 +431,16 @@ export const createSemanticReader = (
   /** Attributes that name an element rather than describe where it sits. */
   const NAMING_ATTRIBUTES = [options.testIdAttribute, 'name'];
 
+  /** Every root of the document, the shadow roots under it included (`dom.roots`), read once for the selectors this read derives. */
+  let searchedRoots: (Document | ShadowRoot)[] | undefined;
+
   /**
-   * A document-unique attribute selector for one element, when it has one.
+   * An attribute selector that names one element alone, when it has one: the
+   * only match in the document and every shadow root under it, the roots a
+   * selector chain searches, so a frame in a shadow root is named like any
+   * other, and never by what an element across a shadow boundary shares.
+   * Recorded closed roots count too, though no chain searches them: a match
+   * there only costs the element its name.
    *
    * A test ID names an element by definition; a form control's `name` names it
    * because the server reads it, which is also why it outlives redesigns. Ids
@@ -444,13 +452,14 @@ export const createSemanticReader = (
       const value = el.getAttribute(attribute);
       if (value === null || value === '') continue;
       const selector = `[${attribute}="${value.replace(/["\\]/g, '\\$&')}"]`;
-      let unique: boolean;
+      searchedRoots ??= dom.roots();
+      let matches = 0;
       try {
-        unique = el.ownerDocument.querySelectorAll(selector).length === 1;
+        for (const root of searchedRoots) matches += root.querySelectorAll(selector).length;
       } catch {
         continue;
       }
-      if (unique) return selector;
+      if (matches === 1) return selector;
     }
     return null;
   };
@@ -461,10 +470,13 @@ export const createSemanticReader = (
    * resolves again: what names the element, else positions counted down from
    * the nearest ancestor something names, else from `body`. A shadow root's
    * child is counted among the root's children under the root's host, which
-   * the selector chain's `>` crosses, so the path of a frame in a shadow
-   * root leads to it too. This is the one place a selector is derived: each
-   * `namedSelectorOf` probe is a document-wide query, and no runner consumes
-   * a per-node selector, so neither projection pays for one.
+   * the selector chain's `>` crosses, so the path of a frame in an open
+   * shadow root leads to it too. A frame in a closed root is listed and
+   * entered like any other, but no chain searches a closed root, so its path
+   * does not lead back to it: a `frameLocator` stops there. This is the one
+   * place a selector is derived: each `namedSelectorOf` probe queries every
+   * root, and no runner consumes a per-node selector, so neither projection
+   * pays for one.
    */
   const frameSelectorOf = (el: Element): string => {
     const named = namedSelectorOf(el);

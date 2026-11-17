@@ -2,11 +2,13 @@
  * A `frameLocator` chain resolves each frame inside the one before it: the
  * inner selector is looked up in the outer frame's document, never in the
  * page, as a browser's own frame chain does. A
- * located node's box is in the top-level viewport, as the contract asks.
+ * located node's box is in the top-level viewport, as the contract asks. The
+ * path an observation names a frame by leads back to that frame, in a shadow
+ * root and beside a frame that shares its test id too.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { LocatorExpression } from '@e2e-dev/core/engine';
+import type { LocatorExpression, SemanticNode } from '@e2e-dev/core/engine';
 import { BidiConnection } from '../../src/driver/connection.ts';
 import { readerCall } from '../../src/in-page/readers.ts';
 import { byRole, startWebSession, type WebSession } from '../helpers/web-session.ts';
@@ -347,6 +349,43 @@ describe('the path an observation names a frame by', () => {
     expect(inside.framePath).toHaveLength(1);
     const found = await page.locate(withinFrames(inside.framePath!, byRole('button', 'Inside')));
     expect(found.map((node) => node.name)).toEqual(['Inside']);
+  });
+
+  /** A frame with the test id `preview` whose document holds one button, `button`. */
+  const preview = (button: string): string => `<iframe data-testid="preview" srcdoc="<button>${button}</button>"></iframe>`;
+
+  /** Opens `light` with a shadow root of `mode` holding `shadow`, and answers the observed button named `name` for each of `names`, once every frame loaded. */
+  async function observedButtons<const N extends readonly string[]>(light: string, mode: 'open' | 'closed', shadow: string, names: N): Promise<{ [K in keyof N]: SemanticNode }> {
+    await page.setContent(`${light}<div id="host"></div><script>document.getElementById('host').attachShadow({ mode: '${mode}' }).innerHTML = ${JSON.stringify(shadow)};</script>`);
+    const buttons = async (): Promise<(SemanticNode | undefined)[]> => {
+      const nodes = await page.nodes();
+      return names.map((name) => nodes.find((node) => node.name === name));
+    };
+    await expect.poll(async () => (await buttons()).every((node) => node !== undefined)).toBe(true);
+    return (await buttons()) as { [K in keyof N]: SemanticNode };
+  }
+
+  /** The names of the buttons the path an observation gave `node` leads to. */
+  const through = async (node: SemanticNode): Promise<(string | undefined)[]> => (await page.locate(withinFrames(node.framePath!, byRole('button')))).map((found) => found.name);
+
+  it('names a frame in a shadow root by the test id it alone has', async () => {
+    const [inside] = await observedButtons('<p>page</p>', 'open', preview('Inside'), ['Inside']);
+    expect(inside.framePath).toEqual(['[data-testid="preview"]']);
+    expect(await through(inside)).toEqual(['Inside']);
+  });
+
+  it('leads back to each of two frames that share a test id across an open shadow root', async () => {
+    const [light, shadow] = await observedButtons(preview('Light'), 'open', preview('Shadow'), ['Light', 'Shadow']);
+    expect(light.framePath).not.toEqual(shadow.framePath);
+    expect(await through(light)).toEqual(['Light']);
+    expect(await through(shadow)).toEqual(['Shadow']);
+  });
+
+  it('never leads from a frame in a closed shadow root to the document\'s frame that shares its test id', async () => {
+    const [light, shadow] = await observedButtons(preview('Light'), 'closed', preview('Shadow'), ['Light', 'Shadow']);
+    expect(await through(light)).toEqual(['Light']);
+    // A `frameLocator` stops at a closed root, so the frame's path matches nothing.
+    await expect(through(shadow)).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND' });
   });
 });
 
