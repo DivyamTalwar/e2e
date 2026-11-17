@@ -270,7 +270,7 @@ and `waitFor()`: what renders, as Playwright reads it.
 - It works with scopes, `filter`, `first`, `last`, and `nth`:
   `getByText('Save', { visible: true }).first()` is the first visible match.
 
-Prefer it over `browser.locator('p:visible')`, which ties the test to CSS.
+`browser.locator` has no `:visible`, which is not CSS.
 
 ### Refinement
 
