@@ -1,7 +1,7 @@
 /** First-run browser provisioning for the Playwright engine. */
 
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,6 +24,9 @@ function headlessShellInstalled(browsersPath: string, revision: string): boolean
  */
 async function isBrowserInstalled(name: BrowserName, env: NodeJS.ProcessEnv, headed: boolean): Promise<boolean | undefined> {
   if (env['PLAYWRIGHT_BROWSERS_PATH'] !== process.env['PLAYWRIGHT_BROWSERS_PATH']) return undefined;
+  // Loading Playwright to ask it costs about 0.1 s on every run, and this
+  // process never launches a browser, so the common case is answered from disk.
+  if (name === 'chromium' && !headed && declaredShellInstalled()) return true;
   try {
     const executable = (await browserType(name)).executablePath();
     if (headed || name !== 'chromium') return existsSync(executable);
@@ -31,6 +34,66 @@ async function isBrowserInstalled(name: BrowserName, env: NodeJS.ProcessEnv, hea
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether the headless shell the installed `playwright-core` declares in its
+ * `browsers.json` is in the cache Playwright reads, found without loading
+ * Playwright. False means only "not found here": the caller then asks Playwright.
+ */
+function declaredShellInstalled(): boolean {
+  try {
+    const packageDir = playwrightPackageDir();
+    const browsersPath = playwrightBrowsersPath(packageDir);
+    const revision = declaredRevision(packageDir, 'chromium-headless-shell');
+    return browsersPath !== undefined && revision !== undefined && headlessShellInstalled(browsersPath, revision);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The revision of `name` in `playwright-core/browsers.json`, or undefined when
+ * it is not there or has per-platform overrides, whose directory names only
+ * Playwright's own platform detection knows.
+ */
+function declaredRevision(packageDir: string, name: string): string | undefined {
+  const parsed: unknown = JSON.parse(readFileSync(path.join(packageDir, 'browsers.json'), 'utf8'));
+  const browsers = typeof parsed === 'object' && parsed !== null ? (parsed as { browsers?: unknown }).browsers : undefined;
+  if (!Array.isArray(browsers)) return undefined;
+  const entry: unknown = browsers.find((browser: unknown) => typeof browser === 'object' && browser !== null && (browser as { name?: unknown }).name === name);
+  if (typeof entry !== 'object' || entry === null) return undefined;
+  const { revision, revisionOverrides } = entry as { revision?: unknown; revisionOverrides?: unknown };
+  return typeof revision === 'string' && revision !== '' && revisionOverrides === undefined ? revision : undefined;
+}
+
+/**
+ * The browser cache this process's Playwright reads, by its rules:
+ * `PLAYWRIGHT_BROWSERS_PATH` (or its npm config spellings), `0` for the
+ * package's own `.local-browsers`, else `ms-playwright` in the OS cache
+ * directory; relative to `INIT_CWD` or the working directory. Undefined on a
+ * platform Playwright has no default for.
+ */
+function playwrightBrowsersPath(packageDir: string): string | undefined {
+  const env = process.env;
+  const configured =
+    env['PLAYWRIGHT_BROWSERS_PATH'] ?? env['npm_config_playwright_browsers_path'] ?? env['npm_package_config_playwright_browsers_path'];
+  let browsersPath: string | undefined;
+  if (configured === '0') browsersPath = path.join(packageDir, '.local-browsers');
+  else if (configured !== undefined && configured !== '') browsersPath = configured;
+  else {
+    const cache = osCacheDirectory();
+    browsersPath = cache === undefined ? undefined : path.join(cache, 'ms-playwright');
+  }
+  return browsersPath === undefined ? undefined : path.resolve(env['INIT_CWD'] || process.cwd(), browsersPath);
+}
+
+/** The per-user cache directory Playwright puts `ms-playwright` in, or undefined on another platform. */
+function osCacheDirectory(): string | undefined {
+  if (process.platform === 'linux') return process.env['XDG_CACHE_HOME'] || path.join(os.homedir(), '.cache');
+  if (process.platform === 'darwin') return path.join(os.homedir(), 'Library', 'Caches');
+  if (process.platform === 'win32') return process.env['LOCALAPPDATA'] || path.join(os.homedir(), 'AppData', 'Local');
+  return undefined;
 }
 
 /** Whether the shell beside `executable`'s full build is installed. */
@@ -42,10 +105,14 @@ function headlessShellAt(executable: string): boolean {
   return revision !== '' && headlessShellInstalled(executable.slice(0, at), revision);
 }
 
+/** The directory of the pinned `playwright-core`, resolved without loading it. */
+function playwrightPackageDir(): string {
+  return path.dirname(createRequire(import.meta.url).resolve('playwright-core/package.json'));
+}
+
 /** The `node` arguments that run the pinned `playwright-core` CLI with `args`. */
 function playwrightCliArgs(args: readonly string[]): string[] {
-  const require = createRequire(import.meta.url);
-  return [path.join(path.dirname(require.resolve('playwright-core/package.json')), 'cli.js'), ...args];
+  return [path.join(playwrightPackageDir(), 'cli.js'), ...args];
 }
 
 /**

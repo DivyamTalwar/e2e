@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -177,12 +177,26 @@ describe('ensureBrowsersInstalled', () => {
     let cache = '';
     let previous: string | undefined;
 
-    /** Runs the built-in check in a process that loaded Playwright with this cache; true when nothing would install. */
-    const verdict = (headed: boolean): boolean => {
-      const probe = path.join(cache, 'probe.mjs');
+    /**
+     * Runs the built-in check in a process started with `env`: whether nothing
+     * would install, and whether the check imported Playwright to tell.
+     */
+    const probe = (
+      headed: boolean,
+      env: NodeJS.ProcessEnv = { ...process.env, PLAYWRIGHT_BROWSERS_PATH: cache },
+    ): { installed: boolean; loadedPlaywright: boolean } => {
+      const probeFile = path.join(cache, 'probe.mjs');
       writeFileSync(
-        probe,
-        `import { ensureBrowsersInstalled } from ${JSON.stringify(built)};
+        probeFile,
+        `import { registerHooks } from 'node:module';
+let loadedPlaywright = false;
+registerHooks({
+  resolve(specifier, context, next) {
+    if (specifier === 'playwright-core') loadedPlaywright = true;
+    return next(specifier, context);
+  },
+});
+const { ensureBrowsersInstalled } = await import(${JSON.stringify(built)});
 let value = true;
 const logs = [];
 await ensureBrowsersInstalled(['chromium'], {
@@ -190,18 +204,22 @@ await ensureBrowsersInstalled(['chromium'], {
   log: (line) => logs.push(line),
   install: async () => { value = logs.length > 0 ? false : undefined; },
 });
-console.log(String(value));
+console.log(JSON.stringify({ value: String(value), loadedPlaywright }));
 `,
       );
-      const child = spawnSync(process.execPath, [probe], {
+      const child = spawnSync(process.execPath, [probeFile], {
         encoding: 'utf8',
         cwd: path.dirname(path.dirname(packageDir)),
-        env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: cache },
+        env,
       });
       if (child.status !== 0) throw new Error(`the detection probe failed: ${child.stderr}`);
-      expect(child.stdout.trim()).not.toBe('undefined');
-      return child.stdout.trim() === 'true';
+      const { value, loadedPlaywright } = JSON.parse(child.stdout.trim()) as { value: string; loadedPlaywright: boolean };
+      expect(value).not.toBe('undefined');
+      return { installed: value === 'true', loadedPlaywright };
     };
+
+    /** Runs the built-in check in a process that loaded Playwright with this cache; true when nothing would install. */
+    const verdict = (headed: boolean): boolean => probe(headed).installed;
 
     // This platform's paths inside each build's directory, e.g. `chrome-linux64/chrome`
     // and `chrome-headless-shell-linux64/chrome-headless-shell`.
@@ -213,16 +231,19 @@ console.log(String(value));
       process.platform === 'win32' ? 'chrome-headless-shell.exe' : 'chrome-headless-shell',
     );
 
-    /** Lays out the builds named, each with its completion marker. */
-    const lay = (...builds: readonly ('shell' | 'full')[]): void => {
+    /** Lays out the builds named under `root`, each with its completion marker. */
+    const layIn = (root: string, ...builds: readonly ('shell' | 'full')[]): void => {
       for (const build of builds) {
         const dir = build === 'shell' ? `chromium_headless_shell-${revision}` : `chromium-${revision}`;
-        const exe = path.join(cache, dir, build === 'shell' ? shellRelative : fullRelative);
+        const exe = path.join(root, dir, build === 'shell' ? shellRelative : fullRelative);
         mkdirSync(path.dirname(exe), { recursive: true });
         writeFileSync(exe, '');
-        writeFileSync(path.join(cache, dir, 'INSTALLATION_COMPLETE'), '');
+        writeFileSync(path.join(root, dir, 'INSTALLATION_COMPLETE'), '');
       }
     };
+
+    /** Lays out the builds named in this test's cache. */
+    const lay = (...builds: readonly ('shell' | 'full')[]): void => layIn(cache, ...builds);
 
     beforeEach(() => {
       cache = mkdtempSync(path.join(tmpdir(), 'e2e-browsers-'));
@@ -263,6 +284,57 @@ console.log(String(value));
     it('reads an empty cache as missing either way', () => {
       expect(verdict(false)).toBe(false);
       expect(verdict(true)).toBe(false);
+    });
+
+    it('answers a headless run from an installed shell without loading Playwright', () => {
+      // The runner process never launches a browser, so importing Playwright
+      // only to find the shell would cost every run its load time.
+      lay('shell');
+      expect(probe(false)).toEqual({ installed: true, loadedPlaywright: false });
+    });
+
+    it('asks Playwright when the cache holds no shell, or the run is headed', () => {
+      expect(probe(false)).toEqual({ installed: false, loadedPlaywright: true });
+      lay('full');
+      expect(probe(false)).toEqual({ installed: false, loadedPlaywright: true });
+      expect(probe(true)).toEqual({ installed: true, loadedPlaywright: true });
+    });
+
+    it('finds the shell under a relative cache path the way Playwright does', () => {
+      // Playwright resolves a relative PLAYWRIGHT_BROWSERS_PATH against INIT_CWD,
+      // which a package manager sets to the directory it was started in.
+      const relative = path.join('nested', 'browsers');
+      layIn(path.join(cache, relative), 'shell');
+      expect(probe(false, { ...process.env, PLAYWRIGHT_BROWSERS_PATH: relative, INIT_CWD: cache })).toEqual({
+        installed: true,
+        loadedPlaywright: false,
+      });
+    });
+
+    it('finds the shell in the per-user cache when no path is configured', () => {
+      const home = path.join(cache, 'home');
+      const userCache =
+        process.platform === 'darwin'
+          ? path.join(home, 'Library', 'Caches')
+          : process.platform === 'win32'
+            ? path.join(home, 'AppData', 'Local')
+            : path.join(home, '.cache');
+      layIn(path.join(userCache, 'ms-playwright'), 'shell');
+      const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
+      for (const name of ['PLAYWRIGHT_BROWSERS_PATH', 'npm_config_playwright_browsers_path', 'npm_package_config_playwright_browsers_path', 'XDG_CACHE_HOME', 'LOCALAPPDATA']) {
+        delete env[name];
+      }
+      expect(probe(false, env)).toEqual({ installed: true, loadedPlaywright: false });
+    });
+
+    it("agrees with Playwright's own executable path on this machine's cache", () => {
+      // Playwright's registry, the module its launch reads the path from.
+      const { registry } = (createRequire(import.meta.url)('playwright-core/lib/coreBundle') as {
+        registry: { registry: { findExecutable(name: string): { executablePath(): string } } };
+      }).registry;
+      const shell = registry.findExecutable('chromium-headless-shell').executablePath();
+      const installed = existsSync(shell) && existsSync(path.join(path.dirname(path.dirname(shell)), 'INSTALLATION_COMPLETE'));
+      expect(probe(false, { ...process.env })).toEqual({ installed, loadedPlaywright: !installed });
     });
   });
 });
