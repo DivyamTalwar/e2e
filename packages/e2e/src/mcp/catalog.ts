@@ -29,10 +29,13 @@ import { ConfigurationError } from '@e2e-dev/core/lib/internal/errors';
 import { relativeToProjectRoot } from '@e2e-dev/core/lib/internal/paths';
 import { describeExpression, roleQuery, testIdQuery, textQuery } from '@e2e-dev/core/lib/locator/expression';
 import type { LocatorEngine } from '@e2e-dev/core/lib/locator/engine';
-import type { AgentTool, Role } from '@e2e-dev/core/lib/types';
+import type { ResolvedConfig } from '@e2e-dev/core/lib/config/resolve';
+import { secretHandle } from '@e2e-dev/core/lib/secrets';
+import type { AgentParams, AgentTool, Role } from '@e2e-dev/core/lib/types';
 import { recordingTools, type SessionRecorder } from './recording.ts';
 import { SessionTestLines, type TestLineFills } from './test-lines.ts';
 import { runCodeTool, type RunCodeSession } from './run-code.ts';
+import { catalogLine, describeToolDetail } from './tools.ts';
 
 /** How many matching nodes `locate` describes. */
 const MAX_LOCATE_NODES = 10;
@@ -80,6 +83,51 @@ export interface CatalogOptions {
   readonly onActionFailed?: ((cause: unknown) => void) | undefined;
   /** The attempt's fixtures and what guards them, for `run_code`; without them the catalog has no `run_code`. */
   readonly runCode?: RunCodeSession | undefined;
+}
+
+/** Every configured secret, passwords included, as a step secret, so `type_secret` can fill it. */
+export function secretParams(config: ResolvedConfig): AgentParams | undefined {
+  if (config.allSecrets.size === 0) return undefined;
+  return Object.fromEntries([...config.allSecrets.values()].map((secret) => [secret.name, secretHandle(secret)]));
+}
+
+/** Returns opening lines with credential and secret names, never their values. */
+export function fillLines(config: ResolvedConfig): string[] {
+  const lines: string[] = [];
+  if (config.credentials.size > 0) {
+    const described = [...config.credentials.values()].map(
+      (credential) => `"${credential.name}" (username ${JSON.stringify(credential.username)}, password secret "${credential.password.name}")`,
+    );
+    lines.push(`Credentials: ${described.join(', ')}. Type the username with type; fill the password with type_secret and its password secret's name.`);
+  }
+  if (config.secrets.size > 0) {
+    lines.push(`Secrets: ${[...config.secrets.keys()].map((name) => `"${name}"`).join(', ')}. Fill one into any input with type_secret and its name; you never see the value.`);
+  }
+  return lines;
+}
+
+export function catalogLines(catalog: SessionCatalog): string[] {
+  return Object.entries(catalog.tools).map(([name, tool]) => catalogLine(name, tool, catalog.readOnly.has(name)));
+}
+
+/** Describes the catalog or one tool for `session` on `target`. */
+export function describeCatalog(catalog: SessionCatalog, session: string, target: string, tool: string | undefined): string {
+  if (tool === undefined) {
+    return [`${session} on target "${target}": ${Object.keys(catalog.tools).length} tools. Run one with call {tool, args}; tools {tool} shows a tool's arguments.`, ...catalogLines(catalog)].join('\n');
+  }
+  const found = catalog.tools[tool];
+  if (found === undefined) throw unknownTool(catalog, target, tool);
+  return describeToolDetail(tool, found, catalog.readOnly.has(tool));
+}
+
+export function unknownTool(catalog: SessionCatalog, target: string, name: string): ConfigurationError {
+  if (isGrammarVerb(name)) {
+    return new ConfigurationError(
+      'UNSUPPORTED_CAPABILITY',
+      `tool "${name}" is not available in this session: the engine of target "${target}" declares no such action; tools lists what it can do`,
+    );
+  }
+  return new ConfigurationError('UNKNOWN_TOOL', `tool "${name}" is not available in this session; tools: ${Object.keys(catalog.tools).join(', ')}`);
 }
 
 /** Builds the session's catalog from the step context and the target. */

@@ -404,6 +404,7 @@ describe('open_session {test}', { timeout: 120_000 }, () => {
   /** An in-process host whose sessions load `config` on the fixture app, as the project's config file would. */
   const inProcessHost = (project: FixtureProject, config: Omit<E2EConfig, 'targets'> = {}) =>
     new SessionHost({
+      cwd: project.dir,
       locateConfig: () => path.join(project.dir, 'e2e.config.ts'),
       loadConfig: async (configPath) => ({
         ...resolveConfig({ ...config, targets: [webTarget('web', app.url)] } as E2EConfig as never, { projectRoot: project.dir, env: {}, configPath }),

@@ -15,6 +15,7 @@ import { dispatchAgentStep, type DispatchAgent } from '@e2e-dev/core/lib/agent/a
 import { validateParams } from '@e2e-dev/core/lib/agent/act-validation';
 import type { StepExecutor, StepExecutorContext, StepVerdict } from '@e2e-dev/core/lib/agent/executor';
 import type { AgentContext } from '@e2e-dev/core/lib/agent/invocation';
+import type { SourceLocation } from '@e2e-dev/core/lib/internal/source';
 
 /** Action and model-call budgets a host-driven step never reaches; the timeout is the real bound. */
 const UNBOUNDED = 1_000_000;
@@ -26,6 +27,8 @@ export interface InteractiveStepOptions {
   readonly params?: AgentParams | undefined;
   /** How long the step may live, in milliseconds. */
   readonly timeout: number;
+  /** The source line to record for a step opened outside the test. */
+  readonly source?: SourceLocation | undefined;
 }
 
 export interface InteractiveStep {
@@ -62,6 +65,8 @@ export async function openInteractiveStep(runtime: AgentContext, options: Intera
       maxSteps: undefined,
       maxModelCalls: undefined,
       agent: undefined,
+      source: options.source,
+      unheld: true,
     },
     agent,
   ).then(

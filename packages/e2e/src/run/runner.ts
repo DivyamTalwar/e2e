@@ -1149,7 +1149,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
         ...(options.maxFailures === undefined ? {} : { maxFailures: options.maxFailures }),
         ...(timeLimit === undefined ? {} : { timeLimit }),
         spawn,
-        ...(hold === undefined ? {} : { beforeStep: (step: HeldStep, signal: AbortSignal, readScreen: StepHoldContext['readScreen']) => hold.ask(step, { signal, show: showStep, readScreen }) }),
+        ...(hold === undefined ? {} : { beforeStep: (step: HeldStep, signal: AbortSignal, readScreen: StepHoldContext['readScreen'], askSession: StepHoldContext['askSession']) => hold.ask(step, { signal, show: showStep, readScreen, askSession }) }),
         interruptGraceMs: config.timeout + config.cleanupTimeout,
         interruptSignal: interrupted,
         forceSignal: forceController.signal,

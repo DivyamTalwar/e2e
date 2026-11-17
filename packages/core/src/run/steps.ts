@@ -307,6 +307,16 @@ export interface StepRunOptions {
   readonly verifies?: boolean;
   /** The configured agent an agent step runs with, recorded on the step. */
   readonly agent?: string | undefined;
+  /**
+   * Where the step was called. Set this when its stack doesn't name a test
+   * line, such as a step opened by a host outside the test.
+   */
+  readonly source?: SourceLocation | undefined;
+  /**
+   * Set `unheld` for a step that a host opens while the test waits at a
+   * hold. The step starts right away, even when every step is held.
+   */
+  readonly unheld?: boolean | undefined;
 }
 
 /** How many causes down a thrown error is redacted; a chain is rarely three deep. */
@@ -584,7 +594,7 @@ export class StepRecorder {
     const stack = stepStack(this.projectRoot);
     // A step inside another (an `onAction` hook's) or inside an `expect.poll`
     // read is part of what holds it, so only a top-level step waits.
-    if (this.hold?.steps === true && this.holdable && parent === undefined && !insidePollRead()) {
+    if (this.hold?.steps === true && this.holdable && parent === undefined && options.unheld !== true && !insidePollRead()) {
       return this.runHeld(this.hold.ask, { kind, api, label, stack, options, cancel: new AbortController(), promise: Promise.resolve() }, body);
     }
     return this.start(kind, api, label, stack, body, options, parent);
@@ -727,7 +737,7 @@ export class StepRecorder {
 
   /** Records a step as started now and tells reporters. */
   private open(kind: StepKind, api: string, label: string, stack: string | undefined, options: StepRunOptions): StepRecord {
-    const record = this.file({ kind, api, label, source: sourceLocation(stack, this.projectRoot), agent: options.agent });
+    const record = this.file({ kind, api, label, source: options.source ?? sourceLocation(stack, this.projectRoot), agent: options.agent });
     this.running.add(record.id);
     // Only a finished step is dropped, and only from the front, so a running
     // one keeps its record, the one opened here included: with nothing

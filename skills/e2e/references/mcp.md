@@ -289,6 +289,13 @@ session runs the test and stops where it failed:
 - Nothing a session does is recorded as a test, and only a test it runs
   (`open_session {test}`) reads or writes the replay cache. A session is for
   looking and trying; the test is the file you write as you walk.
+- When a test in an `e2e run` in the server's directory is paused at
+  `await screen.pause()`, or held at a step in an `e2e run --step` without a
+  terminal, call `open_session {attach: true}` alone to drive its browser or
+  device on the paused screen. `close_session` only detaches, so the test
+  stays paused. To resume the test, run `npx e2e run --step next` in the
+  run's directory, or `npx e2e run --step stop` to end the run. Attach again
+  at the next pause.
 - On the web, a session can stay open while `e2e run` runs, unless the two
   collide over the app. Read the target's `app`:
   - No `command` (the app runs elsewhere): both use that app.

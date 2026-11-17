@@ -13,6 +13,8 @@ import type { AttemptBudget } from '@e2e-dev/core/lib/run/budget';
 import type { StepHoldRequest } from '@e2e-dev/core/lib/run/steps';
 import type { OperationContext, TargetSession } from '@e2e-dev/core/lib/engine/surface';
 import { traceScreen, type TraceScreenOptions } from '@e2e-dev/core/lib/run/step-screens';
+import type { McpToolResult } from '../mcp/tools.ts';
+import type { AttachRequest } from '../mcp/wire.ts';
 
 /** A step held before it runs, or a paused test, as the runner's `hold` hook sees it. */
 export interface HeldStep {
@@ -70,7 +72,15 @@ export interface StepHoldContext {
    * held before using the result.
    */
   readScreen(): Promise<string | undefined>;
+  /**
+   * Sends a request to the attached session in the paused test's worker.
+   * It resolves with its answer.
+   */
+  askSession(request: AttachRequest): Promise<McpToolResult>;
 }
+
+/** The error when an attached session's pause has ended. */
+export const NOT_PAUSED = 'the test is no longer paused';
 
 /**
  * Decides when a held step runs or a paused test resumes: it resolves to run

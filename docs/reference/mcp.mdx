@@ -121,6 +121,7 @@ open_session {target: "web", headed: true}
 | `test` | string | no | One test to run first, named like an `e2e run` positional. The session stops where the test stopped. See [Running a test](#running-a-test). |
 | `engine` | string or object | no | The session's engine in a directory with no config file, as a package name or `{package, export, options}`. See [Without a config](#without-a-config). |
 | `app` | object | no | The app under test for an `engine` session, as `url`, `bundleId`, or `appPath`. |
+| `attach` | boolean | no | `true` to attach to the test paused at `screen.pause()` in an `e2e run` in the server's working directory. Other inputs aren't allowed with it. See [Attaching to a paused test](#attaching-to-a-paused-test). |
 
 #### `tools`
 
@@ -580,6 +581,9 @@ A child process that inherits the server's stdio writes past this.
 A session is one attempt on one target. A `call` before any session is open
 fails with `NO_SESSION`.
 
+A session [attached to a paused test](#attaching-to-a-paused-test) doesn't
+have a time limit. Its actions are recorded in the test's steps.
+
 A session closes:
 
 - on `close_session`,
@@ -667,6 +671,54 @@ open_session {test: "tests/checkout.e2e.ts:12"}
 | `TEST_AMBIGUOUS` | `test` selects several tests. The message lists them as `file:line`. |
 | `SESSION_TEST_UNSUPPORTED` | The test is in a serial group, starts from a setup test's `session`, or runs as several agents. |
 | `COLLECTION_ERROR` | A test file fails to collect, as for `e2e run`. |
+
+## Attaching to a paused test
+
+With `open_session {attach: true}`, a session is attached to a test that is
+paused at [`screen.pause()`](/reference/screen#screen-pause) in an `e2e run`
+in the server's working directory (`cwd` in the client's MCP config, see
+[Setup](#setup)). In an `e2e run --step` without a terminal, the session is
+attached to the test at its held step. The agent then drives the same
+browser or device as the test, on the screen where it waits, whether or not
+the run has a terminal.
+
+```txt
+open_session {attach: true}
+```
+
+- **Which test.** The session is attached to the test that is paused now.
+  When several tests are paused, it is attached to the one that paused
+  first. The test and the line where it paused are named in the session's
+  first answer.
+- **Tools.** The catalog is a normal session's without
+  [`run_code`](#run_code), which is available only in a session that isn't
+  attached, and without `start_recording` and `stop_recording`, since video
+  is recorded by the run. With `type_secret`, the agent can fill the secrets
+  of the run's config.
+- **Detaching.** The session is detached when the agent calls
+  [`close_session`](#close_session), its client disconnects, or the server
+  exits. The test stays paused, so the agent can attach again.
+- **Resuming.** The test is resumed or the run is stopped with a key in the
+  run's terminal, or with `e2e run --step next`, `rest`, or `stop` in the
+  run's directory (see [Pause a test](/debugging#pause-a-test)). The agent
+  uses the commands. The session is then ended before the next line of the
+  test is run, and the agent attaches again at the next pause. A later
+  `call` fails with `NO_SESSION` and the reason. If the session doesn't
+  close within [`cleanupTimeout`](/reference/config#cleanuptimeout), the
+  test fails at the pause with `TEST_TIMEOUT`.
+- **Timeouts.** The session and the paused test don't time out. But
+  without a terminal, a run with a paused test is stopped after 30 minutes
+  without any activity (see [Pause a test](/debugging#pause-a-test)).
+- **What the test records.** The attached session is shown as one `session`
+  step at the pause, with every action it took, in the test's steps, report,
+  and trace page. The session doesn't save anything to the replay cache.
+
+| Throws | When |
+| --- | --- |
+| `NO_SESSION` | There isn't a paused or held test in an `e2e run` in the server's directory, or the run is an `e2e run --step` in a terminal. |
+| `SESSION_OPEN` | Another session is attached to the paused test. Close the other session first. |
+| `INVALID_ARGUMENT` | `attach` with any other input. Pass `attach` alone. |
+| `CANCELLED` | The client cancelled the request or disconnected, or the server shut down, before the session was attached. |
 
 ## Several sessions
 

@@ -420,8 +420,13 @@ end, you get `The run has ended.` and the run's exit code. See
 [Step through a test without a terminal](#step-through-a-test-without-a-terminal)
 for what each answer holds.
 
+Your coding agent can drive the paused app through the
+[MCP server](/mcp-server) with `open_session {attach: true}`. See
+[Attaching to a paused test](/reference/mcp#attaching-to-a-paused-test).
+
 - Paused time doesn't count toward any timeout. But without a terminal, the
-  run is stopped after 30 minutes at a pause without a command.
+  run is stopped after 30 minutes without any activity at a pause. Activity
+  is a command or a call from an attached session.
 - The test is paused on every attempt, retries and setup tests included.
 - With several workers, pauses are shown one at a time, oldest first, while
   the other workers keep running.

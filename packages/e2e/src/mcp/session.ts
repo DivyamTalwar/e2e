@@ -19,7 +19,6 @@ import { openInteractiveStep, type InteractiveStep } from '../agent/interactive-
 import { ScreenPresenter } from '@e2e-dev/core/lib/agent/screen-update';
 import type { ResolvedConfig, ResolvedTarget } from '@e2e-dev/core/lib/config/resolve';
 import { launchesPinnedApp } from '@e2e-dev/core/lib/config/targets';
-import { secretHandle } from '@e2e-dev/core/lib/secrets';
 import { classifyError, ConfigurationError, errorMessage, InfrastructureError, type SerializedError } from '@e2e-dev/core/lib/internal/errors';
 import { LocatorEngine } from '@e2e-dev/core/lib/locator/engine';
 import { allocateTargetPorts } from '../run/app-ports.ts';
@@ -30,17 +29,18 @@ import { processSecrets, registerStaticSecrets } from '@e2e-dev/core/lib/run/sec
 import { openStandaloneAttempt, type OneShotAttempt } from '../run/standalone-kinds.ts';
 import type { StandaloneAttempt } from '@e2e-dev/core/lib/run/standalone-attempt';
 import { selectStandaloneTest, testLocation } from '../run/standalone-test.ts';
-import type { AgentParams } from '@e2e-dev/core/lib/types';
-import { createSessionCatalog, isGrammarVerb, type SessionCatalog } from './catalog.ts';
+import { NOT_PAUSED } from '../run/step-hold.ts';
+import { catalogLines, createSessionCatalog, describeCatalog, fillLines, isGrammarVerb, secretParams, unknownTool, type SessionCatalog } from './catalog.ts';
 import { appLines } from './app-lines.ts';
 import { SESSION_BOUNDS } from './bounds.ts';
 import type { EngineSession, LoadedConfig } from './config.ts';
 import type { FactoryRef } from './default-engine.ts';
 import { describeRecording, SessionRecorder } from './recording.ts';
 import { SessionRegistry } from './sessions.ts';
+import { attachToPause, type PauseAttachment } from './attach.ts';
 import { describeTestOutcome } from './test-outcome.ts';
 import { SessionUsage, type McpSessionSummary, type SessionEndedBy } from './usage.ts';
-import { actionResult, catalogLine, defineMcpTool, describeToolDetail, errorResult, invokeTool, redacting, redactResult, textResult, type McpToolCallExtra, type McpToolResult, type McpToolSpec } from './tools.ts';
+import { actionResult, defineMcpTool, errorResult, invokeTool, redacting, redactResult, textResult, type McpToolCallExtra, type McpToolResult, type McpToolSpec } from './tools.ts';
 
 /** How long one session may live, whatever happens. */
 const SESSION_TTL_MS = 4 * 60 * 60 * 1000;
@@ -71,6 +71,20 @@ interface LiveSession {
   readonly usage: SessionUsage;
 }
 
+/**
+ * A session attached to a test paused at `screen.pause()` in `e2e run`.
+ * Its step, catalog, and engine live in the run's worker. Calls reach that
+ * worker through the run's socket. This session doesn't have a timeout here.
+ * Without a terminal, the run's idle limit applies.
+ */
+interface AttachedSession {
+  readonly id: string;
+  readonly target: { readonly name: string };
+  readonly attachment: PauseAttachment;
+  actions: number;
+  readonly usage: SessionUsage;
+}
+
 export interface OpenSessionOptions {
   /** The target to open; otherwise the server's `--target`, else the config's only target. */
   readonly target?: string | undefined;
@@ -88,6 +102,11 @@ export interface OpenSessionOptions {
   readonly engine?: string | FactoryRef | undefined;
   /** The app of an `engine` session. */
   readonly app?: EngineSession['app'];
+  /**
+   * Set `attach` to use a test paused at `screen.pause()` in a run in the
+   * server's working directory. It can't be combined with another option.
+   */
+  readonly attach?: boolean | undefined;
 }
 
 /** Where a session's config comes from: the project's file, or the engine package the call names. */
@@ -97,6 +116,8 @@ type ConfigSource = { readonly file: string } | { readonly engine: EngineSession
 const ENGINE_DEFAULTS = 'engine defaults, with no config file';
 
 export interface SessionHostOptions {
+  /** The server's working directory, used to find the run with a paused test. */
+  readonly cwd: string;
   /** The absolute path of the config a session loads, without evaluating it; `configPath` overrides the server's default. */
   readonly locateConfig: (configPath: string | undefined) => string;
   /**
@@ -125,7 +146,7 @@ export interface SessionHostOptions {
 
 /** Owns the live sessions, up to the server's limit, and the fixed MCP tools that drive them. */
 export class SessionHost {
-  private readonly sessions: SessionRegistry<LiveSession>;
+  private readonly sessions: SessionRegistry<LiveSession | AttachedSession>;
   /** Sessions on one app command share its process: the last one to close stops it. */
   private readonly apps = new SharedAppProcesses();
   /** Aborts every open still running once the server shuts down, so none leaves a process behind. */
@@ -161,7 +182,7 @@ export class SessionHost {
   open(options: OpenSessionOptions, signal?: AbortSignal): Promise<string> {
     const headed = options.headed ?? this.options.headed;
     const usage = new SessionUsage(this.sessions.liveCount, headed);
-    return this.sessions.admit((id) => this.openSession(id, options, headed, usage, signal)).catch((cause: unknown) => {
+    return this.sessions.admit((id) => (options.attach === true ? this.attachSession(id, options, usage, signal) : this.openSession(id, options, headed, usage, signal))).catch((cause: unknown) => {
       this.options.onSessionEnd?.(usage.openFailed(classifyError(cause).code));
       throw cause;
     });
@@ -180,7 +201,20 @@ export class SessionHost {
     return summaries.length === 0 ? undefined : summaries.join('\n');
   }
 
-  private async teardown(live: LiveSession, reason: string, endedBy: SessionEndedBy): Promise<string> {
+  private async teardown(live: LiveSession | AttachedSession, reason: string, endedBy: SessionEndedBy): Promise<string> {
+    if ('attachment' in live) {
+      await live.attachment.close();
+      this.options.onSessionEnd?.(live.usage.closed(endedBy));
+
+      if (endedBy === 'step') {
+        return processSecrets.redact(`Session ${live.id} ended (${reason}); ${live.actions} tool calls ran.`);
+      }
+
+      return processSecrets.redact(
+        `Session ${live.id} detached (${reason}); ${live.actions} tool calls ran. The test stays paused until it is resumed or the run is stopped (Enter or q in the run's terminal, or npx e2e run --step next or stop in the run's directory).`,
+      );
+    }
+
     if (live.idleTimer !== undefined) clearTimeout(live.idleTimer);
     const { value, cleanupErrors } = await this.closeAttempt(live.attempt, live.abort, async () => {
       await live.step.end({ status: 'passed', summary: `session closed: ${reason}` });
@@ -220,24 +254,21 @@ export class SessionHost {
     return { value: settled.value, cleanupErrors };
   }
 
-  /** The session's catalog, or one tool's full contract. */
-  catalog(session: string | undefined, tool: string | undefined): string {
+  /** The session's catalog, or one tool's full contract. An attached session's comes from the run. */
+  catalog(session: string | undefined, tool: string | undefined): string | Promise<McpToolResult> {
     const live = this.sessions.resolve(session);
-    if (tool === undefined) {
-      return [`Session ${live.id} on target "${live.target.name}": ${Object.keys(live.catalog.tools).length} tools. Run one with call {tool, args}; tools {tool} shows a tool's arguments.`, ...this.catalogLines(live)].join('\n');
-    }
-    const found = live.catalog.tools[tool];
-    if (found === undefined) throw this.unknownTool(live, tool);
-    return describeToolDetail(tool, found, live.catalog.readOnly.has(tool));
+    if ('attachment' in live) return live.attachment.request({ type: 'tools', tool });
+    return describeCatalog(live.catalog, `Session ${live.id}`, live.target.name, tool);
   }
 
   /** Runs one catalog tool inside the live session's step; what comes back, a result or a failure, passes the attempt's secret ledger. */
   call(session: string | undefined, name: string, args: Record<string, unknown>, extra: McpToolCallExtra): Promise<McpToolResult> {
     const live = this.sessions.resolve(session);
+    if ('attachment' in live) return this.callAttached(live, name, args);
     const tool = live.catalog.tools[name];
     live.usage.called(name, live.catalog.project.has(name));
     if (tool === undefined) {
-      const error = this.unknownTool(live, name);
+      const error = unknownTool(live.catalog, live.target.name, name);
       live.usage.failed(error.code);
       throw error;
     }
@@ -256,6 +287,67 @@ export class SessionHost {
         return redactResult(errorResult(cause), redact);
       },
     );
+  }
+
+  /**
+   * Sends a call to the run with the attached session. Its worker checks the
+   * arguments and redacts the reply. Project tools are counted by name here.
+   * Telemetry groups them together.
+   */
+  private callAttached(live: AttachedSession, name: string, args: Record<string, unknown>): Promise<McpToolResult> {
+    live.usage.called(name, false);
+    live.actions += 1;
+
+    return live.attachment.request({ type: 'call', tool: name, args }).then(
+      (result) => {
+        if (result.isError === true) {
+          live.usage.failed(undefined);
+        }
+
+        return result;
+      },
+      (cause: unknown) => {
+        live.usage.failed(classifyError(cause).code);
+        return errorResult(cause);
+      },
+    );
+  }
+
+  /**
+   * Attaches to a test paused at `screen.pause()` in a run in the server's
+   * working directory. The socket connects to the run. The session uses
+   * its config and target, so other options aren't allowed.
+   *
+   * The session ends when the test resumes or the run ends. Closing the
+   * session only detaches it. Until the attach succeeds, cancelling the
+   * request or shutting down the server cancels the attempt to attach.
+   */
+  private async attachSession(
+    id: string,
+    options: OpenSessionOptions,
+    usage: SessionUsage,
+    request: AbortSignal | undefined,
+  ): Promise<string> {
+    const { attach: _attach, ...others } = options;
+    const other = Object.entries(others).find(([, value]) => value !== undefined)?.[0];
+
+    if (other !== undefined) {
+      throw new ConfigurationError(
+        'INVALID_ARGUMENT',
+        `open_session: attach uses the config and target of the paused test's run, so ${other} isn't allowed with it. Pass attach alone`,
+      );
+    }
+
+    const signal = AbortSignal.any([this.shutdown.signal, ...(request === undefined ? [] : [request])]);
+    const attachment = await attachToPause(this.options.cwd, signal);
+    const live: AttachedSession = { id, target: { name: attachment.target }, attachment, actions: 0, usage };
+
+    this.sessions.activate(live);
+    void attachment.ended.then(() => this.endOnItsOwn(live, NOT_PAUSED, 'step'));
+
+    const opening = attachment.opening.content.flatMap((part) => (part.type === 'text' ? [part.text] : []));
+
+    return [`Session ${id} attached; pass session "${id}" to every tools, call, and close_session.`, ...opening].join('\n');
   }
 
   private async openSession(
@@ -328,7 +420,7 @@ export class SessionHost {
       const ran = await attempt.test?.run();
       // The coding agent is the brain: the step is driven from here, and the
       // configured model stays out of the way.
-      const params = this.secretParams(config);
+      const params = secretParams(config);
       step = await openInteractiveStep(attempt.agentRuntime, {
         instruction: SESSION_INSTRUCTION,
         ...(params === undefined ? {} : { params }),
@@ -420,8 +512,8 @@ export class SessionHost {
     return { engine: { ...(typeof engine === 'string' ? { package: engine } : engine), ...(app === undefined ? {} : { app }) } };
   }
 
-  /** Closes a live session that ended without a close_session: its step concluded, or it sat idle. */
-  private endOnItsOwn(live: LiveSession, why: string, endedBy: SessionEndedBy): void {
+  /** Closes a live session that ended without a close_session: its step concluded, it sat idle, or its paused test resumed or its run ended. */
+  private endOnItsOwn(live: LiveSession | AttachedSession, why: string, endedBy: SessionEndedBy): void {
     if (!this.sessions.isLive(live.id)) return;
     this.log('warning', `session ${live.id} ended: ${why}`);
     this.close(why, live.id, endedBy).catch((cause: unknown) => this.log('error', `closing session ${live.id} failed: ${errorMessage(cause)}`));
@@ -504,44 +596,16 @@ export class SessionHost {
       `Session ${live.id} open on target "${live.target.name}" (platform ${live.target.platform}, engine ${engine === undefined ? 'none' : `${engine.name} ${engine.version}`}), ${live.headed ? 'headed' : 'headless'}; ${live.origin}`,
     ];
     lines.push(...appLines(live.target, outcome !== undefined));
-    if (config.credentials.size > 0) {
-      const described = [...config.credentials.values()].map(
-        (credential) => `"${credential.name}" (username ${JSON.stringify(credential.username)}, password secret "${credential.password.name}")`,
-      );
-      lines.push(`Credentials: ${described.join(', ')}. Type the username with type; fill the password with type_secret and its password secret's name.`);
-    }
-    if (config.secrets.size > 0) {
-      lines.push(`Secrets: ${[...config.secrets.keys()].map((name) => `"${name}"`).join(', ')}. Fill one into any input with type_secret and its name; you never see the value.`);
-    }
+    lines.push(...fillLines(config));
     lines.push(
       `Pass session "${live.id}" to every tools, call, and close_session; with several sessions open, a call without it fails.`,
     );
-    lines.push(`Tools (run one with call {tool, args}; tools {tool} shows a tool's arguments):`, ...this.catalogLines(live));
+    lines.push(`Tools (run one with call {tool, args}; tools {tool} shows a tool's arguments):`, ...catalogLines(live.catalog));
     lines.push(
       'Node ids ("n42") are valid only for the newest observation; every action reports what changed on screen and the test line that repeats it (test_lines returns them all), and observe shows the whole screen. Call close_session when you are done.',
       READ_WRITING_GUIDE,
     );
     return `${lines.join('\n')}\n\n${screen}`;
-  }
-
-  private catalogLines(live: LiveSession): string[] {
-    return Object.entries(live.catalog.tools).map(([name, tool]) => catalogLine(name, tool, live.catalog.readOnly.has(name)));
-  }
-
-  /** Every configured secret, passwords included, as a step secret, so `type_secret` can fill it. */
-  private secretParams(config: ResolvedConfig): AgentParams | undefined {
-    if (config.allSecrets.size === 0) return undefined;
-    return Object.fromEntries([...config.allSecrets.values()].map((secret) => [secret.name, secretHandle(secret)]));
-  }
-
-  private unknownTool(live: LiveSession, name: string): ConfigurationError {
-    if (isGrammarVerb(name)) {
-      return new ConfigurationError(
-        'UNSUPPORTED_CAPABILITY',
-        `tool "${name}" is not available in this session: the engine of target "${live.target.name}" declares no such action; tools lists what it can do`,
-      );
-    }
-    return new ConfigurationError('UNKNOWN_TOOL', `tool "${name}" is not available in this session; tools: ${Object.keys(live.catalog.tools).join(', ')}`);
   }
 
   private touch(live: LiveSession): void {
@@ -564,7 +628,7 @@ export class SessionHost {
     return defineMcpTool({
       name: 'open_session',
       description:
-        'Open a live session on one target of an e2e project: loads the config, starts the app command the target declares (if any), boots the engine (a browser, a simulator), opens the app (its URL, or the pinned app on a device), and returns the session id, the catalog of tools it can run, and the first observation. Where the project has no e2e config file, pass engine to open a session on that engine: {engine: "@e2e-dev/web", app: {url: "http://localhost:3000"}}. With test, it runs that one test first and stops on the screen where the test passed or failed, with the failure and its line ahead of the catalog. Several sessions can be open at once, one per agent, each with its own engine: pass the returned session id to every later call. Then act with call and look with call {tool: "observe"}.',
+        'Open a live session on one target of an e2e project: loads the config, starts the app command the target declares (if any), boots the engine (a browser, a simulator), opens the app (its URL, or the pinned app on a device), and returns the session id, the catalog of tools it can run, and the first observation. Where the project has no e2e config file, pass engine to open a session on that engine: {engine: "@e2e-dev/web", app: {url: "http://localhost:3000"}}. With test, it runs that one test first and stops on the screen where the test passed or failed, with the failure and its line ahead of the catalog. Pass attach to drive the app of a test that is paused at screen.pause() in an e2e run in this directory. Several sessions can be open at once, one per agent, each with its own engine: pass the returned session id to every later call. Then act with call and look with call {tool: "observe"}.',
       inputSchema: z.object({
         target: z.string().min(1).optional().describe('Target name from the config; required when the config declares several'),
         config: z.string().min(1).optional().describe("Path to an e2e config file, absolute or relative to the server's working directory; default: the nearest e2e.config.ts, .mts, .js, or .mjs"),
@@ -604,6 +668,12 @@ export class SessionHost {
           .strict()
           .optional()
           .describe('With engine: the app under test, as a target declares it in an e2e.config.ts. @e2e-dev/web needs url; @e2e-dev/mobile needs bundleId or appPath'),
+        attach: z
+          .boolean()
+          .optional()
+          .describe(
+            "Attach to a test paused at await screen.pause() in an npx e2e run in the server's working directory, or held at a step in an npx e2e run --step without a terminal, and drive the run's browser or device where the test stopped. Every tool is available except run_code, start_recording, and stop_recording. close_session only detaches, so the test stays paused. To resume the test, run npx e2e run --step next in the run's directory, or npx e2e run --step stop to end the run. The session ends then, so attach again at the next pause. Excludes every other option",
+          ),
       }).strict(),
       readOnly: false,
       call: async (args, extra) => textResult(await this.open(args, extra.signal)),
@@ -620,7 +690,11 @@ export class SessionHost {
         session: z.string().min(1).optional().describe('Session id from open_session; may be omitted only while one session is open'),
       }).strict(),
       readOnly: true,
-      call: async (args) => textResult(this.catalog(args.session, args.tool)),
+      call: async (args) => {
+        const described = this.catalog(args.session, args.tool);
+
+        return typeof described === 'string' ? textResult(described) : described;
+      },
     });
   }
 

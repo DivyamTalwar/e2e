@@ -45,6 +45,8 @@ import { carriedSecrets, processSecrets, redactForSession, sessionLedger, static
 import { SessionStaging } from '@e2e-dev/core/lib/run/sessions';
 import { isOwnStep, StepRecorder, type StepHoldRequest, type StepProgress } from '@e2e-dev/core/lib/run/steps';
 import { holdAttemptSteps, readHeldScreen, type AttemptHolds, type HeldStep, type StepHoldContext } from './step-hold.ts';
+import type { AttachRequest } from '../mcp/wire.ts';
+import type { PauseSessions } from '../mcp/pause-session.ts';
 import { WorkerModels } from '@e2e-dev/core/lib/run/worker-models';
 import { classifyAttemptStatus, EngineSessions, type EngineSessionsOptions } from '@e2e-dev/core/lib/run/engine-sessions';
 import type { EngineDisposeContext } from '@e2e-dev/core/lib/engine/index';
@@ -91,7 +93,7 @@ type ExecutorHold = {
    * Asks the runner at each pause, and before each step when `steps` is set.
    * The runner can call `readScreen` to read the screen during the wait.
    */
-  readonly ask: (step: HeldStep, signal: AbortSignal, readScreen: StepHoldContext['readScreen']) => Promise<void>;
+  readonly ask: (step: HeldStep, signal: AbortSignal, readScreen: StepHoldContext['readScreen'], askSession: StepHoldContext['askSession']) => Promise<void>;
   /**
    * Set `steps` to wait at `ask` before each top-level step of a test's
    * first attempt (`e2e run --step`). Setup tests and retries aren't held.
@@ -700,7 +702,49 @@ export class TargetExecutor extends EngineSessions implements SerialHost {
           budget,
           signal: attemptAbort.signal,
           attempt: { target: this.target.name, testId: pair.test.id, agent: pair.agent, repeat: pair.repeat, title: pair.test.titlePath.join(' › ') },
-          ask: hold.ask,
+          ask: async (step, signal, readScreen) => {
+            // Load the session catalog on the first request, when a session attaches.
+            let attached: Promise<PauseSessions> | undefined;
+            const askSession = async (request: AttachRequest) => {
+              attached ??= import('../mcp/pause-session.ts').then(
+                ({ PauseSessions }) =>
+                  new PauseSessions({
+                    runtime: agentRuntime,
+                    session,
+                    budget,
+                    config: this.config,
+                    target: this.target,
+                    runId: this.options.runId,
+                    attemptId,
+                    artifactsDir: artifacts.dir,
+                    title: step.title,
+                    kind: step.kind,
+                    source: step.source,
+                    warn: (message) => this.options.events?.onNotice?.(message),
+                  }),
+              );
+
+              return (await attached).request(request);
+            };
+
+            try {
+              await hold.ask(step, signal, readScreen, askSession);
+            } finally {
+              // End the attached session before the test resumes so no call
+              // runs beside it.
+              // If a call ignores its abort past the cleanup limit, fail at the pause.
+              if (attached !== undefined) {
+                const sessions = await attached;
+
+                await withTimeout(
+                  sessions.request({ type: 'close' }),
+                  this.config.cleanupTimeout,
+                  () =>
+                    new TestTimeoutError('the attached MCP session took longer than cleanupTimeout to close after the test was resumed'),
+                );
+              }
+            }
+          },
           readScreen: (signal: AbortSignal) => readHeldScreen(session, this.op(attemptId, this.config.actionTimeout, signal), screens),
           // The runner's watchdog keeps the test deadline too; it gets what is left.
           onResume: (remainingMs) => this.options.events?.onAttemptDeadline?.(pair, { index: attemptIndex, id: attemptId, startedAt, remainingMs }),
@@ -725,7 +769,7 @@ export class TargetExecutor extends EngineSessions implements SerialHost {
                 carriedSecrets(sessionLedger(session, this.config.allSecrets), this.config.allSecrets),
               );
             };
-      const { fixtures: builtIns } = createFixtures({
+      const { fixtures: builtIns, agentRuntime } = createFixtures({
         config: inMemory?.agents === undefined ? this.config : { ...this.config, agents: inMemory.agents },
         target: this.target,
         session,

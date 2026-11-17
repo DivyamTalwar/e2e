@@ -3,6 +3,10 @@
  * Without a terminal, the pause is printed and the run waits for a command
  * from the same directory. In CI, the test fails at the pause.
  *
+ * A built `e2e mcp` server attaches through a real MCP client. Its session
+ * drives the paused test's app. Closing the session leaves the test paused,
+ * while resuming the test ends the session.
+ *
  * Terminal cases run the built `servePauses` in this process with a stand-in
  * for stdin, both directly and through `watchSession`. Keys resume or stop
  * the run.
@@ -10,12 +14,14 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import picocolors from 'picocolors';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SecretLedger } from '@e2e-dev/core/lib/internal/redact';
@@ -36,6 +42,7 @@ const CLI = fileURLToPath(new URL('../../dist/cli/bin.js', import.meta.url));
 const ENV = { ...process.env, CI: '', NO_COLOR: '1' };
 const projects: FixtureProject[] = [];
 const runs: ReturnType<typeof spawn>[] = [];
+const clients: Client[] = [];
 /**
  * Runs started in this process, with their stop functions. Cleanup stops
  * them before it sends commands that could block.
@@ -90,6 +97,59 @@ test('${title}', async ({ app, screen }) => {
 ${'  await screen.pause();\n'.repeat(count)}});
 `;
 }
+
+// Name keeps the typed value.
+const CONFIG = `import type { E2EConfig } from 'e2e';
+import { createFakeEngine, FAKE_APP } from '../../helpers/fake-engine.ts';
+
+const engine = createFakeEngine({ scene: () => [{ id: 'name', role: 'textbox', name: 'Name', value: '' }] }).engine;
+
+export default {
+  targets: [{ name: 'fake', platform: 'fake', engine, app: FAKE_APP }],
+  workers: 1,
+  timeout: 5_000,
+} satisfies E2EConfig;
+`;
+
+// Use the built-in agent because custom executors don't take project tools.
+// This tool writes a file when it starts and when it returns.
+const SLOW_TOOL_CONFIG = `import { writeFileSync } from 'node:fs';
+import type { E2EConfig } from 'e2e';
+import { defineTool } from 'e2e/agent';
+import { z } from 'zod';
+import { createFakeEngine, FAKE_APP } from '../../helpers/fake-engine.ts';
+
+const engine = createFakeEngine({ scene: () => [{ id: 'name', role: 'textbox', name: 'Name', value: '' }] }).engine;
+
+export default {
+  targets: [{ name: 'fake', platform: 'fake', engine, app: FAKE_APP }],
+  workers: 1,
+  agents: {
+    default: {
+      tools: {
+        wait_a_while: defineTool(
+          { description: 'Wait three seconds.', inputSchema: z.object({}), execute: async () => {
+            writeFileSync(new URL('tool-started', import.meta.url), '');
+            await new Promise((resolve) => setTimeout(resolve, 3_000));
+            writeFileSync(new URL('tool-returned', import.meta.url), String(Date.now()));
+            return 'waited';
+          } },
+          { mutates: false },
+        ),
+      },
+    },
+  },
+} satisfies E2EConfig;
+`;
+
+const TYPED_SUITE = `import { test, expect } from 'e2e';
+
+test('greets after a pause', async ({ app, screen }) => {
+  await app.open('/');
+  await screen.pause();
+  await expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Ada');
+});
+`;
 
 /**
  * Creates a project with these files and config. Cleanup stops its runs
@@ -202,11 +262,57 @@ function terminalRun(dir: string, stdin: NodeJS.ReadStream) {
   return { ...output, outcome };
 }
 
+/**
+ * Starts the built `e2e mcp` server in `dir` with a real client. Calls
+ * return text and error status.
+ */
+async function mcp(dir: string) {
+  const client = new Client({ name: 'e2e-attach-test', version: '0.0.0' });
+  clients.push(client);
+
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [CLI, 'mcp'],
+      cwd: dir,
+      env: ENV as Record<string, string>,
+      stderr: 'ignore',
+    }),
+  );
+
+  const invoke = async (name: string, args: Record<string, unknown> = {}) => {
+    const result = (await client.callTool({ name, arguments: args }, { timeout: 60_000 })) as {
+      content: { type: string; text?: string }[];
+      isError?: boolean;
+    };
+
+    return { text: result.content.map((part) => part.text ?? '').join('\n'), isError: result.isError === true };
+  };
+
+  return { invoke, call: (tool: string, args: Record<string, unknown> = {}) => invoke('call', { tool, args }) };
+}
+
+/** Returns the node ID from the first line in `text` matching `pattern`. */
+function nodeId(text: string, pattern: RegExp): string {
+  const id = /#(\S+)/.exec(text.split('\n').find((line) => pattern.test(line)) ?? '')?.[1];
+
+  if (id === undefined) {
+    throw new Error(`no node matches ${pattern} in:\n${text}`);
+  }
+
+  return id;
+}
+
 afterEach(async () => {
   for (const { stop, done } of inProcess.splice(0)) {
     stop();
     await done;
   }
+
+  for (const client of clients.splice(0)) {
+    await client.close().catch(() => undefined);
+  }
+
   const created = projects.splice(0);
 
   // Stop runs before killing them. A kill while listening leaves a socket file.
@@ -327,6 +433,7 @@ test('pauses after a wait', { timeout: 30_000 }, async ({ app, screen }) => {
     await once(dropped, 'connect');
     dropped.write('not a command\n');
     await once(dropped, 'close');
+    expect((await (await mcp(dir)).invoke('open_session', { attach: true })).text).toContain('no test is waiting');
     writeFileSync(path.join(dir, 'go'), '');
     await answered;
     const { text, exitCode } = JSON.parse(reply) as { text: string; exitCode: number };
@@ -892,4 +999,279 @@ describe('screen.pause() in CI', () => {
     expect(ran.stdout).toContain('tests/pause.e2e.ts:5');
     expect(ran.stdout).not.toContain('Paused in');
   });
+});
+
+describe('open_session {attach: true}', () => {
+  it('drives the app of the paused test, leaves the test paused on close_session, attaches again, and resumes the test from the state the session left', async () => {
+    const { dir } = project({ 'tests/attach.e2e.ts': TYPED_SUITE }, CONFIG);
+    const run = await pausedRun(dir);
+    const { invoke, call } = await mcp(dir);
+
+    const opened = await invoke('open_session', { attach: true });
+    expect(opened.isError).toBe(false);
+    expect(opened.text).toMatch(
+      /^Session \S+ attached; pass session "\S+" to every tools, call, and close_session\.\nAttached to "greets after a pause" on target "fake", paused at tests\/attach\.e2e\.ts:5\./,
+    );
+    expect(opened.text).toContain('textbox "Name"');
+    expect(opened.text).not.toContain('- run_code');
+
+    const observed = await call('observe');
+    expect(observed.isError).toBe(false);
+    const typed = await call('type', { target: nodeId(observed.text, /textbox "Name"/), value: 'Ada' });
+    expect(typed.isError).toBe(false);
+
+    const closed = await invoke('close_session');
+    expect(closed.text).toMatch(/^Session \S+ detached \(closed by the agent\); 2 tool calls ran\. The test stays paused/);
+
+    const again = await invoke('open_session', { attach: true });
+    expect(again.isError, again.text).toBe(false);
+
+    const next = e2e(dir, ['run', '--step', 'next']);
+    expect(next.stdout).toBe('The run has ended.\n');
+    expect(await run.exited).toBe(0);
+    expect(run.stdout()).toContain('1 passed (1)');
+  }, 90_000);
+
+  it('ends the session when the test is resumed, and records it as a passed step before the steps after the pause', async () => {
+    const { dir } = project({ 'tests/attach.e2e.ts': TYPED_SUITE }, CONFIG);
+    const run = start(dir, ['run', '--trace', 'on']);
+    await run.shows('Next: e2e run --step next');
+    const { invoke, call } = await mcp(dir);
+    const opened = await invoke('open_session', { attach: true });
+    await call('type', { target: nodeId(opened.text, /textbox "Name"/), value: 'Ada' });
+
+    expect(e2e(dir, ['run', '--step', 'next']).stdout).toBe('The run has ended.\n');
+    expect(await run.exited).toBe(0);
+    const later = await call('observe');
+    expect(later.isError).toBe(true);
+    expect(later.text).toContain('NO_SESSION');
+    expect(later.text).toContain('the test is no longer paused');
+
+    const { run: report } = JSON.parse(readFileSync(path.join(dir, '.e2e', 'report.json'), 'utf8')) as {
+      run: {
+        results: {
+          attempts: {
+            steps: { api: string; status: string; startedAt: string; durationMs: number; source: { file: string; line: number } }[];
+          }[];
+        }[];
+      };
+    };
+    const steps = report.results[0]!.attempts[0]!.steps;
+    expect(steps.map((step) => step.api)).toEqual(['app.open', 'session', 'expect.toHaveValue']);
+    const [, session, after] = steps;
+    expect(session!.status).toBe('passed');
+    expect(session!.source).toMatchObject({ file: 'tests/attach.e2e.ts', line: 5 });
+    expect(Date.parse(session!.startedAt) + session!.durationMs).toBeLessThanOrEqual(Date.parse(after!.startedAt));
+    const results = path.join(dir, '.e2e', 'results');
+    const trace = readdirSync(results, { recursive: true, encoding: 'utf8' }).find((file) => file.endsWith('trace.md'));
+    expect(readFileSync(path.join(results, trace ?? 'trace.md'), 'utf8')).toMatch(
+      /2\. ✓ `session` "Attached session: .*" \(\d+ms\) — `tests\/attach\.e2e\.ts:5`\n {3}- type "Ada" into textbox "Name"/,
+    );
+  }, 90_000);
+
+  it('opens a new session once the one before it detached with a call still running', async () => {
+    const { dir } = project({ 'tests/attach.e2e.ts': TYPED_SUITE }, SLOW_TOOL_CONFIG);
+    await pausedRun(dir);
+    const first = await mcp(dir);
+    const second = await mcp(dir);
+    expect((await first.invoke('open_session', { attach: true })).isError).toBe(false);
+
+    const waiting = first.call('wait_a_while');
+
+    await marked(dir, 'tool-started');
+    await first.invoke('close_session');
+    const opened = await second.invoke('open_session', { attach: true });
+    const openedAt = Date.now();
+    expect(opened.isError).toBe(false);
+    expect(openedAt).toBeGreaterThanOrEqual(Number(readFileSync(path.join(dir, 'tool-returned'), 'utf8')));
+    expect(opened.text).toContain('textbox "Name"');
+    expect((await second.call('observe')).isError).toBe(false);
+    expect((await waiting).text).toContain('the attached session ended: the session was closed');
+  }, 90_000);
+
+  it('fails the test at the pause with TEST_TIMEOUT when the attached session takes longer than cleanupTimeout to close', async () => {
+    const { dir } = project(
+      { 'tests/attach.e2e.ts': TYPED_SUITE },
+      SLOW_TOOL_CONFIG.replace('workers: 1,', 'workers: 1,\n  cleanupTimeout: 500,'),
+    );
+
+    const run = await pausedRun(dir);
+    const { invoke, call } = await mcp(dir);
+    expect((await invoke('open_session', { attach: true })).isError).toBe(false);
+    const waiting = call('wait_a_while');
+
+    await marked(dir, 'tool-started');
+
+    expect(e2e(dir, ['run', '--step', 'next']).stdout).toBe('The run has ended.\n');
+    expect(await run.exited).toBe(1);
+    expect((await waiting).isError).toBe(true);
+    const { run: report } = JSON.parse(readFileSync(path.join(dir, '.e2e', 'report.json'), 'utf8')) as {
+      run: { results: { attempts: { status: string; error?: unknown }[] }[] };
+    };
+    const attempt = report.results[0]!.attempts[0]!;
+    expect(attempt.status).toBe('timed-out');
+    expect(attempt.error).toMatchObject({
+      code: 'TEST_TIMEOUT',
+      message: 'the attached MCP session took longer than cleanupTimeout to close after the test was resumed',
+      source: { file: 'tests/attach.e2e.ts', line: 5 },
+    });
+  }, 90_000);
+
+  it("refuses a second session on the same pause, and refuses to attach while there isn't a paused test", async () => {
+    const { dir } = project({ 'tests/attach.e2e.ts': TYPED_SUITE }, CONFIG);
+    const nothing = await (await mcp(dir)).invoke('open_session', { attach: true });
+    expect(nothing.isError).toBe(true);
+    expect(nothing.text).toContain('NO_SESSION: no e2e run is waiting at screen.pause() or a held step in');
+    expect(nothing.text).toContain("the run has ended, isn't waiting yet, or is an e2e run --step in a terminal. Attach while a test is paused or held");
+
+    await pausedRun(dir);
+    const first = await (await mcp(dir)).invoke('open_session', { attach: true });
+    expect(first.isError).toBe(false);
+    const second = await (await mcp(dir)).invoke('open_session', { attach: true });
+    expect(second.isError).toBe(true);
+    expect(second.text).toContain('SESSION_OPEN: another session is attached to this test');
+  }, 90_000);
+
+  it('attaches to a step held in an e2e run --step run, and ends the session when the step runs', async () => {
+    const { dir } = project({ 'tests/attach.e2e.ts': TYPED_SUITE.replace('  await screen.pause();\n', '') }, CONFIG);
+    const started = e2e(dir, ['run', '--step']);
+    expect(started.exitCode, started.stdout + started.stderr).toBe(0);
+    const { invoke, call } = await mcp(dir);
+    const opened = await invoke('open_session', { attach: true });
+    expect(opened.isError, opened.text).toBe(false);
+    expect(opened.text).toContain('Attached to "greets after a pause" on target "fake", held at tests/attach.e2e.ts:5.');
+    expect((await call('type', { target: nodeId(opened.text, /textbox "Name"/), value: 'Ada' })).isError).toBe(false);
+
+    const rest = e2e(dir, ['run', '--step', 'rest']);
+    expect(rest.stdout).toContain('The stepped run has ended.');
+    expect(rest.exitCode, rest.stdout).toBe(0);
+    const later = await call('observe');
+    expect(later.isError).toBe(true);
+    expect(later.text).toContain('NO_SESSION');
+    const { run: report } = JSON.parse(readFileSync(path.join(dir, '.e2e', 'report.json'), 'utf8')) as {
+      run: { results: { attempts: { steps: { api: string }[] }[] }[] };
+    };
+    expect(report.results[0]!.attempts[0]!.steps.map((step) => step.api)).toEqual(['app.open', 'session', 'expect.toHaveValue']);
+  }, 90_000);
+
+  it('detaches on close_session from a run that never hangs up its side', async () => {
+    const { dir } = project({ 'tests/attach.e2e.ts': TYPED_SUITE }, CONFIG);
+    // Stand in for a run suspended at a pause (Ctrl-Z). It answers the attach
+    // but never hangs up.
+    const silent = net.createServer({ allowHalfOpen: true }, (client) => {
+      client.once('data', () => {
+        client.write(`${JSON.stringify({ result: { content: [{ type: 'text', text: 'opened' }] }, target: 'fake' })}\n`);
+      });
+    });
+    silent.listen(stepAddress(dir).socket);
+    await once(silent, 'listening');
+    try {
+      const { invoke } = await mcp(dir);
+      expect((await invoke('open_session', { attach: true })).isError).toBe(false);
+      expect((await invoke('close_session')).text).toContain('The test stays paused');
+    } finally {
+      silent.close();
+    }
+  }, 90_000);
+
+  it('leaves no session attached when the test is resumed as a session opens, and ends the run', async () => {
+    const { dir } = project({ 'tests/attach.e2e.ts': pausing('resumes while opening', 1) }, CONFIG);
+    const run = await pausedRun(dir);
+    const { invoke, call } = await mcp(dir);
+    const opening = invoke('open_session', { attach: true });
+    const next = start(dir, ['run', '--step', 'next']);
+    expect(await next.exited).toBe(0);
+    expect(await run.exited).toBe(0);
+
+    // The test resumed before or after the session opened. Either way, no
+    // session remains attached to it.
+    const opened = await opening;
+    const after = opened.isError ? opened : await call('observe');
+    expect(after.isError).toBe(true);
+    expect(after.text).toContain('NO_SESSION');
+  }, 90_000);
+
+  it('refuses attach with any other option with INVALID_ARGUMENT', async () => {
+    const { dir } = project({ 'tests/attach.e2e.ts': TYPED_SUITE }, CONFIG);
+    const refused = await (await mcp(dir)).invoke('open_session', { attach: true, target: 'fake' });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('INVALID_ARGUMENT');
+  }, 90_000);
+
+  it('attaches to the test that paused first while two tests are paused', async () => {
+    const { dir } = project(
+      { 'tests/a.e2e.ts': pausingAfterMark('first pauser', 'a-paused'), 'tests/b.e2e.ts': pausingAfterMark('second pauser', 'b-paused') },
+      workerFakeConfigSource(2),
+    );
+
+    const run = start(dir, ['run']);
+    await run.shows('Paused in');
+    await marked(dir, 'a-paused', 'b-paused');
+    const first = run.stdout().includes('Paused in first pauser') ? 'first pauser' : 'second pauser';
+
+    const { invoke } = await mcp(dir);
+    const opened = await invoke('open_session', { attach: true });
+    expect(opened.isError, opened.text).toBe(false);
+    expect(opened.text).toContain(`Attached to "${first}" on target "fake"`);
+  }, 90_000);
+
+  it('lists the catalog without run_code or recording, checks arguments, fills only a secret the config declares, and redacts it from what it returns', async () => {
+    const { dir } = project(
+      { 'tests/attach.e2e.ts': pausing('holds a secret', 1) },
+      CONFIG.replace('createFakeEngine({', 'createFakeEngine({ video: true,').replace(
+        'timeout: 5_000,',
+        "timeout: 5_000,\n  secrets: { apiKey: 'sk-live-PAUSED-0000' },",
+      ),
+    );
+
+    await pausedRun(dir);
+    const { invoke, call } = await mcp(dir);
+    const opened = await invoke('open_session', { attach: true });
+    expect(opened.isError, opened.text).toBe(false);
+
+    const listed = await invoke('tools');
+    expect(listed.isError, listed.text).toBe(false);
+    expect(listed.text).toMatch(/^- type_secret /m);
+
+    for (const left of ['run_code', 'start_recording', 'stop_recording']) {
+      expect(listed.text).not.toMatch(new RegExp(`^- ${left}\\b`, 'm'));
+    }
+
+    const detail = await invoke('tools', { tool: 'type_secret' });
+    expect(detail.isError, detail.text).toBe(false);
+    expect(detail.text).toContain('"apiKey"');
+
+    const name = nodeId(opened.text, /textbox "Name"/);
+    const unknown = await call('tap', { target: name, force: true });
+    expect(unknown.isError).toBe(true);
+    expect(unknown.text).toContain('INVALID_ARGUMENT');
+    const undeclared = await call('type_secret', { target: name, name: 'stolen' });
+    expect(undeclared.isError).toBe(true);
+    expect(undeclared.text).toContain('POLICY_DENIED: secret "stolen" was not declared');
+    const filled = await call('type_secret', { target: name, name: 'apiKey' });
+    expect(filled.isError, filled.text).toBe(false);
+    expect(filled.text).toContain('Filled secret "apiKey"');
+    const observed = await call('observe');
+    expect(observed.text).toContain('<secret:apiKey>');
+
+    for (const text of [undeclared.text, filled.text, observed.text]) {
+      expect(text).not.toContain('sk-live-PAUSED-0000');
+    }
+
+  }, 90_000);
+
+  it('detaches when the MCP server exits, leaves the test paused, and attaches again from a new server', async () => {
+    const { dir } = project({ 'tests/attach.e2e.ts': TYPED_SUITE }, CONFIG);
+    const run = await pausedRun(dir);
+    expect((await (await mcp(dir)).invoke('open_session', { attach: true })).isError).toBe(false);
+    await clients.at(-1)!.close();
+
+    const { invoke, call } = await mcp(dir);
+    const opened = await invoke('open_session', { attach: true });
+    expect(opened.isError, opened.text).toBe(false);
+    expect(await Promise.race([run.exited, sleep(0, 'paused')])).toBe('paused');
+    expect((await call('type', { target: nodeId(opened.text, /textbox "Name"/), value: 'Ada' })).isError).toBe(false);
+    expect(e2e(dir, ['run', '--step', 'next']).stdout).toBe('The run has ended.\n');
+    expect(await run.exited).toBe(0);
+  }, 90_000);
 });

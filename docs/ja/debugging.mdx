@@ -337,7 +337,9 @@ Next: e2e run --step next to resume the test, or e2e run --step stop to end the 
 
 テストが再び一時停止するか実行が終わると、応答が返ります。終了時には `The run has ended.` と実行の終了コードが返ります。各応答の内容は[ターミナルなしでステップ実行する](#step-through-a-test-without-a-terminal)を参照してください。
 
-- 一時停止の時間はどのタイムアウトにも加算しません。ただしターミナルがない場合、コマンドなしで 30 分一時停止すると実行を停止します。
+コーディングエージェントは、[MCP サーバー](/mcp-server)を通じて `open_session {attach: true}` で一時停止中のアプリを操作できます。[一時停止中のテストにアタッチする](/reference/mcp#attaching-to-a-paused-test)を参照してください。
+
+- 一時停止の時間はどのタイムアウトにも加算しません。ただしターミナルがない場合、一時停止中に操作のないまま 30 分経つと実行を停止します。操作とは、コマンド、またはアタッチしたセッションからの呼び出しです。
 - リトライやセットアップテストを含め、すべての試行でテストは一時停止します。
 - ワーカーが複数ある場合、一時停止は古い順にひとつずつ表示し、その間もほかのワーカーは実行を続けます。
 - `screen.pause()` は、[`beforeEach`](/reference/test#beforeeach) フック、[フィクスチャ](/fixtures)のセットアップ、またはテスト本体で `await` を付けて呼び出します。それ以外の場所で呼び出した場合の動作は [`screen.pause()`](/reference/screen#screen-pause) を参照してください。
