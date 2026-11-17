@@ -1075,9 +1075,11 @@ bunx @e2e-dev/web install chromium --with-deps
   `NODE_USE_ENV_PROXY=1`.
 - On Linux, Firefox unpacks with `tar` and `xz`; `--with-deps` installs
   `xz-utils`.
-- `chromium` video needs an ffmpeg with `libvpx-vp9`: `E2E_FFMPEG_PATH`,
-  else `ffmpeg` on the `PATH`, else a pinned build the first recording
-  downloads into the browser cache. Install it ahead with `install ffmpeg`.
+- `chromium` video needs an ffmpeg with `libvpx-vp9`. The engine uses
+  `E2E_FFMPEG_PATH`, else the pinned build in the browser cache, else
+  `ffmpeg` on the `PATH`. With none of them, the first recording downloads
+  the pinned build into the browser cache. Install it ahead with
+  `install ffmpeg`.
 - The command exits non-zero when an install fails. Ctrl-C or SIGTERM stops
   the download, removes the partial files, and exits 130 or 143.
 
@@ -1108,9 +1110,10 @@ The runtime exports are `web`, `attachBrowser`, and `test`, `describe`, `beforeE
 export interface WebOptions {
   /**
    * Browser to launch, `chromium` (default) or `firefox`, driven over
-   * WebDriver BiDi. A `BrowserProvider` leases hosted browsers instead, one
-   * per worker slot, each attached to over CDP and released when the run
-   * ends. A provider implies chromium and excludes `connect`.
+   * WebDriver BiDi. A `BrowserProvider` leases hosted browsers instead, each
+   * attached to over CDP: one per worker slot, released when the run ends,
+   * or one per attempt with `scope: 'attempt'`. A provider implies chromium
+   * and excludes `connect`.
    */
   readonly browser?: BrowserName | BrowserProvider;
   /**

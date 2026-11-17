@@ -33,13 +33,13 @@ function cachedFfmpeg(env: NodeJS.ProcessEnv): string {
   return path.join(cachedFfmpegDirectory(env), process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
 }
 
-/** The ffmpeg found on the system, memoized: `E2E_FFMPEG_PATH`, else `ffmpeg` on the PATH, when it encodes VP9. */
+/** `ffmpeg` on the PATH when it encodes VP9, else null; probed once and memoized. */
 let systemFfmpeg: string | null | undefined;
 
 /**
- * The ffmpeg that encodes Chromium's screencast: `E2E_FFMPEG_PATH`, else a
- * system `ffmpeg` with VP9, else the one `ensureFfmpeg` cached; undefined
- * when there is none yet.
+ * The ffmpeg that encodes Chromium's screencast: `E2E_FFMPEG_PATH` as given,
+ * never probed; else the build `ensureFfmpeg` cached; else `ffmpeg` on the
+ * PATH when it encodes VP9. Undefined when there is none yet.
  */
 function ffmpegExecutable(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const configured = env['E2E_FFMPEG_PATH'];
