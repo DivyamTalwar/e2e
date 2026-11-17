@@ -633,6 +633,22 @@ describe('AttemptNetwork', () => {
       expect(await hop(fake, 'r', `${SITE}/again`, 2, {})).toEqual({ accept: '*/*', 'x-route': 'routed' });
     });
 
+    it('keeps the configured headers on the hop a redirect a route fulfilled leads to, for a request that started at the app’s origin', async () => {
+      const fake = new FakeBidi();
+      const { net, open } = network(fake, { headers: true });
+      await net.bind('user-1');
+      await open('tab');
+      await net.addRoute(route('**/moved', async (_held, decisions) => {
+        await decisions.fulfill({ status: 302, headers: { location: `${SITE}/home` } });
+      }));
+      for (const [id, origin] of [['app', SITE], ['external', 'https://external.test']] as const) fake.emit('network.beforeRequestSent', request(id, `${origin}/moved`));
+      await settle();
+      await settle();
+      expect(fake.commands('network.provideResponse').map((command) => command.params['request'])).toEqual(['app', 'external']);
+      expect(await hop(fake, 'app', `${SITE}/home`, 1, {})).toEqual({ accept: '*/*', 'x-preview': 'token' });
+      expect(await hop(fake, 'external', `${SITE}/home`, 1, {})).toBeUndefined();
+    });
+
     it('sends nothing configured on a request that starts at another origin and redirects to the app’s', async () => {
       const fake = new FakeBidi();
       const { net, open } = network(fake, { headers: true });

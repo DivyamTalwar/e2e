@@ -76,7 +76,7 @@ export interface NetworkRoute {
   readonly handle: (request: InterceptedRequest, decisions: RouteDecisions) => Promise<void>;
 }
 
-/** How the redirect hops of a request go on: the route's header overrides, the method its first hop was continued with, and the site headers the driver added to that hop. */
+/** How the redirect hops of a request go on: the route's header overrides, the method its first hop was continued or answered as, and the site headers a request that starts where it did carries. */
 interface RedirectPolicy {
   readonly overrides?: Readonly<Record<string, string>>;
   readonly method: string;
@@ -332,10 +332,9 @@ export class RequestDecisions {
    * header the browser owns (cookie, host, origin, content-length, `sec-*`
    * and the like) keeps the browser's value, and a new body sets its own
    * `content-length` on a browser that would keep the old one. The route's
-   * header overrides and the configured headers added are kept on the
-   * record for the request's redirect hops (`redirectHeaders`), which carry
-   * them wherever they go. Firefox cannot rewrite the URL
-   * (`firefoxUrlRewrite`), so there a rewrite is refused before the
+   * header overrides and the configured headers added are kept for the
+   * request's redirect hops (`keepRedirectPolicy`). Firefox cannot rewrite
+   * the URL (`firefoxUrlRewrite`), so there a rewrite is refused before the
    * request goes.
    */
   private async continue(request: InterceptedRequest, record: DecisionRecord, overrides: ContinueDecision = {}): Promise<void> {
@@ -345,13 +344,7 @@ export class RequestDecisions {
     let headers = routeHeaders === undefined ? undefined : applyHeaderOverrides(request.headers, routeHeaders, this.options.traits.continueAddsCookies);
     if (overrides.postData !== undefined && this.options.traits.continueKeepsContentLength) headers = { ...(headers ?? request.headers), 'content-length': String(Buffer.byteLength(overrides.postData)) };
     if (site !== undefined) headers = { ...(headers ?? request.headers), ...site };
-    if (routeHeaders !== undefined || site !== undefined) {
-      record.redirect = {
-        ...(routeHeaders === undefined ? {} : { overrides: routeHeaders }),
-        method: overrides.method ?? request.method,
-        ...(site === undefined ? {} : { injected: site }),
-      };
-    }
+    keepRedirectPolicy(record, overrides.method ?? request.method, routeHeaders, site);
     await this.connection.send('network.continueRequest', {
       request: request.id,
       ...(overrides.url === undefined ? {} : { url: overrides.url }),
@@ -369,7 +362,10 @@ export class RequestDecisions {
    * by its own length whatever `content-encoding` and `content-length` the
    * headers name (as `route.fetch`'s do, over a body it already decoded), and
    * it is kept on the record for a response wait to read, since a browser
-   * keeps no body it did not load.
+   * keeps no body it did not load. A response that is a redirect starts the
+   * request's next hop, which carries the configured headers of the origin
+   * the request started at, as after a redirect from the network
+   * (`keepRedirectPolicy`).
    */
   private async fulfill(request: InterceptedRequest, record: DecisionRecord, response: FulfillDecision): Promise<void> {
     const { 'content-encoding': _encoding, 'content-length': _length, ...given } = lowercaseNames(response.headers);
@@ -394,6 +390,7 @@ export class RequestDecisions {
     }
     headers['content-length'] = String(body.length);
     record.fulfilledBody = body;
+    keepRedirectPolicy(record, request.method, undefined, this.options.protectedApp.headersFor(request.url));
     await this.connection.send('network.provideResponse', {
       request: request.id,
       statusCode: response.status,
@@ -402,6 +399,23 @@ export class RequestDecisions {
       body: { type: 'base64', value: body.toString('base64') },
     });
   }
+}
+
+/**
+ * Keeps on `record` how the redirect hops of its request go on
+ * (`redirectHeaders`), which carry it wherever they go: the route's header
+ * `overrides`, the `method` the first hop goes on or is answered as, and the
+ * configured headers `injected` for the origin the request starts at. A
+ * request with neither headers keeps nothing, and its hops go on untouched.
+ */
+function keepRedirectPolicy(
+  record: DecisionRecord,
+  method: string,
+  overrides: Readonly<Record<string, string>> | undefined,
+  injected: Readonly<Record<string, string>> | undefined,
+): void {
+  if (overrides === undefined && injected === undefined) return;
+  record.redirect = { ...(overrides === undefined ? {} : { overrides }), method, ...(injected === undefined ? {} : { injected }) };
 }
 
 /** Headers a route may not override, as Playwright's `isForbiddenHeader` names them: the browser's value stands. */

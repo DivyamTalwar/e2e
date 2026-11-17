@@ -194,6 +194,21 @@ describe('web({ headers, basicAuth })', () => {
     }
   });
 
+  it('keeps the headers a request started with on the hop a redirect its route fulfilled leads to', async () => {
+    const engine = web({ headers: { 'x-fixture-header': 'let-me-in' } });
+    try {
+      await boot(engine, app, artifactsDir, 'h6');
+      await browserOf(engine, app).route('**/moved', async (route) => {
+        await route.fulfill({ status: 302, headers: { location: `${app.url}/headers` } });
+      });
+      expect(await headingAt(engine, 'h6', `${app.url}/moved`)).toBe('let-me-in');
+      // The request started at another origin, so its hop into the app's gets none.
+      expect(await headingAt(engine, 'h6', `${otherSite}/moved`)).toBe('none');
+    } finally {
+      await shutdown(engine);
+    }
+  });
+
   it('blocks service workers under headers, since routing never sees a worker\'s requests', async () => {
     // Registers the fixture's worker and counts what the browser now holds:
     // a blocked registration resolves like a real one but registers nothing.
