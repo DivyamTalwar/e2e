@@ -121,7 +121,7 @@ describe('web({ headers, basicAuth })', () => {
     const engine = web({ headers: { 'x-fixture-header': 'rides-redirects' } });
     try {
       await boot(engine, app, artifactsDir, 'h4');
-      // Playwright reapplies a routed request's headers to its redirects without routing them:
+      // A redirect hop goes on with the headers its request started with:
       // they reach whatever origin a redirect names, and a redirect into the app's origin gets none.
       app.redirects.set('/to-other-headers', `${otherSite}/headers`);
       expect(await headingAt(engine, 'h4', `${app.url}/to-other-headers`)).toBe('rides-redirects');

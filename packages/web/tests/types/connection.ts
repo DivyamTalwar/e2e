@@ -57,7 +57,7 @@ import type { BrowserLease, BrowserProvider, WebConnectOptions, WebInitScript, W
 ({ userAgent: 3 }) satisfies WebOptions;
 // The locale and time zone every context runs in.
 ({ locale: 'de-DE', timezoneId: 'Europe/Berlin' }) satisfies WebOptions;
-// @ts-expect-error a locale is one tag; Playwright takes no fallback list.
+// @ts-expect-error a locale is one tag, not a fallback list.
 ({ locale: ['de-DE', 'en-US'] }) satisfies WebOptions;
 // Init scripts: source, a file, or a function that takes no argument.
 ({ initScripts: ['window.x = 1', { path: 'shim.js' }, () => undefined] }) satisfies WebOptions;

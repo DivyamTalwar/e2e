@@ -143,7 +143,7 @@ describe('locators inside closed shadow roots', () => {
     ]);
   });
 
-  it('finds a node once, whether Playwright or the closed-root path reaches it, so counts stay strict', async () => {
+  it('finds a node once, whether it sits in the light DOM or in a closed root, so counts stay strict', async () => {
     const twins = await locate(byRole('button', 'Twin'));
     expect(twins.map((node) => node.testId)).toEqual(['twin-light', 'twin-a', 'twin-b']);
     // A position counts light-DOM matches first, then a closed root's in its order.

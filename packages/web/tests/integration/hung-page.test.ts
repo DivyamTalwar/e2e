@@ -1,10 +1,9 @@
 /**
  * Every operation ends at its budget, whatever the page does: a server that
- * never answers a navigation, which Playwright's own timeout ends, and a
- * renderer stuck in a script a button started. Playwright cannot answer an
- * evaluate or a point tap there at all, so the engine's own deadline ends
- * the call: `OPERATION_TIMEOUT`, or `ACTION_MAY_HAVE_COMMITTED`
- * for input, which may have reached the page.
+ * never answers a navigation, and a renderer stuck in a script a button
+ * started. The browser answers none of these calls, so the operation's
+ * deadline ends each one: `OPERATION_TIMEOUT`, or
+ * `ACTION_MAY_HAVE_COMMITTED` for input, which may have reached the page.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -24,7 +23,7 @@ const BUDGET_MS = 1_000;
 const ACTION_TIMEOUT_MS = 30_000;
 /** How long past its budget a call may still be pending before the test calls it unbounded. */
 const SLACK_MS = 1_000;
-/** How much sooner than the budget a call may fail: Playwright's own timeout is set 250 ms short of it. */
+/** How much sooner than the budget a call may fail: the driver's own timeout fires 250 ms short of it (`DRIVER_TIMEOUT_LEAD_MS` in `src/driver/budget.ts`). */
 const EARLY_MS = 300;
 
 const BUSY_PAGE = `<!doctype html><title>Busy</title>
@@ -199,7 +198,7 @@ describe('operations on a hung page', () => {
     expect(tap.error).toMatchObject({ code: onFirefox ? 'OPERATION_TIMEOUT' : 'ACTION_MAY_HAVE_COMMITTED' });
   });
 
-  it('keeps the reason Playwright gives for a tap that cannot land, ahead of the deadline', async () => {
+  it('keeps the reason the driver gives for a tap that cannot land, ahead of the deadline', async () => {
     await start();
     await engine.session!.open!(`${origin}/covered`, operation());
     const [target] = await engine.locate!(button('Pay'), operation());

@@ -412,7 +412,7 @@ describe('web engine lifecycle', () => {
         );
         expect(names(firstOfLast)).toEqual(['Third']);
 
-        // filter({ hasText }) composes as a per-element Playwright filter ahead of
+        // filter({ hasText }) composes as a per-element filter ahead of
         // the value predicate. Inputs have no text content; the textarea's is its
         // initial content, exactly as for any other query.
         const withText = await engine.locate!(
@@ -890,7 +890,7 @@ describe('web engine lifecycle', () => {
     }
   });
 
-  it('cancels an in-flight operation when its signal aborts instead of waiting out Playwright', async () => {
+  it('cancels an in-flight operation when its signal aborts instead of waiting out the driver', async () => {
     const engine = web();
     await withAttempt(engine, app, artifactsDir, 'h1', async () => {
       const controller = new AbortController();
