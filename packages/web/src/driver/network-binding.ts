@@ -407,7 +407,7 @@ export class NetworkBinding implements DecisionScope {
    * parked on a challenge nobody decided are handed its 401. The request
    * collector lets go of the hop's body: routes read it only while the first
    * hop is held, and a redirect seldom carries it on. A redirect hop
-   * (`mayRedirect`) stops counting and its record stays for the next hop; a
+   * (`isRedirect`) stops counting and its record stays for the next hop; a
    * last hop's record goes, unless a response wait still reads its body, and
    * the collector lets go of a response body no wait matched.
    */
@@ -424,7 +424,7 @@ export class NetworkBinding implements DecisionScope {
     if (ours && requestCollector !== undefined && hasBody(event.request)) {
       void releaseQuietly(this.connection.send('network.disownData', { dataType: 'request', collector: requestCollector, request: id }));
     }
-    if (event.response !== undefined && mayRedirect(event.response)) return;
+    if (event.response !== undefined && isRedirect(event.response)) return;
     const read = record !== undefined && record.waits > 0;
     if (record !== undefined) record.settled = true;
     if (!read) this.requests.delete(id);
@@ -596,24 +596,21 @@ function withoutCookies(headers: Record<string, string>): Record<string, string>
   return rest;
 }
 
-/** The statuses Chromium follows as a redirect when the response names a `Location`. */
+/** The redirect statuses of the Fetch standard: the ones a browser follows when the response names a `Location`. */
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-/** Whether the browser followed `response` as a redirect, so it keeps no body for it: a redirect status with a `Location` header, Chromium's own rule. */
+/**
+ * Whether the browser follows `response` to another hop of its request, and
+ * so keeps no body for it: a redirect status with a `Location` header, the
+ * rule Chromium and Firefox both apply to a fetch and to a navigation. Any
+ * other 3xx is a request's last hop: a 300, a 304, a 305, one with no
+ * `Location`. BiDi says of no hop that it is the last, and a redirect the
+ * page does not follow (`fetch` with `redirect: 'manual'` or `'error'`)
+ * reads the same: Chromium announces its hop and fails it, Firefox says
+ * nothing more, so there its record stays until its tab closes.
+ */
 function isRedirect(response: Network.ResponseData): boolean {
   return REDIRECT_STATUSES.has(response.status) && namesLocation(response);
-}
-
-/**
- * Whether another hop of its request may follow `response`: a 3xx that names
- * a `Location`, whatever its status, since browsers differ on which they
- * follow. A 304 is always a request's last hop, and so is a 3xx with no
- * `Location`. BiDi says of no hop that it is the last, so a redirect the
- * page does not follow (`fetch` with `redirect: 'manual'`) keeps its record
- * until its tab closes.
- */
-function mayRedirect(response: Network.ResponseData): boolean {
-  return response.status >= 300 && response.status < 400 && response.status !== 304 && namesLocation(response);
 }
 
 /** Whether `response` carries a `Location` header. */
