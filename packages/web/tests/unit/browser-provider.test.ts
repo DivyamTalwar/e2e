@@ -9,13 +9,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EngineAttemptContext, EngineCleanupContext, EngineFinishInfo, EngineHandle, EngineInitInfo, EnginePrepareInfo, OperationContext, ProviderRecordContext, ProviderRecording } from '@e2e-dev/core/engine';
-import { connectBidiOverCdp, type BidiBrowser } from '../../src/driver/launch.ts';
-import { BROWSER_TRAITS } from '../../src/browsers.ts';
+import type { EngineAttemptContext, EngineCleanupContext, EngineFinishInfo, OperationContext, ProviderRecordContext, ProviderRecording } from '@e2e-dev/core/engine';
+import { connectBidiOverCdp } from '../../src/driver/launch.ts';
 import { web } from '../../src/index.ts';
-import { LeasedBrowsers, type BrowserLease, type BrowserProvider, type BrowserReleaseContext, type BrowserRequest } from '../../src/provider.ts';
-import { FakeBidi } from '../helpers/bidi-fake.ts';
+import { LeasedBrowsers, type BrowserLease, type BrowserProvider, type BrowserRequest } from '../../src/provider.ts';
 import { gate } from '../helpers/gate.ts';
+import { fakeBrowser, initInfo, prepared, prepareInfo, provider } from '../helpers/provider-fake.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
 
 vi.mock('../../src/driver/launch.ts', async (importOriginal) => ({
@@ -25,101 +24,12 @@ vi.mock('../../src/driver/launch.ts', async (importOriginal) => ({
 
 const connectCdp = vi.mocked(connectBidiOverCdp);
 
-/** A browser the mocked attach hands back: a scripted BiDi peer that answers what an attempt's setup and teardown send. */
-function fakeBrowser(_contextId: string) {
-  const peer = new FakeBidi();
-  let userContexts = 0;
-  let contexts = 0;
-  peer
-    .on('session.subscribe', { result: { subscription: 'subscription' } })
-    .on('browser.createUserContext', () => ({ result: { userContext: `user-context-${++userContexts}` } }))
-    .on('browsingContext.create', () => ({ result: { context: `context-${++contexts}` } }))
-    .on('script.addPreloadScript', { result: { script: 'preload' } })
-    .on('network.addIntercept', { result: { intercept: 'intercept' } })
-    .on('browsingContext.getTree', { result: { contexts: [] } })
-    .on('script.callFunction', { result: { type: 'success', result: { type: 'object', value: [['width', { type: 'number', value: 1280 }], ['height', { type: 'number', value: 720 }]] }, realm: 'realm' } });
-  const browser: BidiBrowser = {
-    traits: BROWSER_TRAITS.chromium,
-    version: '157',
-    connection: peer.connection,
-    exclusive: false,
-    close: async () => peer.drop(),
-  };
-  return { browser, peer, drop: () => peer.drop() };
-}
-
-/** A scripted provider: leases `lease-<n>` against `wss://<n>.example`, remembering every call. */
-function provider(options: { scope?: 'worker' | 'attempt'; failSlot?: number; failRelease?: boolean; sweep?: 'open' | 'fail' } = {}) {
-  const acquired: BrowserRequest[] = [];
-  const released: BrowserLease[] = [];
-  const open = new Map<string, BrowserLease>();
-  const swept: BrowserReleaseContext[] = [];
-  let sequence = 0;
-  const impl: BrowserProvider = {
-    name: 'toy-cloud',
-    ...(options.scope === undefined ? {} : { scope: options.scope }),
-    async acquire(request) {
-      acquired.push(request);
-      if (request.slot === options.failSlot) throw new Error(`no capacity for slot ${request.slot}`);
-      request.log('starting');
-      const n = sequence++;
-      const lease = {
-        id: `lease-${n}`,
-        cdpEndpoint: `wss://${n}.example`,
-        // A provider's own bookkeeping never reaches a worker.
-        secret: 'x'.repeat(100),
-      } as BrowserLease;
-      open.set(lease.id, lease);
-      return lease;
-    },
-    async release(lease) {
-      released.push(lease);
-      if (options.failRelease === true) throw new Error('stop failed');
-      open.delete(lease.id);
-    },
-    ...(options.sweep === undefined
-      ? {}
-      : {
-          async sweep(context: BrowserReleaseContext) {
-            swept.push(context);
-            if (options.sweep === 'fail') throw new Error('list failed');
-            const ids = [...open.keys()];
-            open.clear();
-            return ids;
-          },
-        }),
-  };
-  return { impl, acquired, released, swept };
-}
-
-const prepareInfo = (slots: number, log: (line: string) => void = () => undefined, env: Record<string, string> = { BROWSER_TOKEN: 't' }): EnginePrepareInfo => ({
-  runId: 'run-1',
-  targetName: 'web',
-  projectRoot: '/project',
-  app: {},
-  slots,
-  env,
-  signal: new AbortController().signal,
-  headed: false,
-  log,
-});
 const finishInfo = (log: (line: string) => void = () => undefined): EngineFinishInfo => ({
   runId: 'run-1',
   targetName: 'web',
   env: { BROWSER_TOKEN: 't' },
   signal: new AbortController().signal,
   timeoutMs: 5_000,
-  log,
-});
-const initInfo = (workerSlot: number, env: Readonly<Record<string, string | undefined>> = {}, log: (line: string) => void = () => undefined): EngineInitInfo => ({
-  runId: 'run-1',
-  targetName: 'web',
-  projectRoot: '/project',
-  app: {},
-  env,
-  headed: false,
-  workerSlot,
-  signal: new AbortController().signal,
   log,
 });
 const attempt = (attemptId: string): EngineAttemptContext => ({ attemptId, artifactsDir: '/tmp/e2e-provider-artifacts', signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace });
@@ -133,16 +43,9 @@ function leasesVariableIn(env: Readonly<Record<string, string | undefined>>): st
   return key;
 }
 
-/** Runs `prepare` and returns the environment it left for the workers. */
-async function prepared(cloud: BrowserProvider, slots: number): Promise<{ runner: EngineHandle; env: Record<string, string> }> {
-  const runner = web({ browser: cloud });
-  const result = await runner.prepare!(prepareInfo(slots));
-  return { runner, env: (result?.env ?? {}) as Record<string, string> };
-}
-
 beforeEach(() => {
   connectCdp.mockReset();
-  connectCdp.mockImplementation(async ({ endpoint }) => fakeBrowser(`context-${endpoint}`).browser);
+  connectCdp.mockImplementation(async () => fakeBrowser().browser);
 });
 
 describe('web({ browser: provider })', () => {
@@ -281,7 +184,7 @@ describe('worker scope', () => {
   });
 
   it('reports a release failure once every lease was tried', async () => {
-    const cloud = provider({ failRelease: true });
+    const cloud = provider({ failRelease: 'stop failed' });
     const runner = web({ browser: cloud.impl });
     await runner.prepare!(prepareInfo(2));
     await expect(runner.finish!(finishInfo())).rejects.toMatchObject({
@@ -341,8 +244,8 @@ describe('worker scope', () => {
   it('leases a replacement in the worker once its browser dropped, releases only what the worker acquired, and the rest on dispose', async () => {
     const cloud = provider();
     const browsers: ReturnType<typeof fakeBrowser>[] = [];
-    connectCdp.mockImplementation(async ({ endpoint }) => {
-      const fake = fakeBrowser(`context-${endpoint}`);
+    connectCdp.mockImplementation(async () => {
+      const fake = fakeBrowser();
       browsers.push(fake);
       return fake.browser;
     });
@@ -379,7 +282,7 @@ describe('worker scope', () => {
 
   it('reports the progress a replacement lease logs through the worker\'s line to the reporter', async () => {
     const cloud = provider();
-    const fake = fakeBrowser('context');
+    const fake = fakeBrowser();
     connectCdp.mockResolvedValueOnce(fake.browser);
     const { env } = await prepared(cloud.impl, 1);
     const lines: string[] = [];
@@ -396,8 +299,8 @@ describe('worker scope', () => {
 
   it('releases the replacement on dispose even when ending the attempt failed', async () => {
     const cloud = provider();
-    const fake = fakeBrowser('context');
-    const replacement = fakeBrowser('replacement');
+    const fake = fakeBrowser();
+    const replacement = fakeBrowser();
     replacement.peer.on('browser.removeUserContext', { error: 'unknown error', message: 'user context teardown failed' });
     connectCdp.mockResolvedValueOnce(fake.browser).mockResolvedValueOnce(replacement.browser);
     const { env } = await prepared(cloud.impl, 1);
@@ -412,7 +315,7 @@ describe('worker scope', () => {
 
   it('gives back a replacement that arrives after the worker was disposed, and never commits it', async () => {
     const cloud = provider();
-    const fake = fakeBrowser('context');
+    const fake = fakeBrowser();
     connectCdp.mockResolvedValueOnce(fake.browser);
     const { env } = await prepared(cloud.impl, 1);
     const { held: granted, release: grant } = gate();
@@ -435,7 +338,7 @@ describe('worker scope', () => {
 
   it('fails a start still waiting on its replacement lease as CANCELLED once the worker is disposed', async () => {
     const cloud = provider();
-    const fake = fakeBrowser('context');
+    const fake = fakeBrowser();
     connectCdp.mockResolvedValueOnce(fake.browser);
     const { env } = await prepared(cloud.impl, 1);
     let requested = false;
@@ -451,7 +354,7 @@ describe('worker scope', () => {
 
   it('fails the attempt start, naming the provider, when no replacement can be leased', async () => {
     const cloud = provider();
-    const fake = fakeBrowser('context');
+    const fake = fakeBrowser();
     connectCdp.mockResolvedValueOnce(fake.browser);
     const { env } = await prepared(cloud.impl, 1);
     const worker = web({ browser: cloud.impl });
@@ -510,7 +413,7 @@ describe('attempt scope', () => {
 
   it('trusts every lease to be a fresh browser, even one whose default context id an earlier lease had', async () => {
     const cloud = provider({ scope: 'attempt' });
-    connectCdp.mockImplementation(async () => fakeBrowser('snapshot-context').browser);
+    connectCdp.mockImplementation(async () => fakeBrowser().browser);
     const { env } = await prepared(cloud.impl, 1);
     const worker = web({ browser: cloud.impl });
     await worker.init!(initInfo(0, env));
@@ -589,7 +492,7 @@ describe('attempt scope', () => {
   });
 
   it('reports a release that failed as a cleanup error, once, and never holds the lease again', async () => {
-    const cloud = provider({ scope: 'attempt', failRelease: true });
+    const cloud = provider({ scope: 'attempt', failRelease: 'stop failed' });
     const worker = web({ browser: cloud.impl });
     await worker.init!(initInfo(0, (await prepared(cloud.impl, 1)).env));
     await worker.startAttempt!(attempt('a1'));
@@ -604,7 +507,7 @@ describe('attempt scope', () => {
   it('never reattaches mid-attempt: the next attempt leases a fresh browser', async () => {
     const fakes: ReturnType<typeof fakeBrowser>[] = [];
     connectCdp.mockImplementation(async () => {
-      const fake = fakeBrowser('context');
+      const fake = fakeBrowser();
       fakes.push(fake);
       return fake.browser;
     });
@@ -677,7 +580,7 @@ describe('leases a worker left open', () => {
 
   it('sweeps after releasing what prepare leased, so only a dead worker\'s replacement is left to find', async () => {
     const cloud = provider({ sweep: 'open' });
-    const fake = fakeBrowser('context');
+    const fake = fakeBrowser();
     connectCdp.mockResolvedValueOnce(fake.browser);
     const { runner, env } = await prepared(cloud.impl, 1);
     const worker = web({ browser: cloud.impl });
@@ -712,7 +615,7 @@ describe('leases a worker left open', () => {
   });
 
   it('sweeps even when a release failed and reports the release failure, and only logs a sweep that failed', async () => {
-    const failing = provider({ failRelease: true, sweep: 'open' });
+    const failing = provider({ failRelease: 'stop failed', sweep: 'open' });
     const { runner } = await prepared(failing.impl, 1);
     await expect(runner.finish!(finishInfo())).rejects.toMatchObject({ message: expect.stringContaining('could not release a browser: stop failed') });
     expect(failing.swept).toHaveLength(1);
