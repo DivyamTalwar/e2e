@@ -59,11 +59,12 @@ export class TriggerFailure extends Error {
  * Runs the test's `trigger`, then `wait`, and resolves with what `wait` did,
  * all within `budget`. The trigger is test code that runs its own steps, so
  * this owns the whole deadline: `wait` gets a signal that aborts once the
- * budget ran out or the operation was cancelled, and a budget that runs out
- * fails with what `timedOut` builds from how long the trigger took,
- * undefined while it is still pending. A caller that must not miss what the
- * trigger starts listens for it before calling this. What the trigger throws
- * leaves as a `TriggerFailure`.
+ * budget ran out or the operation was cancelled, and never starts when the
+ * trigger returns after either. A budget that runs out fails with what
+ * `timedOut` builds from how long the trigger took, undefined while it is
+ * still pending. A caller that must not miss what the trigger starts listens
+ * for it before calling this. What the trigger throws leaves as a
+ * `TriggerFailure`.
  */
 export async function afterTrigger<T>(
   trigger: () => Promise<void>,
@@ -82,6 +83,7 @@ export async function afterTrigger<T>(
       throw new TriggerFailure(cause);
     }
     triggerMs = Date.now() - started;
+    signal.throwIfAborted();
     return wait(signal);
   })();
   try {

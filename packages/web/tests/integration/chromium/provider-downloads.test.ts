@@ -130,6 +130,41 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
     expect(readdirSync(path.join(remoteDisk, 'downloads')).toSorted()).toEqual(reads.map(read => path.basename(read.file)).toSorted());
   });
 
+  it('keeps no file of a wait whose provider fails to read a later download back', async () => {
+    artifactsDir = mkdtempSync(path.join(tmpdir(), 'e2e-provider-partial-'));
+    remoteDisk = mkdtempSync(path.join(tmpdir(), 'e2e-browser-partial-'));
+    chrome = await launchRemoteChrome();
+    let reads = 0;
+    const provider: BrowserProvider = {
+      name: 'failing-remote', scope,
+      acquire: async () => ({ id: 'failing-lease', cdpEndpoint: chrome!.endpoint }),
+      release: async () => undefined,
+      downloads: {
+        dir: path.join(remoteDisk, 'downloads'),
+        async read(_lease, file) {
+          reads += 1;
+          if (reads === 2) throw new Error('provider read broke');
+          return readFile(file);
+        },
+      },
+    };
+    engine = webEngine({ browser: provider });
+    const prepared = await engine.prepare!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, slots: 1, env: {}, signal: signal(), headed: false, log: () => undefined });
+    await engine.init!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, env: { ...prepared?.env }, headed: false, workerSlot: 0, signal: signal(), log: () => undefined });
+    await engine.startAttempt!({ attemptId: 'a1', artifactsDir, signal: signal(), resolveSecret: noSecrets, ...ignoreTrace });
+    await engine.session!.open!(`${app.url}/login`, operation());
+    await addDownloadLinks(engine, app.url, 2, 'report body');
+    const attached: string[] = [];
+    const browser = browserFixture(engine, { baseUrl: app.url, operation: () => operation(), attach: (relative) => attached.push(relative) });
+    const trigger = async (): Promise<void> => {
+      for (let index = 0; index < 2; index += 1) await tap(engine!, `#download-${index}`);
+    };
+    await expect(browser.waitForDownloads(trigger, { count: 2 })).rejects.toThrow('provider read broke');
+    expect(reads).toBe(2);
+    expect(attached).toEqual([]);
+    expect(readdirSync(artifactsDir, { recursive: true, encoding: 'utf8' }).filter((entry) => entry.startsWith('downloads'))).toEqual([]);
+  });
+
   it('refuses a wait before its trigger runs when the provider serves no downloads', async () => {
     artifactsDir = mkdtempSync(path.join(tmpdir(), 'e2e-provider-unserved-'));
     chrome = await launchRemoteChrome();

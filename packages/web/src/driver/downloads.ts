@@ -68,8 +68,10 @@ export class AttemptDownloads {
    * remote browser's disk through its provider. One budget bounds the
    * trigger, the downloads, and reading each back; past it the wait stops
    * listening and fails, whatever the trigger is still doing, naming what it
-   * still waited for. A canceled download fails the wait. Refused before the
-   * trigger runs when no download can be read back.
+   * still waited for. A canceled download fails the wait. Every download is
+   * read back before the first is written, so a wait that fails saves none:
+   * a file no step attached is never redacted. Refused before the trigger
+   * runs when no download can be read back.
    */
   async save(count: number, trigger: () => Promise<void>, budget: OperationBudget): Promise<SavedDownload[]> {
     if (this.remote !== undefined && 'unserved' in this.remote) throw new EngineError('UNSUPPORTED_CAPABILITY', this.remote.unserved, { retryable: false });
@@ -101,17 +103,22 @@ export class AttemptDownloads {
           if (filepath == null) throw new TestError('ACTION_FAILED', `download ${suggestedFilename} was canceled`);
           return { suggestedFilename, filepath };
         });
-        const saved: SavedDownload[] = [];
+        const writes: { readonly suggestedFilename: string; readonly write: (absolute: string) => void }[] = [];
         for (const { suggestedFilename, filepath } of finished) {
-          const { relative, absolute } = this.artifacts.reserve('downloads', suggestedFilename, '');
-          if (served === undefined) copyFileSync(filepath, absolute);
-          else {
-            slowRead = `download ${suggestedFilename} did not finish: ${served.provider} read it back too slowly`;
-            writeFileSync(absolute, await served.read(filepath, signal));
+          if (served === undefined) {
+            writes.push({ suggestedFilename, write: (absolute) => copyFileSync(filepath, absolute) });
+            continue;
           }
-          saved.push({ path: relative, absolutePath: absolute, suggestedFilename });
+          slowRead = `download ${suggestedFilename} did not finish: ${served.provider} read it back too slowly`;
+          const bytes = await served.read(filepath, signal);
+          writes.push({ suggestedFilename, write: (absolute) => writeFileSync(absolute, bytes) });
         }
-        return saved;
+        signal.throwIfAborted();
+        return writes.map(({ suggestedFilename, write }) => {
+          const { relative, absolute } = this.artifacts.reserve('downloads', suggestedFilename, '');
+          write(absolute);
+          return { path: relative, absolutePath: absolute, suggestedFilename };
+        });
       }, budget, (triggerMs) => {
         if (triggerMs === undefined) return new TestError('ACTION_FAILED', `the download trigger did not resolve within ${timeoutMs}ms`);
         if (slowRead !== undefined) return new TestError('ACTION_FAILED', slowRead);

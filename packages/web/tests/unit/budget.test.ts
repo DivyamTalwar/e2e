@@ -2,7 +2,8 @@
  * `afterTrigger`, the one wait on a test's own trigger: the wait runs once
  * the trigger returned, its timeout is told whether the trigger had resolved
  * and after how long, the trigger's own error leaves wrapped for `guard` to
- * hand back, cancellation ends it, and the wait's signal aborts with either.
+ * hand back, cancellation ends it, the wait's signal aborts with either, and
+ * a wait whose trigger returns after either never starts.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -78,5 +79,20 @@ describe('afterTrigger', () => {
     const waited = afterTrigger(() => never, waitForever, budget(10_000, controller.signal), timedOut);
     controller.abort();
     await expect(waited).rejects.toMatchObject({ code: 'CANCELLED' });
+  });
+
+  it.each(['the budget ran out', 'it was cancelled'])('never starts the wait of a trigger that returns after %s', async (ending) => {
+    const controller = new AbortController();
+    let release: () => void = () => undefined;
+    const trigger = new Promise<void>((resolve) => (release = resolve));
+    let waits = 0;
+    const waited = afterTrigger(() => trigger, async () => {
+      waits += 1;
+    }, budget(ending === 'the budget ran out' ? 20 : 10_000, controller.signal), timedOut);
+    if (ending === 'it was cancelled') controller.abort();
+    await expect(waited).rejects.toThrow(ending === 'the budget ran out' ? 'trigger pending' : 'trigger wait cancelled');
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(waits).toBe(0);
   });
 });

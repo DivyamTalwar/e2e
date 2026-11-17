@@ -9,7 +9,7 @@
  * relative cookie URL.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -277,6 +277,32 @@ describe('browser.route decisions', () => {
       release();
       server.closeAllConnections();
       await work.catch(() => undefined);
+    }
+  });
+
+  it('saves no file once the wait failed, though the download finished while its trigger was still pending', async () => {
+    await browser.evaluate(() => {
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob(['finished in time']));
+      link.download = 'finished.txt';
+      link.textContent = 'Finished';
+      document.body.append(link);
+      return null;
+    }, null);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const trigger = async (): Promise<void> => {
+      await browser.evaluate(() => { document.querySelector<HTMLAnchorElement>('a')!.click(); return null; }, null);
+      await pending;
+    };
+    try {
+      await expect(browser.waitForDownload(trigger, { timeout: 500 })).rejects.toMatchObject({ code: 'ACTION_FAILED', message: 'the download trigger did not resolve within 500ms' });
+      release();
+      // Past the trigger's return, where a wait that still ran would copy the finished file.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(readdirSync(session.artifactsDir, { recursive: true, encoding: 'utf8' }).filter((entry) => entry.startsWith('downloads'))).toEqual([]);
+    } finally {
+      release();
     }
   });
 
