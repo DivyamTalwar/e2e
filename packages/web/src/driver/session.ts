@@ -289,13 +289,21 @@ export class BidiSession {
    * The tab a person sees in `userContext` (`foundTabs`), for the attempt
    * to adopt; undefined when none is open. What the first read finds open
    * is the browser's own (`found`). The documents the tab already shows
-   * were open before the attempt's preloads were added, so the driver's own
-   * are run in each of them (`AttemptUserContext.prepareOpen`).
+   * were open before the attempt had a say in them, so each is given what a
+   * document that loads under the attempt gets as it starts: its origin is
+   * visited, which grants it the configured permissions
+   * (`AttemptUserContext.visit`), and the driver's own preloads are run in
+   * it (`AttemptUserContext.prepareOpen`).
    */
   private async adoptTab(userContext: string): Promise<string | undefined> {
     const { shown, all } = await foundTabs(this.connection, userContext, this.adopted);
     this.found ??= all;
-    if (shown !== undefined) await this.userContext.prepareOpen(await this.callableDocuments(shown));
+    if (shown === undefined) return undefined;
+    const documents = await this.documents(shown);
+    await Promise.all([
+      ...documents.map((document) => this.userContext.visit(document.url)),
+      scriptedContexts(this.connection, documents.map((document) => document.context)).then((callable) => this.userContext.prepareOpen(callable)),
+    ]);
     return shown;
   }
 
@@ -477,10 +485,15 @@ export class BidiSession {
 
   /** `context` and every frame document under it. */
   async documentContexts(context: string): Promise<string[]> {
+    return (await this.documents(context)).map((document) => document.context);
+  }
+
+  /** `context` and every frame document under it, each with the URL the browser names for it, from one read of the tree. */
+  private async documents(context: string): Promise<{ readonly context: string; readonly url: string }[]> {
     const { contexts } = await this.connection.send('browsingContext.getTree', { root: context });
-    const out: string[] = [];
+    const out: { readonly context: string; readonly url: string }[] = [];
     const walk = (info: (typeof contexts)[number]): void => {
-      out.push(info.context);
+      out.push({ context: info.context, url: info.url });
       for (const child of info.children ?? []) walk(child);
     };
     for (const info of contexts) walk(info);

@@ -215,6 +215,36 @@ describe("what an attempt set in the browser's own user context", () => {
 });
 
 describe('adopting the tab a browser shows', () => {
+  it('grants the configured permissions to the origin of each document it shows, once an origin, and lifts them when the attempt ends', async () => {
+    const fake = showing([
+      { context: 'same', url: 'http://app.test/frame' },
+      { context: 'other', url: 'https://pay.test/checkout', children: [{ context: 'nested', url: 'https://pay.test/3ds' }] },
+      { context: 'inline', url: 'about:srcdoc' },
+    ]);
+    const attached = adopting(fake, { permissions: ['clipboard-read', 'geolocation'] });
+    await attached.openUserContext(new AbortController().signal);
+    const granted = sent(fake, 'permissions.setPermission');
+    expect(granted.map((params) => [params['origin'], (params['descriptor'] as { name: string }).name])).toEqual([
+      ['http://app.test', 'clipboard-read'],
+      ['http://app.test', 'geolocation'],
+      ['https://pay.test', 'clipboard-read'],
+      ['https://pay.test', 'geolocation'],
+    ]);
+    expect(granted.every((params) => params['state'] === 'granted' && params['userContext'] === 'default')).toBe(true);
+    expect(cdpSent(fake)).not.toContainEqual(['Browser.resetPermissions', {}]);
+    await attached.close();
+    expect(cdpSent(fake)).toContainEqual(['Browser.resetPermissions', {}]);
+  });
+
+  it('grants nothing when the target grants none', async () => {
+    const fake = showing([{ context: 'frame', url: 'https://pay.test/checkout' }]);
+    const attached = adopting(fake);
+    await attached.openUserContext(new AbortController().signal);
+    await attached.close();
+    expect(sent(fake, 'permissions.setPermission')).toEqual([]);
+    expect(cdpSent(fake)).not.toContainEqual(['Browser.resetPermissions', {}]);
+  });
+
   it('runs the driver\'s preloads in the tab and each frame it shows', async () => {
     const fake = showing([{ context: 'frame', children: [{ context: 'nested' }] }]);
     const attached = adopting(fake);
