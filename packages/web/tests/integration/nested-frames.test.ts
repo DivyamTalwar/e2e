@@ -107,6 +107,16 @@ describe('nested frame locators', () => {
     for (const key of ['x', 'y', 'width', 'height'] as const) expect(node!.rect![key]).toBeCloseTo(expected[key], 3);
   });
 
+  it('reports a located node alone, without the children an observation lists under it, in the page and inside a frame', async () => {
+    const observed = (await page.nodes()).filter((node) => node.name === 'outer' || node.name === 'inner');
+    expect(observed.map((node) => node.children?.length)).toEqual([1, 1]);
+    const located = [
+      ...(await locate({ kind: 'selector', selector: '#outer' })),
+      ...(await locate(withinFrames(['#outer'], { kind: 'selector', selector: '#inner' }))),
+    ];
+    expect(located.map((node) => [node.name, 'children' in node])).toEqual([['outer', false], ['inner', false]]);
+  });
+
   it('resolves a three-level chain, counting the last frame inside the second', async () => {
     const matches = await locate(withinFrames(['#outer', '#inner', '#deep'], DEEP_BUTTON));
     expect(matches.map((node) => node.name)).toEqual(['Deep button']);

@@ -33,6 +33,11 @@ describe('classify', () => {
     expect(classify(invalid, 'locate')).toBe(invalid);
   });
 
+  it('reads an error already classified as NODE_STALE as stale, and one classified as anything else as not', () => {
+    expect(isStale(new EngineError('NODE_STALE', 'the page changed while its screenshot was masked', { retryable: true }))).toBe(true);
+    expect(isStale(new EngineError('OPERATION_TIMEOUT', 'locate timed out', { retryable: false }))).toBe(false);
+  });
+
   it('reads any other failure as ENGINE_FAILURE keeping its cause', () => {
     const cause = new BidiError('browsingContext.navigate', 'unknown error', 'net::ERR_CONNECTION_REFUSED');
     const error = classify(cause, 'navigation');

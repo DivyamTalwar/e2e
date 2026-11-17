@@ -162,8 +162,7 @@ export async function locate(session: BidiSession, expression: LocatorExpression
   const locator = matches.length === 1 ? { locator: expression } : {};
   return matches.map(({ node, element }) => {
     session.refs.storeLocated(node.ref.id, { element, context: frame.context, ...locator });
-    const { children: _children, ...rest } = node;
-    return inViewport(rest, frame.boxes, chain);
+    return inViewport(node, frame.boxes, chain);
   });
 }
 
@@ -283,7 +282,7 @@ export async function maskedPixels(session: BidiSession, viewport: ViewportSize,
     try {
       return await maskedCapture(session, viewport);
     } catch (cause) {
-      if (!isStale(cause) && !(cause instanceof EngineError && cause.code === 'NODE_STALE')) throw cause;
+      if (!isStale(cause)) throw cause;
       if (signal.aborted) throw cause;
       await sleep(RECAPTURE_MS, undefined, { signal });
     }
