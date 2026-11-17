@@ -1,9 +1,9 @@
 /** A screenshot must not edit the form elements a server-rendered app hydrates. */
 
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
+import { aroundCapture, observeWithPixels } from '../helpers/capture-hooks.ts';
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { startWebSession, type WebSession } from '../helpers/web-session.ts';
-import { BidiConnection } from '../../src/driver/connection.ts';
 import { callFunction } from '../../src/driver/script.ts';
 
 let app: FixtureApp;
@@ -54,21 +54,6 @@ function samplePage(): Sample {
 /** Runs `fn` in the page through the fixture. */
 const inPage = <T,>(fn: () => T): Promise<T> => session.browser.evaluate(fn as never) as Promise<T>;
 
-/** Runs `record` with the browsing context of each screenshot the moment before it is taken; `fail` rejects the capture instead. */
-function aroundCapture(record: (connection: BidiConnection, context: string) => Promise<void>, fail?: Error): void {
-  const send = BidiConnection.prototype.send;
-  vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(async function (this: BidiConnection, method, params) {
-    if (method === 'browsingContext.captureScreenshot') {
-      await record(this, (params as { context: string }).context);
-      if (fail !== undefined) throw fail;
-    }
-    return send.call(this, method, params);
-  });
-}
-
-/** One agent observation with pixels: the capture that masks fields and hides carets. */
-const observeWithPixels = () => session.engine.observe!({ ...session.op(5_000), origin: 'agent' }, { pixels: true });
-
 it('hides every caret while the capture runs and restores each root afterwards', async () => {
   await session.open(`${app.url}/caret`);
   await session.waitForFrames();
@@ -99,11 +84,13 @@ it('hides every caret while the capture runs and restores each root afterwards',
   });
   expect(before.adopted).toEqual([0, 0, 0]);
   const during: Sample[] = [];
-  aroundCapture(async (connection, context) => {
-    during.push((await callFunction(connection, context, samplePage, [], { maxObjectDepth: null })) as unknown as Sample);
+  aroundCapture({
+    before: async (_order, connection, context) => {
+      during.push((await callFunction(connection, context, samplePage, [], { maxObjectDepth: null })) as unknown as Sample);
+    },
   });
 
-  const snapshot = await observeWithPixels();
+  const snapshot = await observeWithPixels(session);
   vi.restoreAllMocks();
 
   expect(snapshot.pixels?.width).toBe(320);
@@ -128,7 +115,11 @@ it('restores every root when the screenshot fails', async () => {
   await session.open(`${app.url}/caret`);
   await session.waitForFrames();
   const before = await inPage(samplePage);
-  aroundCapture(async () => undefined, new Error('capture failed'));
+  aroundCapture({
+    before: async () => {
+      throw new Error('capture failed');
+    },
+  });
 
   await expect(session.engine.artifacts!.screenshot!('failed', session.op(5_000))).rejects.toThrow('capture failed');
   vi.restoreAllMocks();
@@ -147,11 +138,13 @@ it('hides the caret on a page whose style-src policy blocks style elements', asy
     return getComputedStyle(document.getElementById('plain')!).caretColor;
   })).toBe('rgb(0, 0, 0)');
   const during: string[] = [];
-  aroundCapture(async (connection, context) => {
-    during.push((await callFunction(connection, context, caretColor)) as string);
+  aroundCapture({
+    before: async (_order, connection, context) => {
+      during.push((await callFunction(connection, context, caretColor)) as string);
+    },
   });
 
-  await observeWithPixels();
+  await observeWithPixels(session);
   vi.restoreAllMocks();
 
   expect(during).toEqual(['rgba(0, 0, 0, 0)']);

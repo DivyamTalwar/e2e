@@ -6,6 +6,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { WebRoute } from '../../src/fixture/types.ts';
+import { observeWithPixels } from '../helpers/capture-hooks.ts';
 import { gate } from '../helpers/gate.ts';
 import { decodePng } from '../helpers/png.ts';
 import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
@@ -49,13 +50,10 @@ async function pageWithHeldFrame(attributes = ''): Promise<void> {
   await routeReady;
 }
 
-/** One agent observation with pixels. */
-const observeWithPixels = () => session.engine.observe!({ ...session.op(5_000), origin: 'agent' }, { pixels: true });
-
 describe('a frame whose navigation is held', () => {
   it('leaves the observation whole and its pixels masked', async () => {
     await pageWithHeldFrame();
-    const snapshot = await observeWithPixels();
+    const snapshot = await observeWithPixels(session);
     expect(snapshot.pixels?.width).toBe(320);
     expect(snapshot.truncated).toBeUndefined();
     expect(snapshot.maskedRegionCount).toBe(0);
@@ -90,7 +88,7 @@ describe('a frame whose navigation is held', () => {
       const inner = frame.contentDocument!.querySelector('input')!.getBoundingClientRect();
       return { x: Math.round(outer.left + frame.clientLeft + inner.left + inner.width / 2), y: Math.round(outer.top + frame.clientTop + inner.top + inner.height / 2) };
     });
-    const snapshot = await observeWithPixels();
+    const snapshot = await observeWithPixels(session);
     expect(snapshot.maskedRegionCount).toBe(1);
     const image = decodePng(snapshot.pixels!.data);
     // The field's own red never shows: the mask covers it, at its place inside the uncommitted frame.
@@ -100,7 +98,7 @@ describe('a frame whose navigation is held', () => {
 
   it('captures past a sandboxed frame no script can reach', async () => {
     await pageWithHeldFrame('sandbox');
-    const snapshot = await observeWithPixels();
+    const snapshot = await observeWithPixels(session);
     expect(snapshot.pixels).toBeDefined();
     expect(snapshot.maskedRegionCount).toBe(0);
   });
