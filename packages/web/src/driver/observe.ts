@@ -242,6 +242,7 @@ async function captureTree(session: BidiSession, context: string, framePath: rea
   if (!Array.isArray(ids) || ids.length !== nodes.length || elements.length !== nodes.length || !Array.isArray(frames) || frames.some((frame) => elements[frame.node] === undefined)) {
     throw new EngineError('ENGINE_FAILURE', 'observation ids do not align with its nodes', { retryable: false });
   }
+  // An empty document is what a navigation in flight looks like; a real page always has nodes, so the capture is worth repeating.
   if (nodes.length === 0) throw new EngineError('NODE_STALE', 'observation produced no nodes', { retryable: true });
   if (framePath.length === 0) ids[0] = ROOT_NODE_ID;
   const generation = new Map<string, NodeTarget>();
@@ -424,9 +425,10 @@ function isOnSiteFrame(url: string, site: string | undefined): boolean {
 }
 
 /**
- * Rebuilds the observation tree from the depth-first node list. Descendants
- * always follow their parent, so children are complete before a parent is
- * built. Captured child documents attach under their iframe boundary nodes.
+ * Rebuilds the observation tree from the depth-first node list, which holds
+ * at least its root, each node with its id. Descendants always follow their
+ * parent, so children are complete before a parent is built. Captured child
+ * documents attach under their iframe boundary nodes.
  */
 export function assembleTree(
   nodes: readonly RawObservedNode[],
@@ -434,11 +436,6 @@ export function assembleTree(
   framePath: readonly string[],
   frameChildren: ReadonlyMap<number, FrameChild>,
 ): SemanticNode {
-  if (nodes.length === 0 || ids.length === 0) {
-    // An empty document is what a navigation in flight looks like; a real page
-    // always has nodes, so the capture is worth repeating.
-    throw new EngineError('NODE_STALE', 'observation produced no nodes', { retryable: true });
-  }
   const childLists: SemanticNode[][] = nodes.map(() => []);
   const built: SemanticNode[] = [];
   for (let index = nodes.length - 1; index >= 0; index -= 1) {

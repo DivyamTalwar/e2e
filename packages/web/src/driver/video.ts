@@ -44,6 +44,9 @@ interface Segment {
   finish(): Promise<void>;
 }
 
+/** Starts recording tab `context` at `size` into the file `absolute`; resolves to how the segment is finished. */
+type SegmentStart = (context: string, size: ViewportSize, absolute: string) => Promise<() => Promise<void>>;
+
 /**
  * The attempt's video as the driver records it: one segment per tab it
  * shows, and the first segment it lost. Until a recording is asked for
@@ -53,12 +56,13 @@ interface Segment {
  */
 export class BidiVideo implements AttemptVideo {
   readonly closeStep = 'video stop';
-  private armed = false;
+  /** How a segment of each tab the attempt shows starts while the recorder is armed; undefined while it is not. */
+  private armed: SegmentStart | undefined;
   private current: Segment | undefined;
   private count = 0;
   private finished: VideoFile[] = [];
   private lost: EngineError | undefined;
-  /** The ffmpeg that encodes Chromium's segments, found once by the first `start`. */
+  /** The ffmpeg that encodes Chromium's segments, found once by the first `start`, which hands it to every segment it starts or arms. */
   private ffmpeg: string | undefined;
   /** Bumped by every `stop`, so a segment whose start outlived the stop ends at once instead of recording on. */
   private generation = 0;
@@ -84,11 +88,17 @@ export class BidiVideo implements AttemptVideo {
    * aborted is stopped again and fails.
    */
   async start(signal: AbortSignal): Promise<void> {
-    if (this.traits.screencast === 'cdp') this.ffmpeg ??= await ensureFfmpeg({ ...this.env });
+    let record: SegmentStart;
+    if (this.traits.screencast === 'bidi') {
+      record = (context, size, absolute) => this.bidiSegment(context, size, absolute);
+    } else {
+      const ffmpeg = this.ffmpeg ??= await ensureFfmpeg({ ...this.env });
+      record = (context, size, absolute) => this.cdpSegment(ffmpeg, context, size, absolute);
+    }
     const generation = this.generation;
     const context = this.tab.shown();
-    if (this.current === undefined && context !== undefined) await this.tracked(this.begin(context, true));
-    if (generation === this.generation) this.armed = true;
+    if (this.current === undefined && context !== undefined) await this.tracked(this.begin(context, record, true));
+    if (generation === this.generation) this.armed = record;
     if (signal.aborted) {
       await releaseQuietly(this.stop());
       signal.throwIfAborted();
@@ -97,8 +107,9 @@ export class BidiVideo implements AttemptVideo {
 
   /** The attempt shows `context`: the next segment, when armed. A segment that cannot start is reported by `stop`, never here. */
   async contextOpened(context: string): Promise<void> {
-    if (!this.armed) return;
-    await this.tracked(this.begin(context, false)).catch((cause: unknown) => {
+    const record = this.armed;
+    if (record === undefined) return;
+    await this.tracked(this.begin(context, record, false)).catch((cause: unknown) => {
       this.lost ??= new EngineError('ENGINE_FAILURE', `video segment for a new tab could not start: ${message(cause)}`, { retryable: false, cause });
     });
   }
@@ -130,7 +141,7 @@ export class BidiVideo implements AttemptVideo {
    * finalize stay on disk.
    */
   async stop(): Promise<readonly VideoFile[]> {
-    this.armed = false;
+    this.armed = undefined;
     this.generation += 1;
     await Promise.allSettled(this.starting);
     await this.end();
@@ -146,11 +157,11 @@ export class BidiVideo implements AttemptVideo {
   }
 
   /**
-   * Ends any segment in progress and starts the next on `context`, the
-   * shown tab, at the configured size, else the viewport read off it;
-   * `arming` starts it before the recorder is armed.
+   * Ends any segment in progress and starts the next with `record` on
+   * `context`, the shown tab, at the configured size, else the viewport read
+   * off it; `arming` starts it before the recorder is armed.
    */
-  private async begin(context: string, arming: boolean): Promise<void> {
+  private async begin(context: string, record: SegmentStart, arming: boolean): Promise<void> {
     const size = this.options.size ?? (await this.tab.viewport());
     await this.end();
     const generation = this.generation;
@@ -160,11 +171,8 @@ export class BidiVideo implements AttemptVideo {
     const absolute = path.join(this.artifactsDir, relative);
     mkdirSync(path.dirname(absolute), { recursive: true });
     const startedAt = new Date().toISOString();
-    const finish = this.traits.screencast === 'bidi'
-      ? await this.bidiSegment(context, size, absolute)
-      : await this.cdpSegment(context, size, absolute);
-    const segment = { relative, absolute, startedAt, finish };
-    if (generation !== this.generation || (!arming && !this.armed)) {
+    const segment = { relative, absolute, startedAt, finish: await record(context, size, absolute) };
+    if (generation !== this.generation || (!arming && this.armed === undefined)) {
       this.current = segment;
       await this.end();
       return;
@@ -214,16 +222,15 @@ export class BidiVideo implements AttemptVideo {
   }
 
   /**
-   * Chromium's CDP screencast through the mapper. Each JPEG frame goes to
-   * the encoder and is acknowledged once the encoder took it, so Chromium
-   * sends no faster than ffmpeg encodes. A screencast sends a frame only
+   * Chromium's CDP screencast through the mapper, encoded by `ffmpeg`. Each
+   * JPEG frame goes to the encoder and is acknowledged once the encoder took
+   * it, so Chromium sends no faster than ffmpeg encodes. A screencast sends a frame only
    * when the page repaints, and Chromium drops one that lands while the tab's
    * surface changes size, as it can when a new tab first navigates; so the
    * segment ends on a screenshot of the viewport as it stands. Everything the
    * segment acquires is released when a later step of its start fails.
    */
-  private async cdpSegment(context: string, size: { width: number; height: number }, absolute: string): Promise<() => Promise<void>> {
-    const ffmpeg = this.ffmpeg ??= await ensureFfmpeg({ ...this.env });
+  private async cdpSegment(ffmpeg: string, context: string, size: { width: number; height: number }, absolute: string): Promise<() => Promise<void>> {
     const connection = this.connection;
     const cdp = await ChromiumCdp.forContext(connection, context);
     const encoder = new FrameEncoder(ffmpeg, size, absolute);
