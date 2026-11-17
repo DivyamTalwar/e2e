@@ -312,7 +312,24 @@ export function createDom(key: string) {
     target.dispatchEvent(new EventClass('change', { bubbles: true }));
   };
 
-  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, inTopLayer, clippers, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, keepEvent, fireEdit };
+  /**
+   * Sets a form control's state (`value`, `checked`, `selected`, `files`)
+   * through the setter of the interface that defines it: the one deepest in
+   * the element's prototype chain. A property the page put over it, on the
+   * element or on a class it derived from the built-in one, is never
+   * written through: a framework's records every write (React's value
+   * tracker) and takes the `input` that follows for no change, so its
+   * change handler would not run.
+   */
+  const setState = <E extends Element, K extends keyof E & string>(element: E, property: K, state: E[K]): void => {
+    let setter: ((this: E, state: E[K]) => void) | undefined;
+    for (let at: object | null = Object.getPrototypeOf(element); at !== null; at = Object.getPrototypeOf(at)) {
+      setter = Object.getOwnPropertyDescriptor(at, property)?.set ?? setter;
+    }
+    setter?.call(element, state);
+  };
+
+  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, inTopLayer, clippers, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, keepEvent, fireEdit, setState };
 }
 
 /** The shared DOM helpers, as a page function takes them. */

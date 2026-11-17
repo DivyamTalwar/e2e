@@ -42,13 +42,15 @@ export function checkState(element: Element): Outcome<{ checked: boolean; radio:
  * field or editing host is focused, its content selected, and the value
  * inserted as one `insertText` edit (a delete for an empty value), so the app
  * sees the trusted `input` an edit fires. A date, color,
- * range, or similar input takes the value directly, with `input` and
- * `change`. A number input takes the value trimmed, as it sanitizes its own,
+ * range, or similar input takes the value through the control's own setter
+ * (`dom.setState`), with `input` and `change`, so a page that tracks the
+ * property on the element sees the change. A number input takes the value
+ * trimmed, as it sanitizes its own,
  * and is refused, untouched, one that is no number or that no number input
  * keeps: a detached one is asked, since the field's own value is the app's
  * to rewrite as the edit lands. The field is not read after the edit, so it
  * stays as the app's handlers left it; only an edit the browser did not
- * perform is made through the value setter, with `input` and `change`.
+ * perform is made through the same setter, with `input` and `change`.
  * Nothing changes until the element proved editable and took focus, and
  * nothing of an element out of the document. Not yet while the field is
  * disabled or read-only; refused for what no fill can do.
@@ -68,13 +70,13 @@ export const fill = withDom((dom, element: Element, value: string): Outcome => {
       if (Number.isNaN(Number(text))) return { kind: 'refused', reason: 'Cannot type text into input[type=number]' };
       const sanitizer = document.createElement('input');
       sanitizer.type = 'number';
-      sanitizer.value = text;
+      dom.setState(sanitizer, 'value', text);
       if (sanitizer.value !== text) return { kind: 'refused', reason: 'Malformed value' };
     }
     if (!dom.focus(element)) return unfocused;
     if (type !== 'textarea' && !typed.includes(type)) {
       // As Playwright 1.65: the browser sanitizes what it does not take, as for a person's input.
-      field.value = value.trim();
+      dom.setState(field, 'value', value.trim());
       dom.fireEdit(field);
       return { kind: 'ok' };
     }
@@ -91,7 +93,7 @@ export const fill = withDom((dom, element: Element, value: string): Outcome => {
   }
   const edited = text === '' ? document.execCommand('delete') : document.execCommand('insertText', false, text);
   if (field !== null && !edited) {
-    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')?.set?.call(field, text);
+    dom.setState(field, 'value', text);
     dom.fireEdit(field);
   }
   return { kind: 'ok' };
@@ -105,8 +107,9 @@ export interface OptionChoice {
 }
 
 /**
- * Selects the option of a `<select>` matching `by` and fires `input` and
- * `change`, as Playwright's `selectOption` does. Nothing of an element out
+ * Selects the option of a `<select>` matching `by`, each option's state set
+ * through its own setter (`dom.setState`), and fires `input` and `change`,
+ * as Playwright's `selectOption` does. Nothing of an element out
  * of the document changes. Not yet while the select or the option is
  * disabled, or no option matches; refused for an element that is no
  * `<select>`.
@@ -123,7 +126,7 @@ export const selectOption = withDom((dom, element: Element, by: OptionChoice): O
   if (option === undefined) return { kind: 'not-yet', reason: 'no option matches' };
   if (option.disabled || option.closest('optgroup')?.disabled === true) return { kind: 'not-yet', reason: 'option being selected is not enabled' };
   select.focus();
-  for (const each of options) each.selected = each === option;
+  for (const each of options) dom.setState(each, 'selected', each === option);
   dom.fireEdit(select);
   return { kind: 'ok' };
 });
@@ -138,9 +141,10 @@ export type FileBytes = {
 
 /**
  * Gives a file input files sent to it as bytes, as a person picking them
- * would: each a `File` with its name, type, and last-modified time, then
- * `input` and `change`. For a browser on another machine, whose filesystem
- * holds none of them.
+ * would: each a `File` with its name, type, and last-modified time, set
+ * through the input's own setter (`dom.setState`), then `input` and
+ * `change`. For a browser on another machine, whose filesystem holds none
+ * of them.
  */
 export const setFileBytes = withDom((dom, element: Element, files: readonly FileBytes[]): void => {
   const input = element as HTMLInputElement;
@@ -151,7 +155,7 @@ export const setFileBytes = withDom((dom, element: Element, files: readonly File
     for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
     transfer.items.add(new File([bytes], file.name, { type: file.type, lastModified: file.lastModified }));
   }
-  input.files = transfer.files;
+  dom.setState(input, 'files', transfer.files);
   dom.fireEdit(input);
 });
 
