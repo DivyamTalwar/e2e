@@ -117,12 +117,19 @@ export function cdpConsoleText(args: readonly Protocol.Runtime.RemoteObject[]): 
 }
 
 /**
- * The text of an exception nothing caught, from CDP's details of it: the
- * thrown error's own description (its message and stack) when Chromium
- * hands the error over, else Chromium's line for it (`Uncaught ...`).
+ * The text of an exception nothing caught, from CDP's details of it.
+ * Chromium hands the thrown value over beside a bare `Uncaught` or
+ * `Uncaught (in promise)`: an error reads as its own description (its
+ * message and stack), anything else as that line and the value, as a
+ * console line shows it (`Uncaught boom`, `Uncaught (in promise) {code: 1}`).
+ * It hands no value over for a script of another origin loaded without
+ * CORS, nor for code evaluated over the protocol; its line then names what
+ * was thrown (`Uncaught boom`), and stands alone.
  */
 export function cdpExceptionText(details: Protocol.Runtime.ExceptionDetails): string {
-  return details.exception?.subtype === 'error' ? cdpText(details.exception) : details.text;
+  const { exception, text } = details;
+  if (exception === undefined) return text;
+  return exception.subtype === 'error' ? cdpText(exception) : `${text} ${cdpText(exception)}`;
 }
 
 /** Whether a BiDi remote value is an object, array, map, or set whose entries the browser serialized. */

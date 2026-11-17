@@ -1,9 +1,9 @@
 /**
  * What a page logs, as the app log reads it on both BiDi browsers: a
  * browser's own line for a failed WebSocket connection, an error with its
- * message, an object with its first fields, a format string filled, a line
- * whose format string and arguments do not pair up, and what each browser
- * hands over of a class instance. Chromium's lines come off its DevTools
+ * message, a thrown value that is no error, an object with its first
+ * fields, a format string filled, a line whose format string and arguments
+ * do not pair up, and what each browser hands over of a class instance. Chromium's lines come off its DevTools
  * protocol; Firefox's off `log.entryAdded`, which gives no class name and
  * labels its own lines as errors of the page. A secret the run registered
  * reaches the attempt's trace whole, where the harness redacts it, or not
@@ -79,6 +79,18 @@ describe('app log console lines', () => {
   it('reports a logged error beside a string with its message', async () => {
     const [line] = await logged('console.error("Failed to save", new TypeError("bad thing"));', 1);
     expect(line!.text).toMatch(/^Failed to save TypeError: bad thing/);
+  });
+
+  it('names a thrown value that is no error: a string, a rejected object, and null', async () => {
+    // Thrown by scripts of the page: of code evaluated over the protocol, Chromium's own line already names the value.
+    await page.open(page.serve('/throws', '<!doctype html><script>throw "boom";</script><script>Promise.reject({ code: 1 });</script><script>throw null;</script>'));
+    await expect.poll(() => entries.length, { timeout: 10_000 }).toBeGreaterThanOrEqual(3);
+    const texts = onFirefox
+      ? ['uncaught exception: boom', 'uncaught exception: Object { code }', 'uncaught exception: null']
+      : ['Uncaught boom', 'Uncaught (in promise) {code: 1}', 'Uncaught null'];
+    // A rejection nothing handled is told after the script that left it, so the order is the browser's.
+    expect(entries).toHaveLength(3);
+    expect(entries).toEqual(expect.arrayContaining(texts.map((text) => ({ source: 'error', level: 'error', text }))));
   });
 
   it('shows a logged object\'s own first fields, a nested object as its kind', async () => {

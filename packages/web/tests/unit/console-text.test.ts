@@ -135,11 +135,37 @@ describe('cdpConsoleText', () => {
 });
 
 describe('cdpExceptionText', () => {
-  it('reads an uncaught error as its own description, and anything else as Chromium\'s line for it', () => {
-    const details = { exceptionId: 1, lineNumber: 0, columnNumber: 0 };
-    expect(cdpExceptionText({ ...details, text: 'Uncaught', exception: { type: 'object', subtype: 'error', className: 'RangeError', description: 'RangeError: render loop exceeded\n    at app.js:8:30' } })).toBe('RangeError: render loop exceeded\n    at app.js:8:30');
-    expect(cdpExceptionText({ ...details, text: 'Uncaught a string', exception: { type: 'string', value: 'a string' } })).toBe('Uncaught a string');
-    expect(cdpExceptionText({ ...details, text: 'Uncaught SyntaxError: Unexpected token' })).toBe('Uncaught SyntaxError: Unexpected token');
+  const details = { exceptionId: 1, lineNumber: 3, columnNumber: 20, scriptId: '10', url: 'http://app.test/' };
+  /** What Chromium reports of `exception` thrown by a script of the page: the value beside a bare line, `Uncaught (in promise)` for a rejection nothing handled. */
+  const thrown = (exception: RemoteObject, line = 'Uncaught'): string => cdpExceptionText({ ...details, text: line, exception });
+
+  it('reads an uncaught error as its own description, thrown or rejected', () => {
+    expect(thrown({ type: 'object', subtype: 'error', className: 'RangeError', description: 'RangeError: render loop exceeded\n    at app.js:8:30' })).toBe('RangeError: render loop exceeded\n    at app.js:8:30');
+    const rejected = 'Error: x\n    at http://app.test/:9:36';
+    expect(thrown({ type: 'object', subtype: 'error', className: 'Error', description: rejected, preview: { type: 'object', subtype: 'error', description: rejected, overflow: false, properties: [{ name: 'stack', type: 'string', value: rejected }, { name: 'message', type: 'string', value: 'x' }] } }, 'Uncaught (in promise)')).toBe(rejected);
+  });
+
+  it('names a thrown value that is no error after Chromium\'s bare line, as a console line shows it', () => {
+    expect(thrown({ type: 'string', value: 'boom' })).toBe('Uncaught boom');
+    expect(thrown({ type: 'string', value: 'payment declined' }, 'Uncaught (in promise)')).toBe('Uncaught (in promise) payment declined');
+    expect(thrown(object('Object', [{ name: 'code', type: 'string', value: 'E_AUTH' }]))).toBe('Uncaught {code: "E_AUTH"}');
+    expect(thrown(object('Object', [{ name: 'code', type: 'number', value: '1' }]), 'Uncaught (in promise)')).toBe('Uncaught (in promise) {code: 1}');
+    expect(thrown({ type: 'number', value: 42, description: '42' })).toBe('Uncaught 42');
+    expect(thrown({ type: 'object', subtype: 'null', value: null })).toBe('Uncaught null');
+    expect(thrown({ type: 'undefined' })).toBe('Uncaught undefined');
+    expect(thrown(object('Custom', [{ name: 'reason', type: 'string', value: 'r' }]))).toBe('Uncaught Custom {reason: "r"}');
+  });
+
+  it('never prints a part of what Chromium cut inside a thrown object, and prints a thrown string whole', () => {
+    const failure = `Error: ${'x'.repeat(85)}${SECRET}\n    at http://app.test/:33:21`;
+    expect(thrown(object('Object', [{ name: 'e', type: 'object', subtype: 'error', value: cutAtEnd(failure) }]))).toBe('Uncaught {e: error}');
+    expect(thrown({ type: 'string', value: `${'s'.repeat(200)}${SECRET}` })).toBe(`Uncaught ${'s'.repeat(200)}${SECRET}`);
+  });
+
+  it('keeps Chromium\'s line alone when it hands no value over, which then names what was thrown', () => {
+    expect(cdpExceptionText({ ...details, text: 'Uncaught boom' })).toBe('Uncaught boom');
+    expect(cdpExceptionText({ ...details, text: 'Uncaught (in promise) #<Object>' })).toBe('Uncaught (in promise) #<Object>');
+    expect(cdpExceptionText({ ...details, text: 'Uncaught SyntaxError: Unexpected end of input' })).toBe('Uncaught SyntaxError: Unexpected end of input');
   });
 });
 
