@@ -14,7 +14,7 @@ import { raceAbort, rejectUnknownOptions, TestError, validateJsonValue, withTime
 import { headerProblem } from '../protected-app.ts';
 import type { Browser, WebResponse, WebRoute } from './types.ts';
 import type { ContinueDecision, FulfillDecision, RouteDecisions } from '../driver/network-decisions.ts';
-import { message } from '../errors.ts';
+import { message, releaseQuietly } from '../errors.ts';
 
 /**
  * Runs one test route handler on a held request with Playwright's route contract:
@@ -33,20 +33,13 @@ export async function runRouteHandler(
   resolvePath: (file: string) => string,
 ): Promise<void> {
   let decided = false;
-  const abortQuietly = async (): Promise<void> => {
-    try {
-      await decisions.abort();
-    } catch {
-      return;
-    }
-  };
   const decideWith = async (name: string, act: () => Promise<void>): Promise<void> => {
     if (decided) throw new TestError('ACTION_FAILED', `route handler already decided; ${name} called twice`);
     decided = true;
     try {
       await act();
     } catch (cause) {
-      await abortQuietly();
+      await releaseQuietly(decisions.abort());
       throw cause;
     }
   };
@@ -79,7 +72,7 @@ export async function runRouteHandler(
     if (!decided) throw new TestError('ACTION_FAILED', 'route handler returned without calling fulfill, continue, fallback, or abort');
   } catch (cause) {
     latch(cause instanceof Error ? cause : new TestError('ACTION_FAILED', `route handler failed: ${message(cause)}`));
-    if (!decided) await abortQuietly();
+    if (!decided) await releaseQuietly(decisions.abort());
   }
 }
 

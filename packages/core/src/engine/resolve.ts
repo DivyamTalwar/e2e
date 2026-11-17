@@ -119,11 +119,8 @@ export function createResolver<N>(platform: ResolverPlatform<N>): (expression: L
           break;
         }
       }
-      for (let index = chain.length - 1; index >= 0; index -= 1) {
-        known.set(chain[index] as N, inside);
-        inside ||= scopes.has(chain[index] as N);
-      }
-      return known.get(node) === true;
+      for (const walked of chain) known.set(walked, inside);
+      return inside;
     };
     return candidates.filter(isInside);
   };

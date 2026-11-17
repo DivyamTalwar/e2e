@@ -4,6 +4,7 @@ import type { Screen } from '@e2e-dev/core';
 import type { Browser } from './fixture/types.ts';
 import { attachSource } from './driver/browser-source.ts';
 import { createWeb } from './engine.ts';
+import { releaseQuietly } from './errors.ts';
 
 /** How long an attached session's operations may take altogether when `timeout` is not given. */
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -43,7 +44,7 @@ export async function attachBrowser(cdpEndpoint: string, options: AttachBrowserO
     const close = (): Promise<void> => host.close();
     return { browser: session.browser, screen: session.screen, close, [Symbol.asyncDispose]: close };
   } catch (cause) {
-    await host.close().catch(() => undefined);
+    await releaseQuietly(host.close());
     throw cause;
   }
 }

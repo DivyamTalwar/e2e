@@ -10,7 +10,6 @@
  * and queue as `runTool`.
  */
 
-import { setTimeout as delay } from 'node:timers/promises';
 import { isKeyModifier, KEY_MODIFIERS, type KeyModifier } from '../engine/contract.ts';
 import type { LocatorAction, LocatorActionKind, SemanticNode, ViewportPoint, ViewportSize } from '../engine/surface.ts';
 import { asEngineError, TestError } from '../internal/errors.ts';
@@ -618,7 +617,7 @@ export class ActionDispatcher {
           // more paging, and a screen that moved meanwhile goes on paging.
           const rest = SCROLL_UNTIL_STILL_MS - (Date.now() - changedAt);
           if (rest > 0) {
-            await delay(rest);
+            await sleep(rest, this.accounting.signal);
             const later = await this.feed.look('held-still');
             const again = later.kind === 'semantic' ? readPage(later) : undefined;
             if (reading !== undefined && again !== undefined && pageMoved(reading, again)) {

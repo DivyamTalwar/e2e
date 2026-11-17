@@ -4,5 +4,3 @@
 export function escapeRegexpChar(ch: string): string {
   return /[.*+?^${}()|[\]\\]/.test(ch) ? `\\${ch}` : ch;
 }
-
-export { testPattern } from './text.ts';
