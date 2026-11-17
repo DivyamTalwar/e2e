@@ -2,12 +2,17 @@
  * Routes and the browser's HTTP cache: while the attempt has a route, every
  * request asks the network, so a route sees a resource the browser already
  * holds; without a route the cache answers, before the first route, after
- * the last one is removed, and in the next attempt.
+ * the last one is removed, and in the next attempt. Firefox reuses an image
+ * or a stylesheet inside the document that already loaded it, with no
+ * request, whatever the cache is told.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Browser } from '../../src/fixture/types.ts';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
+
+/** A 1x1 PNG. */
+const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
 describe('routes and the HTTP cache', () => {
   let session: WebSession;
@@ -24,6 +29,15 @@ describe('routes and the HTTP cache', () => {
       served.script += 1;
       response.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'public, max-age=3600' });
       response.end(`window.app = ${String(served.script)};`);
+    });
+    session.serve('/assets', '<!doctype html><title>Assets</title><link rel="stylesheet" href="/style.css"><h1>Assets</h1><img src="/pixel.png" alt="">');
+    session.serve('/style.css', (_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/css', 'cache-control': 'public, max-age=3600' });
+      response.end('h1 { color: rgb(200, 0, 0); }');
+    });
+    session.serve('/pixel.png', (_request, response) => {
+      response.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=3600' });
+      response.end(PIXEL);
     });
     session.serve('/stamp', (_request, response) => {
       served.stamp += 1;
@@ -144,6 +158,50 @@ describe('routes and the HTTP cache', () => {
     await browser.goto(page);
     expect(seen.hits).toBe(1);
     expect(served.script).toBe(2);
+  });
+
+  /** Routes the stylesheet and the image of `/assets`, and returns the path of each request the routes saw, in order. */
+  const watchAssets = async (): Promise<string[]> => {
+    const seen: string[] = [];
+    for (const pattern of ['**/style.css', '**/pixel.png']) {
+      await browser.route(pattern, async (route) => {
+        seen.push(new URL(route.request.url).pathname);
+        await route.continue();
+      });
+    }
+    return seen;
+  };
+
+  /** Resolves once the page's first image decoded, which follows its stylesheet's load. */
+  const assetsLoaded = (): Promise<null> => browser.evaluate(() => document.querySelector('img')!.decode().then(() => null));
+
+  it('hands a route the stylesheet and the image an earlier page of the attempt loaded', async () => {
+    await browser.goto('/assets');
+    await assetsLoaded();
+    const seen = await watchAssets();
+    await browser.goto('/assets');
+    await assetsLoaded();
+    expect(seen.toSorted()).toEqual(['/pixel.png', '/style.css']);
+  });
+
+  it('asks again for an image and a stylesheet the document already loaded on Chromium; Firefox reuses its own, with no request for a route to see', async () => {
+    await browser.goto('/assets');
+    await assetsLoaded();
+    const seen = await watchAssets();
+    await browser.evaluate(async () => {
+      const image = new Image();
+      image.src = '/pixel.png';
+      document.body.append(image);
+      await image.decode();
+      const sheet = document.createElement('link');
+      sheet.rel = 'stylesheet';
+      sheet.href = '/style.css';
+      const loaded = new Promise((resolve) => sheet.addEventListener('load', resolve));
+      document.head.append(sheet);
+      await loaded;
+      return null;
+    });
+    expect(seen.toSorted()).toEqual(onFirefox ? [] : ['/pixel.png', '/style.css']);
   });
 
   it('leaves the cache on for the attempt after one that ended with a route set', async () => {
