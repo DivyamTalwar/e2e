@@ -3,7 +3,7 @@ import http, { createServer, type IncomingMessage } from 'node:http';
 import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { downloadVerified, globalDispatcher, mirrorOrigin } from '../../src/install/download.ts';
 import { sha256Of, startArchiveServer, type ArchiveServer } from '../helpers/archive-server.ts';
 
@@ -118,6 +118,46 @@ describe('downloadVerified', () => {
       await downloadVerified(`${server.origin}/a.zip`, file, { sha256: sha256Of(BODY), env: { HTTP_PROXY: proxyOrigin, NO_PROXY: '127.0.0.1' } });
       expect(proxied).toEqual([]);
       expect(existsSync(file)).toBe(true);
+    });
+  });
+
+  describe('on a Node with no http.setGlobalProxyFromEnv', () => {
+    const proxy = { HTTPS_PROXY: 'http://proxy.example.test:3128' };
+    let own: PropertyDescriptor | undefined;
+
+    beforeEach(() => {
+      own = Object.getOwnPropertyDescriptor(http, 'setGlobalProxyFromEnv');
+      Object.defineProperty(http, 'setGlobalProxyFromEnv', { value: undefined, configurable: true, writable: true });
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      if (own === undefined) Reflect.deleteProperty(http, 'setGlobalProxyFromEnv');
+      else Object.defineProperty(http, 'setGlobalProxyFromEnv', own);
+    });
+
+    it('adds the hint to set NODE_USE_ENV_PROXY=1 to a failed download when a proxy is set', async () => {
+      vi.stubEnv('NODE_USE_ENV_PROXY', undefined);
+      await expect(downloadVerified(`${server.origin}/missing.zip`, path.join(dir, 'a.zip'), { sha256: sha256Of(BODY), env: proxy })).rejects.toMatchObject({
+        code: 'BROWSER_INSTALL_FAILED',
+        message: `download of ${server.origin}/missing.zip failed: 404 Not Found; a proxy is set, so on this Node version also set NODE_USE_ENV_PROXY=1`,
+      });
+    });
+
+    it('adds no hint once NODE_USE_ENV_PROXY=1 is set', async () => {
+      vi.stubEnv('NODE_USE_ENV_PROXY', '1');
+      await expect(downloadVerified(`${server.origin}/missing.zip`, path.join(dir, 'a.zip'), { sha256: sha256Of(BODY), env: proxy })).rejects.toMatchObject({
+        code: 'BROWSER_INSTALL_FAILED',
+        message: `download of ${server.origin}/missing.zip failed: 404 Not Found`,
+      });
+    });
+
+    it('adds no hint when no proxy is set', async () => {
+      vi.stubEnv('NODE_USE_ENV_PROXY', undefined);
+      await expect(downloadVerified(`${server.origin}/missing.zip`, path.join(dir, 'a.zip'), { sha256: sha256Of(BODY), env: {} })).rejects.toMatchObject({
+        code: 'BROWSER_INSTALL_FAILED',
+        message: `download of ${server.origin}/missing.zip failed: 404 Not Found`,
+      });
     });
   });
 });
