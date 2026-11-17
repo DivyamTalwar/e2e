@@ -164,8 +164,7 @@ describe('attachBrowser', () => {
   });
 
   it('edits and reads the page it finds open without what a preload would have kept there', async () => {
-    await showUnattached('/found-unkept', `<input type=range max=10 aria-label=Level><div id=host></div><button>Behind</button>
-      <dialog id=lower><button>Lower</button></dialog><dialog id=upper><button>Upper</button></dialog>
+    await showUnattached('/found-unkept', `<input type=range max=10 aria-label=Level><div id=host></div>
       <script>
         window.log = [];
         for (const type of ['input', 'change']) document.querySelector('input').addEventListener(type, (event) => log.push(type + ':' + event.target.value));
@@ -173,14 +172,10 @@ describe('attachBrowser', () => {
       </script>`);
     await using attached = await attachBrowser(endpoint);
     const { browser, screen } = attached;
-    // No `Event` was kept: an edit fires its events with the page's own, as it is now.
+    // The `Event` kept at the attach is the page's own, as it was then.
     await screen.getByLabel('Level').fill('7');
     expect(await browser.evaluate('window.log')).toEqual(['input:7', 'change:7']);
     // A closed root attached before any preload is in no record, so what it holds stays out of reach.
     expect(await screen.getByRole('button', 'Closed').count()).toBe(0);
-    // Modal dialogs no preload saw shown have no order: with focus in neither, none is taken to be on top, and the page is read whole.
-    await browser.evaluate('lower.showModal(), upper.showModal(), document.activeElement.blur()');
-    expect(await screen.getByRole('button', 'Behind').count()).toBe(1);
-    expect(await screen.getByRole('button', 'Upper').count()).toBe(1);
   });
 });

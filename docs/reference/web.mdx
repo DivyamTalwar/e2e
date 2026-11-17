@@ -152,6 +152,10 @@ web({ connect: { cdpEndpoint: async () => 'ws://127.0.0.1:9222' } });
 - `cdpEndpoint(signal)` resolves when a worker first needs the browser, and
   again when an attempt starts after the connection dropped.
 - Each attempt gets a new browser context on the remote browser.
+- `context: 'existing'` drives the page the browser already shows instead of
+  creating a context and a tab, for a host that can create neither, such as
+  an Electron app. `app.open()` navigates that page, attempts share its
+  cookies and storage, and the target runs on one worker.
 - A connection that drops fails the attempt, and the next attempt attaches
   again through `cdpEndpoint`.
 
@@ -160,12 +164,13 @@ web({ connect: { cdpEndpoint: async () => 'ws://127.0.0.1:9222' } });
 ```ts
 export interface WebConnectOptions {
   readonly cdpEndpoint: (signal: AbortSignal) => string | CdpTarget | Promise<string | CdpTarget>;
+  readonly context?: 'new' | 'existing';
 }
 ```
 
 | Throws | When |
 | --- | --- |
-| `INVALID_CONFIG` | A `connect` without `cdpEndpoint`, or with one given as a string, at config load. Also `connect` beside a `browser` provider, or a `browser` other than chromium. |
+| `INVALID_CONFIG` | A `connect` without `cdpEndpoint`, or with one given as a string, at config load. Also `connect` beside a `browser` provider, a `browser` other than chromium, or a `context` other than `'new'` or `'existing'`. |
 
 To reuse one sign-in across files,
 [sign in once in a setup test](/authentication#reuse-authenticated-sessions).
@@ -354,6 +359,8 @@ export type WebInitScript = string | { readonly path: string } | (() => unknown)
 | No WebKit | WebKit has no WebDriver BiDi endpoint. |
 | `connect` and browser providers are Chromium only | They attach over CDP. |
 | `connect.reconnectEndpoint` is removed | A dropped connection is not recovered mid-attempt. The next attempt attaches again. |
+| With `connect.context: 'existing'`, `app.clearState()` throws `UNSUPPORTED_CAPABILITY`, a saved session is refused, and the target runs on one worker | The test drives the one page the browser shows, in the browser's own context. |
+| `attachBrowser` and `connect.context: 'existing'` throw `UNSUPPORTED_CAPABILITY` when the browser shows two tabs, or several and none visible | Nothing the browser reports says which to drive. Electron reports a `show: false` window as visible. |
 | With a `scope: 'attempt'` provider, `app.clearState()` throws `UNSUPPORTED_CAPABILITY` and a saved session is a `COLLECTION_ERROR` | The attempt runs in the fresh browser's own context, which they would replace. |
 | Selectors are CSS and XPath, alone or in `>>` chains, with no `text=` or `nth=` engines | The page runs the selector itself. |
 | On Chromium, an action that opens a `noopener` tab (a `target="_blank"` link) waits until the new tab's server answers | chromium-bidi holds every message behind the new tab's creation, which waits for its first response ([crbug 372842894](https://crbug.com/372842894)). |
@@ -1027,8 +1034,8 @@ await screen.getByRole('button', 'Sign in').tap();
   only.
 - On macOS, start Chrome with `--use-mock-keychain`. Without it, Chrome for
   Testing can wait on a Keychain prompt and load no page.
-- It drives the first open tab in the browser's default context. When no
-  tab is open, it opens one.
+- It drives the tab the browser shows in its default context: the only
+  one, or the visible one of several. When no tab is open, it opens one.
 - Relative URLs have no base. Pass `browser.goto` a full URL.
 - `close()` detaches. The browser keeps running, with its tabs, cookies, and
   storage. Only a tab the attach opened itself is closed. `close()` is
