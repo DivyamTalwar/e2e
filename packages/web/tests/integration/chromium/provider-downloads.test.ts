@@ -143,7 +143,7 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
     };
     engine = webEngine({ browser: provider });
     const prepared = await engine.prepare!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, slots: 1, env: {}, signal: signal(), headed: false, log: () => undefined });
-    await engine.init!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, env: { ...prepared?.env }, headed: false, workerSlot: 0, signal: signal(), log: () => undefined });
+    await engine.init!(initInfo({ runId: 'run-downloads', app: { site: new URL(app.url).hostname }, env: { ...prepared?.env } }));
     await engine.startAttempt!({ attemptId: 'a1', artifactsDir, signal: signal(), resolveSecret: noSecrets, ...ignoreTrace });
     await engine.session!.open!(`${app.url}/login`, operation());
     await addDownloadLinks(engine, app.url, 2, 'report body');
