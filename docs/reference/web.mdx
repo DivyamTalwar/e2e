@@ -191,8 +191,7 @@ web({ headers: { 'x-preview-token': process.env.PREVIEW_TOKEN ?? '' } });
 | `INVALID_CONFIG` | A `user-agent` entry beside [`userAgent`](#useragent), or an `accept-language` entry beside [`locale`](#locale). |
 
 <Note>
-`headers` enables request routing, which disables the browser's HTTP cache and
-blocks service workers.
+`headers` blocks service workers.
 </Note>
 
 #### `basicAuth`
@@ -1147,8 +1146,7 @@ export interface WebOptions {
    * Useful for preview-protection tokens. A request that starts at another
    * origin goes without them; a redirect keeps them, to any origin.
    * Names are case-insensitive and replace existing headers of the same name.
-   * This enables request routing, disables the browser's HTTP cache, and
-   * blocks service workers.
+   * Setting them blocks service workers.
    */
   readonly headers?: Readonly<Record<string, string>>;
   /**

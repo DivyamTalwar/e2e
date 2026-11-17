@@ -103,10 +103,9 @@ export interface WebOptions {
    * the app to an identity provider carries them there.
    * Names are case-insensitive; a header the page already
    * sends under the same name is replaced. Applies to every path onto the
-   * page, deterministic and agent-driven alike. Injecting headers routes
-   * every request of the attempt, which turns the browser's HTTP cache off
-   * and blocks service workers (a worker's requests bypass routing, so a
-   * page it controlled would reach the gate bare).
+   * page, deterministic and agent-driven alike. Setting headers blocks
+   * service workers: a worker's requests bypass routing, so a page it
+   * controlled would reach the gate bare.
    */
   readonly headers?: Readonly<Record<string, string>>;
   /**
