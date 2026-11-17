@@ -5,8 +5,10 @@
  * renderer starts over is continued with what its first pause was continued
  * with, a paused request's post data is answered from its pause until the
  * mapper answers the pause, a site icon's pauses, whose events the mapper
- * drops, are answered instead, and a request is forgotten on every session
- * once its load ends on any.
+ * drops, are answered instead, a dedicated worker's pause reaches the mapper
+ * again after the announcement that came behind it, and a request is one
+ * whatever sessions report it, forgotten once its load ends on any of them
+ * or all of them detached.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -48,6 +50,11 @@ function fix(messages: (string | { mapper: string })[]): { delivered: string[]; 
 
 /** What the mapper received of `messages`, in order. */
 const reorder = (messages: string[]): string[] => fix(messages).delivered;
+
+/** Session `sessionId` of a target of `type` attached, through session `parent`. */
+const attached = (sessionId: string, type: string, parent = 'page'): string => JSON.stringify({ method: 'Target.attachedToTarget', sessionId: parent, params: { sessionId, targetInfo: { type } } });
+/** Session `sessionId` detached, as session `parent` tells. */
+const detached = (sessionId: string, parent = 'page'): string => JSON.stringify({ method: 'Target.detachedFromTarget', sessionId: parent, params: { sessionId } });
 
 const responseInfo = (requestId: string, statusCode: number, sessionId = 's'): string => JSON.stringify({ method: 'Network.responseReceivedExtraInfo', sessionId, params: { requestId, statusCode } });
 const received = (requestId: string, sessionId = 's'): string => JSON.stringify({ method: 'Network.responseReceived', sessionId, params: { requestId, response: { status: 200 } } });
@@ -101,9 +108,9 @@ describe('cdpFixups', () => {
     expect(reorder([willBeSent('r'), paused('r'), response])).toEqual([willBeSent('r'), paused('r'), response]);
   });
 
-  it('keeps each session\'s request ids apart', () => {
-    expect(reorder([willBeSent('r', 'a'), paused('r', 0, 'a'), paused('r', 1, 'b')]))
-      .toEqual([willBeSent('r', 'a'), paused('r', 0, 'a'), paused('r', 1, 'b')]);
+  it('never holds a redirect pause of a request no session announced', () => {
+    const messages = [paused('r'), paused('r', 1)];
+    expect(reorder(messages)).toEqual(messages);
   });
 
   it('hands a held pause on when its request ends without another hop', () => {
@@ -186,17 +193,15 @@ describe('cdpFixups restarted loads', () => {
     expect(sent.at(-1)).toEqual({ id: 7, method: 'Fetch.continueRequest', params: { requestId: pauseId('r', 1), method: 'GET' }, sessionId: 's' });
   });
 
-  it('keeps each session\'s pauses apart', () => {
+  it('takes a continue as the answer of a pause only on the session that paused', () => {
     const { sent } = fix([
       willBeSent('r', 'a'),
       paused('r', 0, 'a'),
-      continued(pauseId('r'), { headers }, 'a'),
-      willBeSent('r', 'b'),
-      paused('r', 0, 'b'),
-      restarted('r', 'b'),
-      continued(pauseId('r', 0, 'again'), {}, 'b'),
+      continued(pauseId('r'), { headers }, 'b'),
+      restarted('r', 'a'),
+      continued(pauseId('r', 0, 'again'), {}, 'a'),
     ]);
-    expect(sent.at(-1)).toEqual({ id: 7, method: 'Fetch.continueRequest', params: { requestId: pauseId('r', 0, 'again') }, sessionId: 'b' });
+    expect(sent.at(-1)).toEqual({ id: 7, method: 'Fetch.continueRequest', params: { requestId: pauseId('r', 0, 'again') }, sessionId: 'a' });
   });
 
   it('forgets a request once its load ends', () => {
@@ -290,6 +295,97 @@ describe('cdpFixups request bodies', () => {
     const { delivered, sent } = fix([...fetched, finished('r', 'worker'), asked('r', 'page')]);
     expect(answer(delivered)).toBeUndefined();
     expect(sent).toEqual([command]);
+  });
+});
+
+describe('cdpFixups worker requests', () => {
+  const worker = attached('worker', 'worker');
+
+  it('hands the mapper a worker\'s pause again after the worker\'s session announces the request behind it', () => {
+    expect(reorder([worker, paused('r', 0, 'page'), willBeSent('r', 'worker')]))
+      .toEqual([worker, paused('r', 0, 'page'), willBeSent('r', 'worker'), paused('r', 0, 'page')]);
+  });
+
+  it('hands the pause again once, however many hops the worker\'s session announces', () => {
+    expect(reorder([worker, paused('r', 0, 'page'), willBeSent('r', 'worker'), redirected('r', 'worker'), paused('r', 1, 'page')]))
+      .toEqual([worker, paused('r', 0, 'page'), willBeSent('r', 'worker'), paused('r', 0, 'page'), redirected('r', 'worker'), paused('r', 1, 'page')]);
+  });
+
+  it('leaves a worker\'s request alone when its announcement comes first', () => {
+    const messages = [worker, willBeSent('r', 'worker'), paused('r', 0, 'page'), finished('r', 'worker')];
+    expect(reorder(messages)).toEqual(messages);
+  });
+
+  it('never hands a pause again that the mapper answered before the announcement', () => {
+    for (const method of ['Fetch.continueRequest', 'Fetch.fulfillRequest', 'Fetch.failRequest']) {
+      const answered = { mapper: JSON.stringify({ id: 7, method, params: { requestId: pauseId('r') }, sessionId: 'page' }) };
+      expect(fix([worker, paused('r', 0, 'page'), answered, willBeSent('r', 'worker')]).delivered)
+        .toEqual([worker, paused('r', 0, 'page'), willBeSent('r', 'worker')]);
+    }
+  });
+
+  it('never hands a pause again for an announcement on a session that is no dedicated worker\'s: the page\'s own, a frame\'s, a shared worker\'s, a worker\'s that detached', () => {
+    const own = [worker, paused('r', 0, 'page'), willBeSent('r', 'page')];
+    expect(reorder(own)).toEqual(own);
+    for (const type of ['iframe', 'shared_worker', 'service_worker']) {
+      const other = [attached('other', type), paused('r', 0, 'page'), willBeSent('r', 'other')];
+      expect(reorder(other)).toEqual(other);
+    }
+    const gone = [worker, detached('worker'), paused('r', 0, 'page'), willBeSent('r', 'worker')];
+    expect(reorder(gone)).toEqual(gone);
+  });
+
+  it('holds a worker\'s redirect pause on the page\'s session until the worker\'s session announces the hop', () => {
+    expect(reorder([willBeSent('r', 'worker'), paused('r', 0, 'page'), paused('r', 1, 'page'), redirected('r', 'worker'), finished('r', 'worker')]))
+      .toEqual([willBeSent('r', 'worker'), paused('r', 0, 'page'), redirected('r', 'worker'), paused('r', 1, 'page'), finished('r', 'worker')]);
+  });
+
+  it('holds the next hop\'s response ExtraInfo from the page\'s session until the worker\'s session announces the redirect', () => {
+    expect(reorder([willBeSent('r', 'worker'), responseInfo('r', 307, 'page'), responseInfo('r', 200, 'page'), redirected('r', 'worker'), received('r', 'worker'), finished('r', 'worker')]))
+      .toEqual([willBeSent('r', 'worker'), responseInfo('r', 307, 'page'), redirected('r', 'worker'), responseInfo('r', 200, 'page'), received('r', 'worker'), finished('r', 'worker')]);
+  });
+
+  it('hands a response ExtraInfo held on the page\'s session on before the response the worker\'s session reports', () => {
+    const messages = [willBeSent('r', 'worker'), responseInfo('r', 401, 'page'), responseInfo('r', 200, 'page'), received('r', 'worker'), finished('r', 'worker')];
+    expect(reorder(messages)).toEqual(messages);
+  });
+});
+
+describe('cdpFixups detached sessions', () => {
+  const base64 = (text: string): string => Buffer.from(text).toString('base64');
+  /** A request-stage pause of `networkId` on `sessionId` that posts `text`. */
+  const posting = (networkId: string, text: string, sessionId: string): string => paused(networkId, 0, sessionId, { request: { url: 'http://app.test/upload', method: 'POST', hasPostData: true, postDataEntries: [{ bytes: base64(text) }] } });
+  const asked = (requestId: string, sessionId: string): { mapper: string } => ({ mapper: JSON.stringify({ id: 11, method: 'Network.getRequestPostData', params: { requestId }, sessionId }) });
+
+  it('hands the pauses held for a hop on when the session that was to announce it detaches', () => {
+    expect(reorder([willBeSent('r', 'worker'), paused('r', 0, 'page'), paused('r', 1, 'page'), detached('worker')]))
+      .toEqual([willBeSent('r', 'worker'), paused('r', 0, 'page'), detached('worker'), paused('r', 1, 'page')]);
+  });
+
+  it('holds no later redirect pause of a request whose announcing session detached', () => {
+    const messages = [willBeSent('r', 'worker'), paused('r', 0, 'page'), detached('worker'), paused('r', 1, 'page')];
+    expect(reorder(messages)).toEqual(messages);
+  });
+
+  it('drops the pauses a detached session held, which nothing can answer any more', () => {
+    const own = [willBeSent('r', 'page'), paused('r', 0, 'page'), paused('r', 1, 'page'), detached('page', 'tab'), finished('r', 'frame')];
+    expect(reorder(own)).toEqual([willBeSent('r', 'page'), paused('r', 0, 'page'), detached('page', 'tab'), finished('r', 'frame')]);
+    const announcedElsewhere = [willBeSent('r', 'worker'), paused('r', 0, 'page'), paused('r', 1, 'page'), detached('page', 'tab'), redirected('r', 'worker'), finished('r', 'worker')];
+    expect(reorder(announcedElsewhere)).toEqual([willBeSent('r', 'worker'), paused('r', 0, 'page'), detached('page', 'tab'), redirected('r', 'worker'), finished('r', 'worker')]);
+  });
+
+  it('keeps a request while a session that reported it is attached, and forgets it once they all detached', () => {
+    const command = { id: 11, method: 'Network.getRequestPostData', params: { requestId: 'r' }, sessionId: 'page' };
+    const posted = [willBeSent('r', 'worker'), posting('r', 'a=1', 'page')];
+    const kept = fix([...posted, detached('worker'), asked('r', 'page')]);
+    expect(kept.delivered.map((message) => JSON.parse(message) as { id?: number }).find((message) => message.id === 11)).toMatchObject({ result: { postData: base64('a=1') } });
+    expect(kept.sent).toEqual([]);
+    expect(fix([...posted, detached('worker'), detached('page', 'tab'), asked('r', 'page')]).sent).toEqual([command]);
+  });
+
+  it('asks the browser for the body of a request whose pausing session detached', () => {
+    const command = { id: 11, method: 'Network.getRequestPostData', params: { requestId: 'r' }, sessionId: 'page' };
+    expect(fix([willBeSent('r', 'worker'), posting('r', 'a=1', 'page'), detached('page', 'tab'), asked('r', 'page')]).sent).toEqual([command]);
   });
 });
 
