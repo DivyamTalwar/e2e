@@ -12,7 +12,7 @@
  * shown next, else the open tab shown most recently.
  */
 
-import { TestError, type EngineTabs } from '@e2e-dev/core/engine';
+import { EngineError, TestError, type EngineTabs } from '@e2e-dev/core/engine';
 import { afterTrigger, type OperationBudget } from './budget.ts';
 
 /** One tab of the attempt. The same tab is the same object for the whole attempt. */
@@ -102,7 +102,8 @@ export class AttemptTabs {
    * where the browser opened it or its user left it; one opened beside the
    * shown tab takes its place at the front, as a tab shown later does. A
    * tab that cannot be shown leaves the tabs again, and its failure is
-   * thrown.
+   * thrown; one that closed, or that the tabs forgot, while it was being
+   * shown is `NODE_STALE`.
    */
   async own(context: string): Promise<AttemptTab> {
     const tab: AttemptTab = { context, opener: undefined, shownAt: 0, closed: false };
@@ -113,6 +114,7 @@ export class AttemptTabs {
       this.destroyed(context);
       throw cause;
     }
+    if (tab.closed) throw new EngineError('NODE_STALE', 'the tab closed while it opened', { retryable: true });
     return tab;
   }
 

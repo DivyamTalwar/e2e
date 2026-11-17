@@ -264,20 +264,33 @@ export class BidiSession {
    * attempt found open there, else a new one. The network covers it before
    * it joins the attempt's tabs, which show it (`AttemptTabs.own`). Until
    * it is shown a tab created here is this call's to close: when a step
-   * fails, or the attempt replaced its user context while the tab opened,
-   * it is closed again, and an adopted one is left as it was found.
+   * fails, or the attempt closed or replaced its user context while the tab
+   * opened, it is closed again, and an adopted one is left as it was found.
+   * The user context is checked in the step the tab joins in, so a tab of
+   * one the attempt left never joins its tabs.
    */
   private async openTab(userContext: string, adopted: string | undefined): Promise<AttemptTab> {
     const connection = this.connection;
     const context = adopted ?? (await connection.send('browsingContext.create', { type: this.browser.traits.newContext, userContext })).context;
     try {
-      if (userContext !== this.userContext.id) throw new EngineError('NODE_STALE', 'the attempt replaced its user context while a tab opened', { retryable: true });
+      this.requireUserContext(userContext);
       await this.network.addContext(context);
+      this.requireUserContext(userContext);
       return await this.tabs.own(context);
     } catch (cause) {
       if (context !== adopted) await releaseQuietly(connection.send('browsingContext.close', { context }));
       throw cause;
     }
+  }
+
+  /**
+   * Fails `NODE_STALE` once the attempt closed, or replaced or removed
+   * `userContext`, while a tab opened in it: the tab is none of the
+   * attempt's any more.
+   */
+  private requireUserContext(userContext: string): void {
+    if (userContext === this.userContext.id && !this.lifetime.aborted) return;
+    throw new EngineError('NODE_STALE', 'the attempt replaced its user context while a tab opened', { retryable: true });
   }
 
   /**

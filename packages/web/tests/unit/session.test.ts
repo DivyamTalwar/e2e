@@ -264,6 +264,35 @@ function tabCommands(fake: FakeBidi): string[] {
     .map((command) => `${command.method.replace('browsingContext.', '')} ${String(command.params['context'] ?? '')}`.trim());
 }
 
+/** Numbers the user contexts `fake` creates (`uc-1`, `uc-2`), and names each tab it opens after the user context it opened in. */
+function numbered(fake: FakeBidi): FakeBidi {
+  let userContexts = 0;
+  return fake
+    .on('browser.createUserContext', () => ({ result: { userContext: `uc-${String(++userContexts)}` } }))
+    .on('network.addDataCollector', { result: { collector: 'c' } })
+    .on('browsingContext.create', (params) => ({ result: { context: `tab in ${String(params['userContext'])}` } }));
+}
+
+/**
+ * Holds `held`'s network on a request count it starts (`track`), so a tab
+ * the network is asked to cover waits behind it, as it does behind any
+ * round trip of the network's. Returns the release, which resolves once the
+ * count is on.
+ */
+function holdNetwork(fake: FakeBidi, held: BidiSession): () => Promise<void> {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  fake.on('session.subscribe', async () => {
+    await gate;
+    return { result: { subscription: 's' } };
+  });
+  const tracking = held.network.track();
+  return async () => {
+    release();
+    await tracking;
+  };
+}
+
 describe('BidiSession tabs', () => {
   it('opens its first tab at the viewport without activating it, and a tab opened beside it at the front', async () => {
     const fake = new FakeBidi();
@@ -353,6 +382,61 @@ describe('BidiSession tabs', () => {
     expect(attached.tabs.list().map((tab) => tab.context)).toEqual(['theirs']);
     expect(fake.commands('browsingContext.create')).toEqual([]);
     expect(fake.commands('browsingContext.activate')).toEqual([]);
+  });
+
+  it('fails a tab open stale, and closes the tab unshown, when a reset replaced the user context before the tab joined', async () => {
+    const fake = numbered(new FakeBidi());
+    const resetting = unopened(fake);
+    await resetting.openUserContext(new AbortController().signal);
+    const release = holdNetwork(fake, resetting);
+    const opening = resetting.ensureContext();
+    await settle();
+    const replacing = resetting.replaceUserContext(new AbortController().signal);
+    await settle();
+    expect(resetting.userContext.id).toBe('uc-2');
+    await release();
+    await expect(opening).rejects.toMatchObject({ code: 'NODE_STALE' });
+    await replacing;
+    expect(tabCommands(fake)).toEqual(['create']);
+    expect(closedTabs(fake)).toEqual(['tab in uc-1']);
+    expect(resetting.context).toBeUndefined();
+    await expect(resetting.ensureContext()).resolves.toBe('tab in uc-2');
+  });
+
+  it('fails a tab open stale when a reset forgot the tab while it was being shown', async () => {
+    let sized: () => void = () => undefined;
+    const fake = numbered(new FakeBidi()).on('browsingContext.setViewport', () => new Promise((resolve) => (sized = () => resolve({ result: {} }))));
+    const resetting = unopened(fake);
+    await resetting.openUserContext(new AbortController().signal);
+    const opening = resetting.ensureContext();
+    await settle();
+    expect(resetting.tabs.list().map((tab) => tab.context)).toEqual(['tab in uc-1']);
+    await resetting.replaceUserContext(new AbortController().signal);
+    sized();
+    await expect(opening).rejects.toMatchObject({ code: 'NODE_STALE' });
+    expect(closedTabs(fake)).toEqual(['tab in uc-1']);
+    expect(resetting.context).toBeUndefined();
+    expect(resetting.tabs.list()).toEqual([]);
+  });
+
+  it('closes a tab still opening when the attempt closes in the browser’s own user context', async () => {
+    const opened = ['first', 'second'];
+    const fake = new FakeBidi()
+      .on('network.addDataCollector', { result: { collector: 'c' } })
+      .on('browsingContext.create', () => ({ result: { context: opened.shift() } }));
+    const kept = unopened(fake, 'chromium', 'default');
+    await kept.openUserContext(new AbortController().signal);
+    await kept.ensureContext();
+    const release = holdNetwork(fake, kept);
+    const opening = kept.newTab();
+    await settle();
+    const closing = kept.close();
+    await settle();
+    await release();
+    await expect(opening).rejects.toMatchObject({ code: 'NODE_STALE' });
+    await closing;
+    expect(closedTabs(fake)).toEqual(['first', 'second']);
+    expect(kept.tabs.list()).toEqual([]);
   });
 });
 
