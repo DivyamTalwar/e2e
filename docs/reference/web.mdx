@@ -505,6 +505,11 @@ const conditions = browser.locator('[data-testid="row"]').nth(2).getByTestId('co
 - `>>` chains CSS and XPath parts, each matched inside the last. There are
   no `text=` or `nth=` engines: chain `nth` and the screen queries instead,
   as in the example.
+- In a part, `:scope` is the element the last part matched. Unlike in
+  Playwright, its siblings are out of reach, so `:scope + p` matches nothing.
+- Write `:scope` outside `:is()` and `:not()`. Inside one, anywhere but at
+  the end of a part, the compound matches only that element:
+  `p:not(:scope) > button` matches nothing.
 - Use `filter({ has })` for an element that contains another.
 
 | Throws | When |

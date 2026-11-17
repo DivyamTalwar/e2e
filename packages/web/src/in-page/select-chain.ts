@@ -25,10 +25,14 @@ export type PagePart =
  * element too, which a native query never answers; the compounds before it
  * are matched right to left up the composed tree (`dom.parentOrHostOf`),
  * memoized per element and compound, with every combinator stopping at the
- * scope element, which only a `:scope` compound matches. XPath stays in the
- * light DOM, a leading `/` read from the scope element. The result is a set:
- * its order means nothing, and `locate` answers matches in its own. A
- * selector the page cannot parse is its error message.
+ * scope element, which only a `:scope` compound matches. Playwright reads
+ * `:scope` differently in two ways, pinned as `LIMITS` in
+ * `selector-parity.test.ts`: a top-level one reaches the scope element's
+ * siblings, and one inside a pseudo-class makes its compound no `:scope`
+ * compound. XPath stays in the light DOM, a leading `/` read from the scope
+ * element. The result is a set: its order means nothing, and `locate`
+ * answers matches in its own. A selector the page cannot parse is its error
+ * message.
  */
 export function selectChain(dom: Dom, parts: readonly PagePart[]): Element[] | string {
   const queryCss = (scope: Document | Element, chains: readonly (readonly CssStep[])[], into: Set<Element>): void => {

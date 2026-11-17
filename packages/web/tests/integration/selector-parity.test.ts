@@ -5,6 +5,9 @@
  * `/` in XPath read from it, CSS pierces open shadow roots, and a deep
  * descendant selector costs time linear in the DOM. The expected counts
  * were recorded from `page.locator(selector).count()` on Playwright 1.64.1.
+ * Two readings of `:scope` differ, pinned with both counts (`LIMITS`): here
+ * it never reaches the scope element's siblings, and inside a pseudo-class
+ * it still limits a compound before the last to the scope element.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -111,6 +114,44 @@ const CASES: readonly (readonly [string, Readonly<Record<string, number>>])[] = 
   }],
 ];
 
+/** The page of `LIMITS`: a scope `div` with a `p` in it, and a `p` after it. */
+const SIBLINGS = '<div><p><button>A</button></p><button>B</button></div><p><button>C</button></p>';
+
+/**
+ * Where the driver answers differently from Playwright 1.64.1 on `SIBLINGS`,
+ * by reason: selectors with the count Playwright matches, then the count
+ * the driver does. Playwright roots a selector with a top-level `:scope` at
+ * the scope element's parent, which puts its siblings in reach; here every
+ * combinator stops at the scope element. And Playwright takes only a
+ * top-level `:scope` for one, so the scope element matches no other
+ * compound and a compound that names `:scope` inside a pseudo-class matches
+ * the elements under it; here such a compound before the last is matched
+ * against the scope element alone.
+ */
+const LIMITS: readonly { readonly reason: string; readonly rows: Readonly<Record<string, readonly [playwright: number, driver: number]>> }[] = [
+  {
+    reason: 'a :scope compound never reaches the scope element\'s siblings',
+    rows: {
+      'div >> :scope + p': [1, 0],
+      'div >> :scope ~ p': [1, 0],
+      'p >> div + :scope': [1, 0],
+      'p >> div ~ :scope': [1, 0],
+      'div >> :scope ~ p button': [1, 0],
+      'div >> :is(:scope + p)': [1, 0],
+    },
+  },
+  {
+    reason: 'a compound before the last that names :scope inside a pseudo-class is matched against the scope element alone',
+    rows: {
+      'div >> :is(:scope) button': [0, 2],
+      'div >> :is(:scope, p) button': [1, 2],
+      'div >> :not(:scope) > button': [1, 0],
+      'div >> p:not(:scope) > button': [1, 0],
+      'div >> :not(:scope > p) > button': [0, 1],
+    },
+  },
+];
+
 describe('selectors as Playwright reads them', () => {
   let page: BidiPage;
 
@@ -130,6 +171,14 @@ describe('selectors as Playwright reads them', () => {
     const actual: Record<string, number> = {};
     for (const selector of Object.keys(expected)) actual[selector] = await count(selector);
     expect(actual).toEqual(expected);
+  });
+
+  it.each(LIMITS)('answers differently from Playwright: $reason', async ({ rows }) => {
+    await page.setContent(SIBLINGS);
+    const actual: Record<string, number> = {};
+    for (const selector of Object.keys(rows)) actual[selector] = await count(selector);
+    expect(actual).toEqual(Object.fromEntries(Object.entries(rows).map(([selector, [, driver]]) => [selector, driver])));
+    expect(Object.values(rows).filter(([playwright, driver]) => playwright === driver)).toEqual([]);
   });
 
   it('matches a scope element created in a frame\'s document and moved into the page', async () => {
