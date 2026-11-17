@@ -268,6 +268,11 @@ export function initInfo(overrides: Partial<EngineInitInfo> = {}): EngineInitInf
   };
 }
 
+/** Inits a hand-driven `engine` for the app at `app.url`, its host as the app's site. */
+export async function boot(engine: EngineHandle, app: { readonly url: string }): Promise<void> {
+  await engine.init!(initInfo({ app: { site: new URL(app.url).hostname } }));
+}
+
 /** The budget a hand-driven test gives `endAttempt`, `dispose`, and `finish`: 30 s unless given, on a signal of its own. */
 export function cleanup(timeoutMs = 30_000): EngineCleanupContext {
   return { signal: new AbortController().signal, timeoutMs };

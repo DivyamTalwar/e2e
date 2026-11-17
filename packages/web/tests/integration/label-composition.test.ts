@@ -10,10 +10,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { EngineHandle, LocatorExpression, TextPattern } from '@e2e-dev/core/engine';
+import type { LocatorExpression, TextPattern } from '@e2e-dev/core/engine';
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { byRole, cleanup, initInfo, operation, testWeb } from '../helpers/web-session.ts';
+import { boot, byRole, cleanup, operation, testWeb } from '../helpers/web-session.ts';
 
 function byLabel(value: string, exact: boolean, visible?: boolean): LocatorExpression {
   const pattern: TextPattern = { kind: 'string', value, exact };
@@ -32,10 +32,6 @@ function removeButtonOf(scope: LocatorExpression): LocatorExpression {
     query: { kind: 'role', value: { kind: 'string', value: 'button', exact: true }, name: { kind: 'string', value: 'Remove', exact: true } },
     scope,
   };
-}
-
-async function boot(engine: EngineHandle, app: FixtureApp): Promise<void> {
-  await engine.init!(initInfo({ app: { site: new URL(app.url).hostname } }));
 }
 
 describe('an exact label query composed as a has filter', () => {

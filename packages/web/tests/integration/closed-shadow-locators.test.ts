@@ -11,14 +11,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type {
-  EngineHandle,
   LocatorExpression,
   SemanticQuery,
   TextPattern,
 } from '@e2e-dev/core/engine';
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { byRole, byTestId, cleanup, flatten, initInfo, operation, testWeb } from '../helpers/web-session.ts';
+import { boot, byRole, byTestId, cleanup, flatten, operation, testWeb } from '../helpers/web-session.ts';
 
 function exact(value: string): TextPattern {
   return { kind: 'string', value, exact: true };
@@ -34,10 +33,6 @@ function query(semantic: SemanticQuery, scope?: LocatorExpression): LocatorExpre
 
 function byText(value: TextPattern, visible?: boolean): LocatorExpression {
   return query({ kind: 'text', value, ...(visible === undefined ? {} : { visible }) });
-}
-
-async function boot(engine: EngineHandle, app: FixtureApp): Promise<void> {
-  await engine.init!(initInfo({ app: { site: new URL(app.url).hostname } }));
 }
 
 describe('locators inside closed shadow roots', () => {
