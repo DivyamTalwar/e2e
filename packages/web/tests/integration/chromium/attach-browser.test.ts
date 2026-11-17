@@ -3,7 +3,8 @@
  * open tab in the default context, and closing detaches without closing the
  * tab or the browser, whose cookies the next attach still sees. The frames
  * already loaded in the tab are the attached session's from the start, and
- * a page no attach loaded is tapped as it is found.
+ * a page no attach loaded is tapped as it is found, and edited and read
+ * without what a preload would have kept in it.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -160,5 +161,26 @@ describe('attachBrowser', () => {
     expect(await attached.browser.url()).toBe(found);
     await attached.screen.getByRole('button', 'Tap me').tap();
     expect(await attached.browser.evaluate('window.log')).toEqual(['mousedown', 'mouseup', 'click']);
+  });
+
+  it('edits and reads the page it finds open without what a preload would have kept there', async () => {
+    await showUnattached('/found-unkept', `<input type=range max=10 aria-label=Level><div id=host></div><button>Behind</button>
+      <dialog id=lower><button>Lower</button></dialog><dialog id=upper><button>Upper</button></dialog>
+      <script>
+        window.log = [];
+        for (const type of ['input', 'change']) document.querySelector('input').addEventListener(type, (event) => log.push(type + ':' + event.target.value));
+        host.attachShadow({ mode: 'closed' }).innerHTML = '<button>Closed</button>';
+      </script>`);
+    await using attached = await attachBrowser(endpoint);
+    const { browser, screen } = attached;
+    // No `Event` was kept: an edit fires its events with the page's own, as it is now.
+    await screen.getByLabel('Level').fill('7');
+    expect(await browser.evaluate('window.log')).toEqual(['input:7', 'change:7']);
+    // A closed root attached before any preload is in no record, so what it holds stays out of reach.
+    expect(await screen.getByRole('button', 'Closed').count()).toBe(0);
+    // Modal dialogs no preload saw shown have no order: with focus in neither, none is taken to be on top, and the page is read whole.
+    await browser.evaluate('lower.showModal(), upper.showModal(), document.activeElement.blur()');
+    expect(await screen.getByRole('button', 'Behind').count()).toBe(1);
+    expect(await screen.getByRole('button', 'Upper').count()).toBe(1);
   });
 });
