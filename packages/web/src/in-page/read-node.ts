@@ -54,7 +54,7 @@ export interface RawObservedNode extends RawNodeData {
 export interface RawObservedFrame {
   /** Index of the iframe's node in `nodes`. */
   node: number;
-  /** Unique CSS selector of the element. */
+  /** The selector that names the element in its document (`frameSelectorOf`), published as the frame's step of a `framePath`. */
   selector: string;
 }
 

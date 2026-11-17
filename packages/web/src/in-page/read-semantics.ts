@@ -456,11 +456,13 @@ export const createSemanticReader = (
   };
 
   /**
-   * The selector used to re-enter one iframe: what names the element, else
-   * positions counted down from the nearest ancestor something names, else
-   * from `body`. A positional path is fine here: it is resolved against the
-   * document it was just read from, within this observation, and never
-   * stored. This is the one place a selector is derived: each
+   * The selector an observation names one iframe by, published as the
+   * `framePath` of every node inside it, which a `frame` step of a locator
+   * resolves again: what names the element, else positions counted down from
+   * the nearest ancestor something names, else from `body`. A shadow root's
+   * child is counted among the root's children under the root's host, which
+   * the selector chain's `>` crosses, so the path of a frame in a shadow
+   * root leads to it too. This is the one place a selector is derived: each
    * `namedSelectorOf` probe is a document-wide query, and no runner consumes
    * a per-node selector, so neither projection pays for one.
    */
@@ -468,11 +470,10 @@ export const createSemanticReader = (
     const named = namedSelectorOf(el);
     if (named !== null) return named;
     const parts: string[] = [];
-    let current: Element | null = el;
-    while (current !== null && current.tagName.toLowerCase() !== 'html') {
-      const parent: Element | null = current.parentElement;
-      if (parent === null) break;
-      const index = Array.prototype.indexOf.call(parent.children, current) + 1;
+    for (let current = el; current.tagName.toLowerCase() !== 'html'; ) {
+      const parent = dom.parentOrHostOf(current);
+      if (parent === null || current.parentNode === null) break;
+      const index = Array.prototype.indexOf.call(current.parentNode.children, current) + 1;
       parts.unshift(`${current.tagName.toLowerCase()}:nth-child(${index})`);
       const anchor = namedSelectorOf(parent);
       if (anchor !== null) return `${anchor} > ${parts.join(' > ')}`;

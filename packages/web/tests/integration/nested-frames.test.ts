@@ -323,3 +323,30 @@ describe('a position inside a framed node', () => {
     expect({ rect: observed.rect, origin: observed.origin }).toEqual(shown);
   });
 });
+
+describe('the path an observation names a frame by', () => {
+  let page: WebSession;
+
+  beforeAll(async () => {
+    page = await startWebSession();
+  });
+
+  afterAll(async () => {
+    await page.close();
+  });
+
+  it.each([
+    ['directly in a shadow root', '<iframe srcdoc="<button>Inside</button>"></iframe>'],
+    ['deeper in a shadow root', '<p>before</p><section><iframe srcdoc="<button>Inside</button>"></iframe></section>'],
+  ])('leads back to a frame %s', async (_where, shadow) => {
+    // A frame of the page itself sits where a path counted from the shadow root alone would also lead.
+    const twin = '<section><iframe srcdoc="<button>Other</button>"></iframe></section>';
+    await page.setContent(`<div>first</div>${twin}<div id="host"></div><script>document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = ${JSON.stringify(shadow)};</script>`);
+    await expect.poll(async () => (await page.nodes()).some((node) => node.name === 'Inside')).toBe(true);
+    const inside = (await page.nodes()).find((node) => node.name === 'Inside')!;
+    expect(inside.framePath).toHaveLength(1);
+    const found = await page.locate(withinFrames(inside.framePath!, byRole('button', 'Inside')));
+    expect(found.map((node) => node.name)).toEqual(['Inside']);
+  });
+});
+
