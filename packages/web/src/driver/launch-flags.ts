@@ -168,6 +168,14 @@ const FIREFOX_PREFS: Readonly<Record<string, string | number | boolean>> = {
    * process with) is sent again whatever this says.
    */
   'remote.retry-on-abort': false,
+  /**
+   * No page is kept in the back-forward cache, as in Chromium
+   * (`--disable-back-forward-cache`). A page kept there never answers a call
+   * still running in it, so a read a navigation overtook, such as the wait
+   * for a frame before a mouse or wheel action, would run to its timeout
+   * instead of failing stale. `back` and `forward` load the page again.
+   */
+  'browser.sessionhistory.max_total_viewers': 0,
 };
 
 /** The arguments Chromium launches with on `profile`: the driver's switches, and its DevTools endpoint on a free port. */

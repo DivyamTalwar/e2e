@@ -31,6 +31,18 @@ describe('history and unreachable addresses', () => {
     expect(await page.browser.title()).toBe('Second');
   });
 
+  it('loads the page again that it goes back or forward to, on a browser launched without its back-forward cache', async () => {
+    const shows = '<script>window.shown = []; addEventListener("pageshow", (event) => shown.push(event.persisted));</script>';
+    const first = page.serve('/history-shown-first', `<title>First</title>${shows}`);
+    const second = page.serve('/history-shown-second', `<title>Second</title>${shows}`);
+    await page.browser.goto(first);
+    await page.browser.goto(second);
+    await page.browser.back();
+    expect(await page.browser.evaluate('[document.title, window.shown]')).toEqual(['First', [false]]);
+    await page.browser.forward();
+    expect(await page.browser.evaluate('[document.title, window.shown]')).toEqual(['Second', [false]]);
+  });
+
   it('fails a navigation to a port nothing listens on with the name the runner knows', async () => {
     const free = await new Promise<number>((resolve) => {
       const probe = createServer().listen(0, '127.0.0.1', () => {

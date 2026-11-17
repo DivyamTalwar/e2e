@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Browser } from '../../src/index.ts';
-import { onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 describe('browser.evaluate error boundaries', () => {
   let session: WebSession;
@@ -58,7 +58,7 @@ describe('browser.evaluate error boundaries', () => {
     expect(await rejected).toMatchObject({ code: 'ENGINE_FAILURE' });
   });
 
-  it('runs code once whose page navigated away under it: an engine fault, and a timeout on Firefox, which keeps the page in its back-forward cache and never answers', async () => {
+  it('runs code once whose page navigated away under it, and fails it as an engine fault', async () => {
     let ran = 0;
     session.serve('/ran', (_request, response) => {
       ran += 1;
@@ -73,7 +73,7 @@ describe('browser.evaluate error boundaries', () => {
       await new Promise(() => undefined);
       return null;
     }, next).then(() => undefined, (cause: unknown) => cause);
-    expect(failure).toMatchObject(onFirefox ? { code: 'ACTION_FAILED', cause: expect.objectContaining({ code: 'OPERATION_TIMEOUT' }) } : { code: 'ENGINE_FAILURE' });
+    expect(failure).toMatchObject({ code: 'ENGINE_FAILURE' });
     expect(ran).toBe(1);
   });
 

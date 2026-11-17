@@ -6,23 +6,28 @@
  * handler did is pressed once. Firefox sends such a command again to the
  * new document unless it is launched without `remote.retry-on-abort`, so
  * the wait for a frame before a mouse action is taken up by the driver in
- * the page that came after. Firefox still sends one again that it sent to a
- * tab that never navigated: there a `browser.evaluate` runs again, and the
- * refusal of a node may follow a focus that ran.
+ * the page that came after. A read still running, such as a tap's wait for
+ * its element to hold still, fails stale: Firefox keeps no page in its
+ * back-forward cache, where a call still running is never answered. Firefox
+ * still sends a command again that it sent to a tab that never navigated:
+ * there a `browser.evaluate` runs again, and the refusal of a node may
+ * follow a focus that ran.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
+import { actionPoint } from '../../src/in-page/actionability.ts';
 import { nextFrame } from '../../src/in-page/document.ts';
 
 const send = BidiConnection.prototype.send;
 
-/** Resolves once the driver sent its next call of the page function `fn`. */
+/** Resolves once the driver sent its next call of the page function `fn`, which it sends behind a check of the nodes it passes. */
 function called(fn: { toString(): string }): Promise<void> {
   return new Promise((resolve) => {
     vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(function (this: BidiConnection, method, params) {
-      if ((params as { functionDeclaration?: unknown }).functionDeclaration === fn.toString()) resolve();
+      const { functionDeclaration } = params as { functionDeclaration?: unknown };
+      if (typeof functionDeclaration === 'string' && functionDeclaration.includes(fn.toString())) resolve();
       return send.call(this, method, params);
     });
   });
@@ -30,13 +35,6 @@ function called(fn: { toString(): string }): Promise<void> {
 
 /** Where a page navigates to: a page of its own origin, and the same server as another site. */
 const DESTINATIONS = [['its own origin', '127.0.0.1'], ['another site', 'localhost']] as const;
-
-/**
- * A page Firefox discards when it navigates away, as Chromium discards every
- * page: one with an `unload` listener. A page without one Firefox keeps in
- * its back-forward cache, where a call still running is never answered.
- */
-const DISCARDED_PAGE = '<title>Start</title><script>addEventListener("unload", () => undefined);</script>';
 
 /** Page source of `request(url)`: one synchronous GET, which the page's code goes on after. */
 const REQUEST = 'const request = (url) => { const call = new XMLHttpRequest(); call.open("GET", url, false); call.send(); };';
@@ -115,7 +113,7 @@ describe('a document replaced under a call or input', () => {
   it.each(DESTINATIONS)('runs a browser.evaluate once that navigates to %s and outlives its document, and fails it as an engine fault', async (_where, host) => {
     const ran = counted();
     const next = page.serve('/next', '<title>Next</title>').replace('127.0.0.1', host);
-    await page.setContent(DISCARDED_PAGE);
+    await page.setContent('<title>Start</title>');
     await expect(page.browser.evaluate(navigateAndWait, { ran: ran.url, next })).rejects.toMatchObject({ code: 'ENGINE_FAILURE', retryable: false });
     await arrived('/next');
     expect(ran.hits()).toBe(1);
@@ -124,7 +122,7 @@ describe('a document replaced under a call or input', () => {
   it.each(DESTINATIONS)('runs a browser.evaluate once whose page a goto to %s replaces under it, and fails it as an engine fault', async (_where, host) => {
     const ran = counted();
     const next = page.serve('/next', '<title>Next</title>').replace('127.0.0.1', host);
-    await page.setContent(DISCARDED_PAGE);
+    await page.setContent('<title>Start</title>');
     const failure = page.browser.evaluate(waitForever, ran.url).then(() => undefined, (cause: unknown) => cause);
     await expect.poll(ran.hits).toBe(1);
     await page.browser.goto(next);
@@ -188,7 +186,7 @@ describe('a document replaced under a call or input', () => {
     const moves = '<script>addEventListener("mousemove", (event) => { window.moved = [event.clientX, event.clientY]; });</script>';
     const next = page.serve('/after-move', `<title>After</title>${moves}`);
     // No frame callback runs in the first page, as in one that navigates away before its next frame.
-    await page.setContent(`${DISCARDED_PAGE}${moves}<script>requestAnimationFrame = () => 0;</script>`);
+    await page.setContent(`<title>Start</title>${moves}<script>requestAnimationFrame = () => 0;</script>`);
     const waiting = called(nextFrame);
     const move = page.browser.mouse.move(40, 40);
     // Firefox takes a mouse action once its page rendered a frame; Chromium takes it at once.
@@ -198,6 +196,18 @@ describe('a document replaced under a call or input', () => {
     }
     await move;
     await expect.poll(() => page.browser.evaluate('[location.pathname === "/after-move", window.moved]')).toEqual([onFirefox, [40, 40]]);
+  });
+
+  it('fails a tap as stale whose page a navigation replaced while it waited for the element to hold still', async () => {
+    const next = page.serve('/after-tap', '<title>After</title>');
+    // No frame callback runs, so the wait for the button to hold still is running when the page goes.
+    await page.setContent('<button id=b>b</button><script>requestAnimationFrame = () => 0;</script>');
+    const [button] = await page.locate(bySelector('#b'));
+    const waiting = called(actionPoint);
+    const tap = page.engine.perform!(button!.ref, { kind: 'tap' }, page.op()).then(() => undefined, (cause: unknown) => cause);
+    await waiting;
+    await page.browser.goto(next);
+    expect(await tap).toMatchObject({ code: 'NODE_STALE', retryable: true });
   });
 
   it('runs a browser.evaluate in a tab that never navigated once, except on Firefox, which sends it again to the page the tab loads', async () => {
