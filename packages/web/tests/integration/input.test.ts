@@ -141,6 +141,17 @@ describe('input', () => {
     expect(await page.browser.evaluate(() => document.title)).toBe('50,20');
   });
 
+  it('taps the centre of what shows of a slotted node, cut by a clip around its slot', async () => {
+    await page.setContent(`<style>body { margin: 0 }</style>
+      <div id="host"><div id="wide" style="width:160px;height:40px"></div></div>
+      <script>
+        addEventListener('click', (event) => { document.title = event.clientX + ',' + event.clientY; }, true);
+        document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = '<div style="width:100px;height:40px;overflow:hidden"><slot></slot></div>';
+      </script>`);
+    await page.act(bySelector('#wide'), { kind: 'tap' });
+    expect(await page.browser.evaluate(() => document.title)).toBe('50,20');
+  });
+
   it('arms no click watch for a tap cancelled while it aims, so the pointer input after it reaches the page', async () => {
     const controller = new AbortController();
     const cancel = page.serve('/cancel-tap', (_request, response) => {

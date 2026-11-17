@@ -104,8 +104,8 @@ export function createDom(key: string) {
 
   /**
    * What shows of `rect`, a box of `element`: what the viewport and every
-   * ancestor that clips its overflow leave of it, as Playwright clips a
-   * clickable point; null when under a pixel does.
+   * flat-tree ancestor that clips its overflow leave of it; null when under
+   * a pixel does.
    */
   const clipped = (element: Element, rect: DOMRect): Area | null => {
     const { width, height } = viewport();
@@ -114,7 +114,7 @@ export function createDom(key: string) {
     let right = Math.min(rect.right, width);
     let bottom = Math.min(rect.bottom, height);
     let position = getComputedStyle(element).position;
-    for (let at = parentOrHostOf(element); at !== null && at !== document.documentElement; at = parentOrHostOf(at)) {
+    for (let at = parentOf(element); at !== null && at !== document.documentElement; at = parentOf(at)) {
       const clip = getComputedStyle(at);
       const transformed = clip.transform !== 'none' || clip.filter !== 'none' || clip.perspective !== 'none' || clip.contain.includes('paint') || clip.contain.includes('layout');
       if (position === 'fixed' && !transformed) continue;
