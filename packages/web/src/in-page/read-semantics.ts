@@ -288,10 +288,11 @@ export const createSemanticReader = (
    * True for a checkbox or radio hidden only by having no box, under a shown
    * label of its own that draws it, as in Element Plus. Chrome's tree keeps
    * such an input, and without it the model reads the label text with no
-   * checked state. A tap clicks the label in its place (`pickStandIn` in
-   * `actions.ts`), which needs a box (so not `display: contents`) and refuses
-   * when the label's centre lands on a link or other control. This rule is
-   * stricter: a label that is one, or holds one anywhere, does not count.
+   * checked state. A tap clicks the label in its place (`labelStandIn` in
+   * `actionability.ts`), which needs a box (so not `display: contents`) and
+   * refuses when the label's centre lands on a link or other control. This
+   * rule is stricter: a label that is one, or holds one anywhere, does not
+   * count.
    */
   const isDrawnByLabel = (el: Element, style: CSSStyleDeclaration | undefined): boolean => {
     if (!(el instanceof HTMLInputElement) || (el.type !== 'checkbox' && el.type !== 'radio')) return false;
