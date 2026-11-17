@@ -1,7 +1,8 @@
 /**
  * A `goto` whose response turns into a download fails as Playwright's does,
  * with "Download is starting", while the download itself is saved; an abort
- * no download follows keeps its own error, without waiting for one.
+ * no download follows keeps its own error. That such an abort waits for no
+ * download is pinned over a scripted peer (`unit/steering.test.ts`).
  */
 
 import { readFileSync } from 'node:fs';
@@ -46,14 +47,12 @@ describe('navigations that turn into downloads', () => {
     expect(readFileSync(download.absolutePath, 'utf8')).toBe('Hello fraction');
   });
 
-  it('keeps the abort of a navigation to a No Content response, at once', async () => {
+  it('keeps the abort of a navigation to a No Content response', async () => {
     const empty = page.serve('/no-content', (_request, response) => {
       response.writeHead(204);
       response.end();
     });
-    const started = Date.now();
     const failure = await page.browser.goto(empty).catch((caught: unknown) => caught);
     expect((failure as Error).message).toContain(onFirefox ? 'NS_BINDING_ABORTED' : 'net::ERR_ABORTED');
-    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });

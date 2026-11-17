@@ -24,6 +24,7 @@ const PAGES: Readonly<Record<string, string>> = {
     <a href="/popup" target="_blank">Open link</a>
     <button onclick="const tab = window.open('', '_blank'); tab.document.write('<title>Written</title><p>Code TAB-88421</p>'); tab.document.close();">Write tab</button>
     <a href="/slow" target="_blank">Open slow</a>
+    <button onclick="window.open('/held', '_blank')">Open held</button>
     <a href="/hang" target="_blank">Open hang</a>
     <button onclick="window.open('/hang', '_blank')">Open hang window</button>
     <a href="/no-content" target="_blank">Open nothing</a>
@@ -36,6 +37,7 @@ const PAGES: Readonly<Record<string, string>> = {
     <button onclick="window.open('/slow', '_blank'); window.close();">Hand off</button>`,
   '/nested': '<!doctype html><title>Nested</title><h1>Nested</h1><button onclick="window.close()">Close nested</button>',
   '/slow': '<!doctype html><title>Slow</title><h1>Slow</h1>',
+  '/held': '<!doctype html><title>Held</title><h1>Held</h1>',
   '/input': `<!doctype html><title>Input</title><h1>Input</h1><script>
     window.log = [];
     for (const type of ['keydown', 'keyup']) addEventListener(type, (event) => log.push(type + ' ' + event.key + (event.shiftKey ? ' shifted' : '')), true);
@@ -56,6 +58,19 @@ describe('tabs', () => {
   let artifactsDir: string;
   /** Requests for `/hang`, answered only when a test lets them go. */
   const hanging = new Set<ServerResponse>();
+  /** The `/held` requests no test has served yet, and the serves no request has taken yet. */
+  const held = { waiting: [] as ServerResponse[], served: 0 };
+  /** Answers one `/held` request with its page. */
+  const answerHeld = (response: ServerResponse): void => {
+    response.writeHead(200, { 'content-type': 'text/html' });
+    response.end(PAGES['/held']);
+  };
+  /** Serves the held page to one `/held` request: the one waiting longest, else the next to arrive. */
+  const serveHeld = (): void => {
+    const response = held.waiting.shift();
+    if (response === undefined) held.served += 1;
+    else answerHeld(response);
+  };
   /** Opens the gate: requests for `/gate` are answered from then on, and held until then. */
   let openGate: () => void = () => undefined;
   const gateOpened = new Promise<void>((resolve) => (openGate = resolve));
@@ -80,6 +95,14 @@ describe('tabs', () => {
         response.end('a,b\n');
         return;
       }
+      if (request.url === '/held') {
+        if (held.served === 0) held.waiting.push(response);
+        else {
+          held.served -= 1;
+          answerHeld(response);
+        }
+        return;
+      }
       const page = PAGES[request.url ?? ''];
       if (request.url === '/slow') {
         setTimeout(() => {
@@ -97,7 +120,7 @@ describe('tabs', () => {
   });
 
   afterAll(async () => {
-    for (const response of hanging) response.destroy();
+    for (const response of [...hanging, ...held.waiting]) response.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(artifactsDir, { recursive: true, force: true });
   });
@@ -187,11 +210,13 @@ describe('tabs', () => {
 
   it('an operation after a tap that opens a slow tab runs on the opener at once; waitForPopup waits for the page', async () => {
     await withAttempt(async (engine, browser) => {
-      await tap(engine, 'Open slow');
-      const started = Date.now();
-      expect((await engine.observe!(operation())).location).toBe(`${url}/opener`);
-      expect(Date.now() - started).toBeLessThan(1_000);
+      await tap(engine, 'Open held');
+      // Its page is not served yet, so this read waited for no page, and the tab has not joined.
+      const before = await engine.observe!(operation());
+      expect(before.location).toBe(`${url}/opener`);
+      expect(before.tabs).toBeUndefined();
       // It joins in the background once its page loads.
+      serveHeld();
       expect((await withTabs(engine, 2)).tabs).toEqual({ count: 2, active: 0 });
       const slow = await browser.waitForPopup(() => tap(engine, 'Open slow'));
       expect(await slow.url()).toBe(`${url}/slow`);
@@ -229,15 +254,14 @@ describe('tabs', () => {
 
   it('a tab that never gets a document never joins the tabs', async () => {
     await withAttempt(async (engine, browser) => {
+      const joined = [`${url}/opener`];
       for (const link of ['Open nothing', 'Email us', 'Export']) {
         await tap(engine, link);
-        const started = Date.now();
-        const snapshot = await engine.observe!(operation());
-        expect(snapshot.location, link).toBe(`${url}/opener`);
-        expect(Date.now() - started, link).toBeLessThan(1_000);
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        expect(browser.tabs(), link).toHaveLength(1);
-        expect((await engine.observe!(operation())).tabs, link).toBeUndefined();
+        expect((await engine.observe!(operation())).location, link).toBe(`${url}/opener`);
+        // A tab opened after it joins with its document, and the one that got none is not among the tabs then.
+        await tap(engine, 'Open link');
+        joined.push(`${url}/popup`);
+        await expect.poll(() => Promise.all(browser.tabs().map((tab) => tab.url())), { message: link, timeout: 10_000 }).toEqual(joined);
       }
     });
   });

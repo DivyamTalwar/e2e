@@ -870,11 +870,11 @@ describe('web engine lifecycle', () => {
     const engine = web();
     await withAttempt(engine, app, artifactsDir, 'h1', async () => {
       const controller = new AbortController();
-      const started = Date.now();
-      const pending = engine.session!.open!(`${app.url}/slow`, operation('h1', { signal: controller.signal }));
-      setTimeout(() => controller.abort(), 100);
+      // The signal aborts once the page is asked for. The page is never answered and the budget outlasts the test,
+      // so nothing but the abort ends the navigation: one that waited out the driver would never settle here.
+      const unanswered = pages.serve('/unanswered', () => controller.abort());
+      const pending = engine.session!.open!(unanswered, operation('h1', { signal: controller.signal, timeoutMs: 600_000 }));
       await expect(pending).rejects.toMatchObject({ code: 'CANCELLED' });
-      expect(Date.now() - started).toBeLessThan(3_000);
     });
   });
 
