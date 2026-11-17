@@ -232,11 +232,13 @@ jobs:
       - run: pnpm --filter @e2e-dev/core run build && pnpm --filter e2e run build && pnpm --filter @e2e-dev/web run build
       - name: Install Chromium and Firefox
         run: node packages/web/dist/bin.js install chromium firefox
-      # A Firefox launch takes 8 to 17 s on the Windows runner, so a test that
-      # launches twice needs more than the suite's 30 s.
+      # A Firefox launch takes 8 to 17 s on the Windows runner, so a test or a
+      # hook that launches twice needs more than the suite's 30 s.
       - name: Launch, attempt, and close on each browser
         working-directory: packages/web
-        run: npx vitest run --testTimeout=90000 --hookTimeout=90000 tests/integration/lifecycle.test.ts tests/integration/keyboard.test.ts tests/integration/tabs.test.ts
+        env:
+          E2E_WEB_TEST_TIMEOUT_MS: 90000
+        run: npx vitest run tests/integration/lifecycle.test.ts tests/integration/keyboard.test.ts tests/integration/tabs.test.ts
 
   # The one check the ruleset requires from this workflow. A skipped job
   # passes (the change cannot reach it); a failed or cancelled one fails it.

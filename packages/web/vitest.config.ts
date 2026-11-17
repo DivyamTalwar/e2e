@@ -1,6 +1,13 @@
 import { defineConfig } from 'vitest/config';
 
 /**
+ * The budget of one test and of one hook. `E2E_WEB_TEST_TIMEOUT_MS` raises
+ * both on a runner where a browser launch alone takes many seconds: the
+ * `--hookTimeout` flag does not reach a project.
+ */
+const TIMEOUT_MS = Number(process.env['E2E_WEB_TEST_TIMEOUT_MS'] ?? 30_000);
+
+/**
  * Unit tests are pure and run fully in parallel. Integration tests own real
  * browser processes, so their concurrency is bounded: oversubscribing CPUs
  * starves them into timeouts that are indistinguishable from product failures.
@@ -12,8 +19,8 @@ import { defineConfig } from 'vitest/config';
  */
 const integration = {
   include: ['tests/integration/**/*.test.ts'],
-  testTimeout: 30_000,
-  hookTimeout: 30_000,
+  testTimeout: TIMEOUT_MS,
+  hookTimeout: TIMEOUT_MS,
   pool: 'forks',
   maxWorkers: 3,
   minWorkers: 1,
@@ -22,16 +29,16 @@ const integration = {
 
 export default defineConfig({
   test: {
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
+    testTimeout: TIMEOUT_MS,
+    hookTimeout: TIMEOUT_MS,
     pool: 'forks',
     projects: [
       {
         test: {
           name: 'unit',
           include: ['tests/unit/**/*.test.ts'],
-          testTimeout: 30_000,
-          hookTimeout: 30_000,
+          testTimeout: TIMEOUT_MS,
+          hookTimeout: TIMEOUT_MS,
           pool: 'forks',
         },
       },
