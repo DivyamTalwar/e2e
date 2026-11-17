@@ -155,7 +155,9 @@ web({ connect: { cdpEndpoint: async () => 'ws://127.0.0.1:9222' } });
 - `context: 'existing'` drives the page the browser already shows instead of
   creating a context and a tab, for a host that can create neither, such as
   an Electron app. `app.open()` navigates that page, attempts share its
-  cookies and storage, and the target runs on one worker.
+  cookies and storage, and the target runs on one worker. When an attempt
+  ends, the tabs its page opened are closed and what it set on the browser
+  is taken back.
 - A connection that drops fails the attempt, and the next attempt attaches
   again through `cdpEndpoint`.
 
@@ -361,6 +363,7 @@ export type WebInitScript = string | { readonly path: string } | (() => unknown)
 | `connect.reconnectEndpoint` is removed | A dropped connection is not recovered mid-attempt. The next attempt attaches again. |
 | With `connect.context: 'existing'`, `app.clearState()` throws `UNSUPPORTED_CAPABILITY`, a saved session is refused, and the target runs on one worker | The test drives the one page the browser shows, in the browser's own context. |
 | `attachBrowser` and `connect.context: 'existing'` throw `UNSUPPORTED_CAPABILITY` when the browser shows two tabs, or several and none visible | Nothing the browser reports says which to drive. Electron reports a `show: false` window as visible. |
+| With `attachBrowser` and `connect.context: 'existing'`, a page left open keeps what scripts did in it, such as an init script, until it navigates | The page is the host's, and nothing reloads it. |
 | With a `scope: 'attempt'` provider, `app.clearState()` throws `UNSUPPORTED_CAPABILITY` and a saved session is a `COLLECTION_ERROR` | The attempt runs in the fresh browser's own context, which they would replace. |
 | Selectors are CSS and XPath, alone or in `>>` chains, with no `text=` or `nth=` engines | The page runs the selector itself. |
 | On Chromium, an action that opens a `noopener` tab (a `target="_blank"` link) waits until the new tab's server answers | chromium-bidi holds every message behind the new tab's creation, which waits for its first response ([crbug 372842894](https://crbug.com/372842894)). |
@@ -1045,9 +1048,12 @@ await screen.getByRole('button', 'Sign in').tap();
   one, or the visible one of several. When no tab is open, it opens one.
 - Relative URLs have no base. Pass `browser.goto` a full URL.
 - `close()` detaches. The browser keeps running, with its tabs, cookies, and
-  storage. Only a tab the attach opened itself is closed. `close()` is
-  idempotent, runs on `await using`, and throws an `AggregateError` of what
-  failed.
+  storage. Only a tab the attach opened, or the page opened while attached,
+  is closed, and what the attach set on the browser (viewport, media,
+  permissions) is taken back. `close()` is idempotent, runs on `await using`,
+  and throws an `AggregateError` of what failed.
+- `timeout` bounds attaching and every operation together. When it runs
+  out, each fails with `TEST_TIMEOUT`.
 - There is no `app`, so nothing restarts the tab, clears its state, or saves
   a session.
 
