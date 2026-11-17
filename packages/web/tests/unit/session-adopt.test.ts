@@ -1,7 +1,8 @@
 /**
  * An attempt that adopts the tab a browser already shows, in the browser's
  * own user context (`adopt-tab`), on a scripted peer: the documents it
- * prepares as it adopts the tab, and the tabs it closes when it ends.
+ * prepares as it adopts the tab, the tabs it closes when it ends, and what
+ * it set in that user context and that tab, which it takes back.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -102,6 +103,114 @@ describe('the tabs an attempt closes in a browser it adopted a tab of', () => {
     await attached.replaceTabs(new AbortController().signal);
     expect(closedTabs(fake)).toEqual(['joined', 'loading', 'nowhere']);
     expect(attached.tabs.list().map((tab) => tab.context)).toEqual(['theirs']);
+  });
+});
+
+/** The parameters of each `method` command `fake` got, in order. */
+function sent(fake: FakeBidi, method: string): Record<string, unknown>[] {
+  return fake.commands(method).map((command) => command.params);
+}
+
+/** The CDP commands `fake` got that set or lift something, each with its parameters, in order. */
+function cdpSent(fake: FakeBidi): unknown[] {
+  return sent(fake, 'goog:cdp.sendCommand').filter((command) => !['Target.getTargets', 'Log.enable'].includes(String(command['method']))).map((command) => [command['method'], command['params']]);
+}
+
+const DEFAULT = { userContexts: ['default'] };
+
+describe("what an attempt set in the browser's own user context", () => {
+  it('is taken back when the attempt ends: each configured setting, the permissions it granted, and the viewport and focus of the tab it adopted', async () => {
+    const fake = showing();
+    const attached = adopting(fake, {
+      viewport: { width: 500, height: 400 },
+      userAgent: 'UA',
+      locale: 'de-DE',
+      timezoneId: 'Asia/Tokyo',
+      media: { colorScheme: 'dark', reducedMotion: 'reduce' },
+      permissions: ['clipboard-read'],
+    });
+    await attached.openUserContext(new AbortController().signal);
+    await attached.userContext.visit('http://app.test/');
+    await attached.close();
+
+    expect(sent(fake, 'emulation.setUserAgentOverride')).toEqual([{ userAgent: 'UA', ...DEFAULT }, { userAgent: null, ...DEFAULT }]);
+    expect(sent(fake, 'emulation.setLocaleOverride')).toEqual([{ locale: 'de-DE', ...DEFAULT }, { locale: null, ...DEFAULT }]);
+    expect(sent(fake, 'network.setExtraHeaders')).toEqual([{ headers: [{ name: 'accept-language', value: { type: 'string', value: 'de-DE' } }], ...DEFAULT }, { headers: [], ...DEFAULT }]);
+    expect(sent(fake, 'emulation.setTimezoneOverride')).toEqual([{ timezone: 'Asia/Tokyo', ...DEFAULT }, { timezone: null, ...DEFAULT }]);
+    expect(sent(fake, 'emulation.setMediaFeaturesOverride')).toEqual([
+      { features: { 'prefers-color-scheme': 'dark', 'prefers-reduced-motion': 'reduce' }, ...DEFAULT },
+      { features: null, ...DEFAULT },
+    ]);
+    expect(sent(fake, 'browser.setDownloadBehavior').map((params) => params['downloadBehavior'])).toEqual([expect.objectContaining({ type: 'allowed' }), null]);
+    expect(sent(fake, 'permissions.setPermission')).toEqual([{ descriptor: { name: 'clipboard-read' }, state: 'granted', origin: 'http://app.test', userContext: 'default' }]);
+    expect(sent(fake, 'browsingContext.setViewport')).toEqual([
+      { context: 'theirs', viewport: { width: 500, height: 400 }, devicePixelRatio: 1 },
+      { context: 'theirs', viewport: null, devicePixelRatio: null },
+    ]);
+    expect(cdpSent(fake)).toEqual(expect.arrayContaining([
+      ['Emulation.setFocusEmulationEnabled', { enabled: true }],
+      ['Emulation.setFocusEmulationEnabled', { enabled: false }],
+      ['Browser.resetPermissions', {}],
+    ]));
+    expect(cdpSent(fake)).toHaveLength(3);
+  });
+
+  it('is taken back when a test set it: the media it emulated, and the viewport it gave a tab that had none', async () => {
+    const fake = showing();
+    const attached = adopting(fake);
+    await attached.openUserContext(new AbortController().signal);
+    await attached.userContext.emulateMedia({ colorScheme: 'dark' });
+    await attached.userContext.emulateMedia({ colorScheme: 'light' });
+    await attached.setViewport({ width: 320, height: 480 });
+    await attached.close();
+    expect(sent(fake, 'emulation.setMediaFeaturesOverride').map((params) => params['features'])).toEqual([{ 'prefers-color-scheme': 'dark' }, { 'prefers-color-scheme': 'light' }, null]);
+    expect(sent(fake, 'browsingContext.setViewport').map((params) => params['viewport'])).toEqual([{ width: 320, height: 480 }, null]);
+  });
+
+  it('is all the attempt takes back: nothing it did not set, and no tab it opened itself', async () => {
+    const fake = showing().on('browsingContext.create', { result: { context: 'mine' } });
+    const attached = adopting(fake);
+    await attached.openUserContext(new AbortController().signal);
+    await attached.newTab();
+    await attached.setViewport({ width: 320, height: 480 });
+    await attached.close();
+    for (const unset of ['emulation.setUserAgentOverride', 'emulation.setLocaleOverride', 'network.setExtraHeaders', 'emulation.setTimezoneOverride', 'emulation.setMediaFeaturesOverride']) expect(sent(fake, unset)).toEqual([]);
+    expect(sent(fake, 'browsingContext.setViewport')).toEqual([{ context: 'mine', viewport: { width: 320, height: 480 }, devicePixelRatio: 1 }]);
+    expect(cdpSent(fake)).toEqual([
+      ['Emulation.setFocusEmulationEnabled', { enabled: true }],
+      ['Emulation.setFocusEmulationEnabled', { enabled: true }],
+      ['Emulation.setFocusEmulationEnabled', { enabled: false }],
+    ]);
+  });
+
+  it('is taken back, every other thing of it, when one cannot be, and the close fails with why', async () => {
+    const fake = showing().on('emulation.setTimezoneOverride', (params) => (params['timezone'] === null ? { error: 'unknown error', message: 'no reset' } : { result: {} }));
+    const attached = adopting(fake, { userAgent: 'UA', timezoneId: 'Asia/Tokyo', media: { colorScheme: 'dark' } });
+    await attached.openUserContext(new AbortController().signal);
+    await expect(attached.close()).rejects.toThrow('no reset');
+    expect(sent(fake, 'emulation.setUserAgentOverride').at(-1)).toEqual({ userAgent: null, ...DEFAULT });
+    expect(sent(fake, 'emulation.setMediaFeaturesOverride').at(-1)).toEqual({ features: null, ...DEFAULT });
+  });
+
+  it('is taken back by a setup that failed part way', async () => {
+    const fake = showing().on('emulation.setLocaleOverride', (params) => (params['locale'] === null ? { result: {} } : { error: 'invalid argument', message: 'no such locale' }));
+    const attached = adopting(fake, { userAgent: 'UA', locale: 'xx' });
+    await expect(attached.openUserContext(new AbortController().signal)).rejects.toThrow('no such locale');
+    expect(sent(fake, 'emulation.setUserAgentOverride')).toEqual([{ userAgent: 'UA', ...DEFAULT }, { userAgent: null, ...DEFAULT }]);
+    expect(sent(fake, 'emulation.setLocaleOverride').at(-1)).toEqual({ locale: null, ...DEFAULT });
+  });
+
+  it('is left for the removal of a user context of the attempt\'s own, which takes it all', async () => {
+    const fake = showing().on('browser.createUserContext', { result: { userContext: 'mine' } }).on('browsingContext.create', { result: { context: 'tab' } });
+    const own = adopting(fake, { userContext: 'fresh', viewport: { width: 500, height: 400 }, userAgent: 'UA', media: { colorScheme: 'dark' } });
+    await own.openUserContext(new AbortController().signal);
+    await own.ensureContext();
+    await own.close();
+    expect(sent(fake, 'browser.removeUserContext')).toEqual([{ userContext: 'mine' }]);
+    expect(sent(fake, 'emulation.setUserAgentOverride')).toEqual([{ userAgent: 'UA', userContexts: ['mine'] }]);
+    expect(sent(fake, 'emulation.setMediaFeaturesOverride')).toHaveLength(1);
+    expect(sent(fake, 'browser.setDownloadBehavior')).toHaveLength(1);
+    expect(sent(fake, 'browsingContext.setViewport')).toHaveLength(1);
   });
 });
 

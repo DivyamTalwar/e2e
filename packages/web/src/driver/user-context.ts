@@ -3,7 +3,10 @@
  * to it (preload scripts, downloads, emulation, media), replaced by a clean
  * one or removed, the ones still owed removal, and what the attempt leaves
  * in the one in use: the init scripts a test added, the origins its
- * documents were at, and the permissions granted to them.
+ * documents were at, and the permissions granted to them. A user context
+ * the attempt does not remove (the browser's own) is given back as it was
+ * found: everything the attempt set in it is taken back when the attempt
+ * leaves it (`takeBack`).
  */
 
 import type { Emulation } from 'webdriver-bidi-protocol';
@@ -19,6 +22,7 @@ import type { WebMedia } from '../options.ts';
 import type { ProtectedApp } from '../protected-app.ts';
 import type { BidiConnection } from './connection.ts';
 import type { AttemptDownloads } from './downloads.ts';
+import { ChromiumCdp } from './cdp.ts';
 import { callFunction } from './script.ts';
 
 /**
@@ -70,6 +74,9 @@ interface ScopedUserContext {
   readonly preloads: readonly string[];
 }
 
+/** The call that takes one thing the attempt set back to how the browser had it. */
+type TakeBack = () => Promise<unknown>;
+
 /** The user context one attempt runs in, through every replacement, until the attempt's close removes it. */
 export class AttemptUserContext {
   /** The web origins the attempt's documents have been at, whose storage a saved session keeps. */
@@ -88,6 +95,13 @@ export class AttemptUserContext {
   private readonly granted = new Map<string, Promise<void>>();
   /** The media features in effect: the configured ones, updated by `emulateMedia`. */
   private media: WebMedia;
+  /**
+   * What the attempt set in a user context it does not remove, and in the
+   * tab it adopted there, each by what it is, with the call that takes it
+   * back (`takeBack`). Empty in a user context of the attempt's own, whose
+   * removal takes everything with it.
+   */
+  private readonly kept = new Map<string, TakeBack>();
 
   constructor(private readonly host: UserContextHost) {
     this.media = host.settings.media;
@@ -144,6 +158,18 @@ export class AttemptUserContext {
     });
     const failed = results.find((result, index) => result.status === 'rejected' && this.unremoved.has(pending[index]!));
     if (failed !== undefined) throw (failed as PromiseRejectedResult).reason;
+  }
+
+  /**
+   * Sets one thing of the user context in use, or of a tab in it: runs
+   * `apply`, with `takeBack` kept for when the attempt leaves a user context
+   * it does not remove. `what` names the thing, so setting it again keeps
+   * one call. A user context of the attempt's own keeps none: its removal
+   * takes everything with it.
+   */
+  async set(what: string, apply: () => Promise<unknown>, takeBack: TakeBack): Promise<void> {
+    if (this.host.settings.userContext !== 'fresh') this.kept.set(what, takeBack);
+    await apply();
   }
 
   /**
@@ -211,7 +237,10 @@ export class AttemptUserContext {
    * Records a document of the attempt starting to load `url`: its origin is
    * remembered for a saved session, and granted the configured permissions,
    * once per origin and user context (BiDi grants per origin). Concurrent
-   * calls for one origin share its grant.
+   * calls for one origin share its grant. A grant is an override Chromium
+   * keeps beside what its user decided, and BiDi can set one but not lift
+   * it, so the browser's own user context gets its permissions back over
+   * CDP, which lifts every override there (`Browser.resetPermissions`).
    */
   visit(url: string): Promise<void> {
     if (!URL.canParse(url)) return Promise.resolve();
@@ -223,8 +252,11 @@ export class AttemptUserContext {
     let grant = this.granted.get(origin);
     if (grant === undefined) {
       const userContext = this.current;
-      grant = Promise.all(settings.permissions.map((name) =>
-        connection.send('permissions.setPermission', { descriptor: { name }, state: 'granted', origin, userContext }))).then(() => undefined);
+      grant = this.set(
+        'permissions',
+        () => Promise.all(settings.permissions.map((name) => connection.send('permissions.setPermission', { descriptor: { name }, state: 'granted', origin, userContext }))),
+        () => ChromiumCdp.browser(connection).send('Browser.resetPermissions', {}),
+      );
       this.granted.set(origin, grant);
     }
     return grant;
@@ -234,7 +266,8 @@ export class AttemptUserContext {
    * Creates a user context (the browser's own one when the settings ask for
    * it) and applies everything scoped to it: the preloaded scripts,
    * downloads, the emulated user agent, locale (and the `accept-language`
-   * Playwright's locale sends), time zone, and media. Every step settles
+   * Playwright's locale sends), time zone, and media, each through `set`,
+   * so the browser's own user context gets it back. Every step settles
    * before a failure is thrown, and a failed or overtaken setup removes what
    * it made. None is created once the attempt closed. Once set up, it is
    * published in place of the attempt's user context, whose scope is
@@ -260,11 +293,27 @@ export class AttemptUserContext {
         ...sources.map(async (source) => {
           preloads.push((await connection.send('script.addPreloadScript', { functionDeclaration: source, ...scoped })).script);
         }),
-        this.host.downloads.allow(userContext),
-        userAgent === undefined ? undefined : connection.send('emulation.setUserAgentOverride', { userAgent, ...scoped }),
-        locale === undefined ? undefined : connection.send('emulation.setLocaleOverride', { locale, ...scoped }),
-        locale === undefined ? undefined : connection.send('network.setExtraHeaders', { headers: [{ name: 'accept-language', value: { type: 'string', value: locale } }], ...scoped }),
-        timezoneId === undefined ? undefined : connection.send('emulation.setTimezoneOverride', { timezone: timezoneId, ...scoped }),
+        this.set('downloads', () => this.host.downloads.allow(userContext), () => connection.send('browser.setDownloadBehavior', { downloadBehavior: null, ...scoped })),
+        userAgent === undefined ? undefined : this.set(
+          'user agent',
+          () => connection.send('emulation.setUserAgentOverride', { userAgent, ...scoped }),
+          () => connection.send('emulation.setUserAgentOverride', { userAgent: null, ...scoped }),
+        ),
+        locale === undefined ? undefined : this.set(
+          'locale',
+          () => connection.send('emulation.setLocaleOverride', { locale, ...scoped }),
+          () => connection.send('emulation.setLocaleOverride', { locale: null, ...scoped }),
+        ),
+        locale === undefined ? undefined : this.set(
+          'accept-language',
+          () => connection.send('network.setExtraHeaders', { headers: [{ name: 'accept-language', value: { type: 'string', value: locale } }], ...scoped }),
+          () => connection.send('network.setExtraHeaders', { headers: [], ...scoped }),
+        ),
+        timezoneId === undefined ? undefined : this.set(
+          'time zone',
+          () => connection.send('emulation.setTimezoneOverride', { timezone: timezoneId, ...scoped }),
+          () => connection.send('emulation.setTimezoneOverride', { timezone: null, ...scoped }),
+        ),
         this.applyMedia(userContext),
       ]);
       const failed = steps.find((step) => step.status === 'rejected');
@@ -287,16 +336,35 @@ export class AttemptUserContext {
    * tabs, then its preload scripts: removing a script from a live tab races
    * the tab's close inside the Chromium mapper. The browser's own user
    * context stays, with its tabs: the session closes the ones the attempt
-   * opened there before it drops the scripts.
+   * opened there before it drops the scripts, and what the attempt set in
+   * it is taken back (`takeBack`), unless the attempt still runs in it.
    */
   private async drop(dropped: ScopedUserContext): Promise<void> {
     const { connection } = this.host;
     if (dropped.userContext !== DEFAULT_USER_CONTEXT && dropped.userContext !== '') this.unremoved.add(dropped.userContext);
     try {
       await this.removeOwed();
+      if (dropped.userContext === DEFAULT_USER_CONTEXT && this.current !== DEFAULT_USER_CONTEXT) await this.takeBack();
     } finally {
       await Promise.all(dropped.preloads.map((script) => releaseQuietly(connection.send('script.removePreloadScript', { script }))));
     }
+  }
+
+  /**
+   * Takes back everything the attempt set in the user context it does not
+   * remove, and in the tab it adopted there (`kept`): the one place an
+   * attempt gives the browser's own user context back as it found it. Every
+   * call is made whatever the others did, and the first failure is thrown:
+   * what stays set is what the next attempt, and the browser's own user,
+   * would run with. A document the attempt left open keeps what scripts did
+   * in it (the driver's own, the app's init scripts) until it navigates.
+   */
+  private async takeBack(): Promise<void> {
+    const calls = [...this.kept.values()];
+    this.kept.clear();
+    const results = await Promise.allSettled(calls.map((call) => call()));
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed !== undefined) throw failed.reason;
   }
 
   /**
@@ -306,11 +374,16 @@ export class AttemptUserContext {
    */
   private async applyMedia(userContext: string): Promise<void> {
     if (this.media.colorScheme === undefined && this.media.reducedMotion === undefined) return;
+    const { connection } = this.host;
     const features: Emulation.MediaFeatures = obj({
       'prefers-color-scheme': this.media.colorScheme === 'no-preference' ? null : this.media.colorScheme,
       'prefers-reduced-motion': this.host.traits.emulatesReducedMotion ? this.media.reducedMotion : undefined,
     });
-    await this.host.connection.send('emulation.setMediaFeaturesOverride', { features, userContexts: [userContext] });
+    await this.set(
+      'media',
+      () => connection.send('emulation.setMediaFeaturesOverride', { features, userContexts: [userContext] }),
+      () => connection.send('emulation.setMediaFeaturesOverride', { features: null, userContexts: [userContext] }),
+    );
   }
 }
 

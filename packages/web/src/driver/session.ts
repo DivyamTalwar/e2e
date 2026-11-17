@@ -10,6 +10,7 @@ import { DialogRouter } from './dialogs.ts';
 import type { WebScreencastOptions } from '../options.ts';
 import type { ProtectedApp } from '../protected-app.ts';
 import { BidiInput } from './input.ts';
+import { ChromiumCdp } from './cdp.ts';
 import { ArtifactPaths } from './artifact-paths.ts';
 import type { ContextTree } from './context-tree.ts';
 import { AttemptDownloads, type RemoteDownloads } from './downloads.ts';
@@ -301,7 +302,8 @@ export class BidiSession {
   /**
    * Opens a tab in `userContext` and shows it: `adopted`, the tab the
    * attempt found open there, else a new one. The network covers it, its
-   * page behaves as focused (`BidiInput.emulateFocus`), and its log is
+   * page behaves as focused (`BidiInput.emulateFocus`, for the adopted one
+   * until the attempt ends: `focusAdopted`), and its log is
    * heard (`AttemptLog.openedTab`), before it joins the attempt's tabs,
    * which show it (`AttemptTabs.own`). Until
    * it is shown a tab created here is this call's to close: when a step
@@ -316,7 +318,8 @@ export class BidiSession {
     try {
       this.requireUserContext(userContext);
       await this.network.addContext(context);
-      await this.input.emulateFocus(context);
+      if (context === adopted) await this.focusAdopted(context);
+      else await this.input.emulateFocus(context);
       await this.log.openedTab(userContext, context, context === adopted);
       this.requireUserContext(userContext);
       return await this.tabs.own(context);
@@ -324,6 +327,24 @@ export class BidiSession {
       if (context !== adopted) await releaseQuietly(connection.send('browsingContext.close', { context }));
       throw cause;
     }
+  }
+
+  /**
+   * Has the page of the tab the attempt adopted behave as focused
+   * (`BidiInput.emulateFocus`) for as long as the attempt runs. The tab
+   * outlives the attempt, and a page told to behave as focused also reads as
+   * visible in a background tab, which is how the next attempt tells the tab
+   * a person sees (`foundTabs`). So where the browser emulates focus per tab
+   * (`BrowserTraits.focus`), the tab holds focus as its window gives it again
+   * when the attempt ends, unless it closed first.
+   */
+  private async focusAdopted(context: string): Promise<void> {
+    const emulate = (): Promise<void> => this.input.emulateFocus(context);
+    if (this.browser.traits.focus !== 'emulated') return emulate();
+    await this.userContext.set('focus', emulate, () => unlessStale(
+      ChromiumCdp.forContext(this.connection, context).then((cdp) => cdp.send('Emulation.setFocusEmulationEnabled', { enabled: false })),
+      undefined,
+    ));
   }
 
   /**
@@ -386,11 +407,15 @@ export class BidiSession {
    * and a viewport no window can hold fails `UNSUPPORTED_CAPABILITY` with
    * the tab as it was. The viewport is the tab's, whatever document it
    * shows, so a tab that navigates while it is sized gets it all the same
-   * (`acrossNavigations`).
+   * (`acrossNavigations`). The tab the attempt adopted outlives it, so it
+   * gets the size its window gives it back when the attempt ends
+   * (`AttemptUserContext.set`), unless it closed first.
    */
   private async sizeTab(context: string, viewport: ViewportSize): Promise<void> {
     if (this.browser.traits.windowClipsViewport) await this.windows.hold(context, viewport);
-    await acrossNavigations(this.connection, context, () => this.connection.send('browsingContext.setViewport', { context, viewport, devicePixelRatio: 1 }));
+    const size = (): Promise<unknown> => acrossNavigations(this.connection, context, () => this.connection.send('browsingContext.setViewport', { context, viewport, devicePixelRatio: 1 }));
+    if (context === this.adopted) await this.userContext.set('viewport', size, () => unlessStale(this.connection.send('browsingContext.setViewport', { context, viewport: null, devicePixelRatio: null }), undefined));
+    else await size();
   }
 
   /**
