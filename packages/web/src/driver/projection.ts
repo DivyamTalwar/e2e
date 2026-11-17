@@ -4,6 +4,8 @@
  * rotation, or a 3D transform flattened onto the screen.
  */
 
+import type { Box } from '../in-page/dom.ts';
+
 /** A point in CSS pixels. */
 export interface Point {
   readonly x: number;
@@ -29,6 +31,14 @@ export function project(map: Projection, point: Point): Point {
   const [a, b, c, d, e, f, g, h, i] = map;
   const w = g * point.x + h * point.y + i;
   return { x: (a * point.x + b * point.y + c) / w, y: (d * point.x + e * point.y + f) / w };
+}
+
+/** The smallest upright box around where `map` takes the corners of `box`. */
+export function projectBox(map: Projection, box: Box): Box {
+  const corners = [box.x, box.x + box.width].flatMap((x) => [box.y, box.y + box.height].map((y) => project(map, { x, y })));
+  const x = Math.min(...corners.map((corner) => corner.x));
+  const y = Math.min(...corners.map((corner) => corner.y));
+  return { x, y, width: Math.max(...corners.map((corner) => corner.x)) - x, height: Math.max(...corners.map((corner) => corner.y)) - y };
 }
 
 /** `outer` after `inner`: the map that applies `inner`, then `outer`. */

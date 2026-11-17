@@ -4,7 +4,7 @@
  * scrolling into view, and where a wheel lands.
  */
 
-import { withDom, type Area, type Outcome } from './dom.ts';
+import { withDom, type Area, type Box, type Outcome } from './dom.ts';
 
 /** What `actionPoint` checks beside the element itself. */
 export interface ActionPointOptions {
@@ -143,15 +143,14 @@ export function labelStandIn(node: Element): Outcome<{ label: HTMLLabelElement |
  * the viewport or the box of an ancestor that clips it (`clippers` in
  * `dom.ts`; to its nearest edge there), one around its shadow host or the
  * slot it is assigned to included. In the viewport each axis follows
- * Chromium's center-if-needed, which Playwright's rect scroll uses: a box
- * wholly out is centred, a box partly out goes to its closest edge, start
- * unless it is smaller than the view and past its end or larger and short
- * of it. Any element with a box counts, a zero-sized or `visibility:
- * hidden` one included; a `display: contents` element counts by the boxes
- * of its contents. Not yet while nothing lays out a box (it may appear) or
- * the box moves.
+ * Chromium's center-if-needed (`alignment` in `dom.ts`). Any element with a
+ * box counts, a zero-sized or `visibility: hidden` one included; a
+ * `display: contents` element counts by the boxes of its contents. Not yet
+ * while nothing lays out a box (it may appear) or the box moves. Answers
+ * the box the element ends with in its document's viewport, which the
+ * document of a frame holding it is scrolled for (`scrollBoxIntoView`).
  */
-export const scrollIntoViewIfNeeded = withDom(async (dom, element: Element): Promise<Outcome> => {
+export const scrollIntoViewIfNeeded = withDom(async (dom, element: Element): Promise<Outcome<{ box: Box }>> => {
   if (!element.isConnected) return { kind: 'detached' };
   const bounds = (): DOMRect | null => {
     const rects = dom.rectsOf(element);
@@ -168,20 +167,63 @@ export const scrollIntoViewIfNeeded = withDom(async (dom, element: Element): Pro
   const container = dom.clippers(element).some((clipper) => outside(clipper.bounds));
   const { width, height } = dom.viewport();
   if (container || outside({ left: 0, top: 0, right: width, bottom: height })) {
-    const axis = (start: number, end: number, view: number): ScrollLogicalPosition => {
-      if (start >= 0 && end <= view) return 'nearest';
-      if (end <= 0 || start >= view) return 'center';
-      return (end > view && end - start < view) || (end < view && end - start > view) ? 'end' : 'start';
-    };
     dom.scrollTarget(element)?.scrollIntoView(container
       ? { block: 'nearest', inline: 'nearest', behavior: 'instant' }
-      : { block: axis(rect.top, rect.bottom, height), inline: axis(rect.left, rect.right, width), behavior: 'instant' });
-    // Firefox keeps a fractional page scroll offset in layout but paints at a whole-pixel one, so a box's pixels would sit
-    // a pixel from where it reports: land on whole device pixels, as Chromium does. Down, so a fractional end still fits.
-    const whole = (offset: number): number => Math.floor(offset * devicePixelRatio) / devicePixelRatio;
-    if (whole(scrollX) !== scrollX || whole(scrollY) !== scrollY) scrollTo({ left: whole(scrollX), top: whole(scrollY), behavior: 'instant' });
+      : { block: dom.alignment(rect.top, rect.bottom, height), inline: dom.alignment(rect.left, rect.right, width), behavior: 'instant' });
+    dom.landOnPixels();
   }
-  return { kind: 'ok' };
+  const end = bounds() ?? rect;
+  return { kind: 'ok', box: { x: end.x, y: end.y, width: end.width, height: end.height } };
+});
+
+/**
+ * Scrolls the document of a frame element for `box`, the box of a node
+ * inside the frame as it shows in this document's viewport, as
+ * `scrollIntoViewIfNeeded` scrolls for an element's own: where some of it
+ * is out of what an ancestor that clips the frame shows (`clippers` in
+ * `dom.ts`), to its nearest edge there, then where some of it is out of
+ * the viewport, by `alignment`. No element has that box, so each scroller
+ * is moved by a distance, and the box by as far as the frame moved with
+ * it. The distance is the viewport's: a scroller a transform scales moves
+ * the box by the scaled distance. Answers the box where it ends.
+ */
+export const scrollBoxIntoView = withDom((dom, frame: Element, box: Box): Box => {
+  let { x, y } = box;
+  /** Runs `scroll`, then moves the box by as far as the frame moved under it. */
+  const scrolled = (scroll: () => void): void => {
+    const before = frame.getBoundingClientRect();
+    scroll();
+    const after = frame.getBoundingClientRect();
+    x += after.x - before.x;
+    y += after.y - before.y;
+  };
+  /** How far to scroll for the span `start` to `end` to lie in the one `from` to `to` by its nearest edge: nothing for a span inside it or over both its ends. */
+  const toNearestEdge = (start: number, end: number, from: number, to: number): number => {
+    if ((start >= from && end <= to) || (start <= from && end >= to)) return 0;
+    return (start < from) === (end - start <= to - from) ? start - from : end - to;
+  };
+  for (const clipper of dom.clippers(frame)) {
+    const left = clipper.x ? toNearestEdge(x, x + box.width, clipper.edge.left, clipper.edge.right) : 0;
+    const top = clipper.y ? toNearestEdge(y, y + box.height, clipper.edge.top, clipper.edge.bottom) : 0;
+    if (left !== 0 || top !== 0) scrolled(() => clipper.element.scrollBy({ left, top, behavior: 'instant' }));
+  }
+  const view = dom.viewport();
+  /** How far to scroll the viewport, `length` long on one axis, for the span `start` to `end` to lie where `alignment` puts it. */
+  const toAlignment = (start: number, end: number, length: number): number => {
+    const to = dom.alignment(start, end, length);
+    if (to === 'nearest') return 0;
+    if (to === 'center') return (start + end - length) / 2;
+    return to === 'start' ? start : end - length;
+  };
+  const left = toAlignment(x, x + box.width, view.width);
+  const top = toAlignment(y, y + box.height, view.height);
+  if (left !== 0 || top !== 0) {
+    scrolled(() => {
+      scrollBy({ left, top, behavior: 'instant' });
+      dom.landOnPixels();
+    });
+  }
+  return { x, y, width: box.width, height: box.height };
 });
 
 /** Where a wheel reaches an element, with the box it read when nothing blocked it. */

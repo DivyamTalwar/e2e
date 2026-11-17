@@ -31,14 +31,18 @@ export interface Area {
   readonly bottom: number;
 }
 
+/** A box in its document's viewport, by its top-left corner and its size: a type alias, so it crosses to the page as an argument. */
+export type Box = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+
 /**
- * An ancestor that clips an element's boxes: the box it clips them to
- * (`clipEdge` in `createDom`), its border box, and the axes it clips on.
- * The border box is as the browser reports it, so a box flush with it
- * compares equal to it, where the edge is a sum that may differ from such
- * a box by a rounding of floats.
+ * An ancestor that clips an element's boxes: the element, the box it clips
+ * them to (`clipEdge` in `createDom`), its border box, and the axes it
+ * clips on. The border box is as the browser reports it, so a box flush
+ * with it compares equal to it, where the edge is a sum that may differ
+ * from such a box by a rounding of floats.
  */
 interface Clipper {
+  readonly element: Element;
   readonly edge: Area;
   readonly bounds: DOMRect;
   readonly x: boolean;
@@ -244,7 +248,7 @@ export function createDom(key: string) {
       });
       if (x === 'visible' && y === 'visible') continue;
       const bounds = at.getBoundingClientRect();
-      found.push({ edge: clipEdge(at, style, bounds, x === 'clip' || y === 'clip'), bounds, x: x !== 'visible', y: y !== 'visible' });
+      found.push({ element: at, edge: clipEdge(at, style, bounds, x === 'clip' || y === 'clip'), bounds, x: x !== 'visible', y: y !== 'visible' });
     }
     return found;
   };
@@ -290,6 +294,31 @@ export function createDom(key: string) {
     const y = rect.top + rect.height / 2;
     if (area !== null && x >= area.left && x <= area.right && y >= area.top && y <= area.bottom) return;
     (scrollTarget(element) ?? element).scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+  };
+
+  /**
+   * Where Chromium's center-if-needed, which Playwright's rect scroll uses,
+   * puts a box spanning `start` to `end` on one axis of a view `view` long:
+   * `nearest`, where it is, for one inside the view, `center` for one
+   * wholly out, and its closest edge for one partly out, `start` unless it
+   * is smaller than the view and past its end or larger and short of it.
+   */
+  const alignment = (start: number, end: number, view: number): ScrollLogicalPosition => {
+    if (start >= 0 && end <= view) return 'nearest';
+    if (end <= 0 || start >= view) return 'center';
+    return (end > view && end - start < view) || (end < view && end - start > view) ? 'end' : 'start';
+  };
+
+  /**
+   * Lands the page's scroll offset on whole device pixels, as Chromium
+   * does; down, so a fractional end still fits. Firefox keeps a fractional
+   * offset in layout but paints at a whole-pixel one, so a box's pixels
+   * would sit a pixel from where it reports.
+   */
+  const landOnPixels = (): void => {
+    /** `offset` on the whole device pixel at or before it. */
+    const whole = (offset: number): number => Math.floor(offset * devicePixelRatio) / devicePixelRatio;
+    if (whole(scrollX) !== scrollX || whole(scrollY) !== scrollY) scrollTo({ left: whole(scrollX), top: whole(scrollY), behavior: 'instant' });
   };
 
   /** Not yet, for an element with no box a person could see. */
@@ -407,7 +436,7 @@ export function createDom(key: string) {
     setter?.call(element, state);
   };
 
-  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, inTopLayer, clippers, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, keepEvent, fireEdit, setState };
+  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, inTopLayer, clippers, clipped, visibleArea, scrollIfClipped, alignment, landOnPixels, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, keepEvent, fireEdit, setState };
 }
 
 /** The shared DOM helpers, as a page function takes them. */

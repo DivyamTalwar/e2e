@@ -19,16 +19,16 @@ import {
   type ViewportPoint,
   type ViewportSize,
 } from '@e2e-dev/core/engine';
-import { actionPoint, boxSize, elementShown, hitBlocker, labelStandIn, scrollFrameIntoView, scrollIntoViewIfNeeded, wheelAim } from '../in-page/actionability.ts';
+import { actionPoint, boxSize, elementShown, hitBlocker, labelStandIn, scrollBoxIntoView, scrollFrameIntoView, scrollIntoViewIfNeeded, wheelAim } from '../in-page/actionability.ts';
 import { nextFrame } from '../in-page/document.ts';
-import type { Outcome } from '../in-page/dom.ts';
+import type { Box, Outcome } from '../in-page/dom.ts';
 import { checkState, elementAttached, fileInput, fileInputTakes, fill as fillElement, focus, focusTakesKeys, insertFocusedText, selectOption, setFileBytes, type FileBytes } from '../in-page/edits.ts';
 import { armHitInterceptor, hitInterceptorResult } from '../in-page/hit-interceptor.ts';
 import { SECURE_FIELD_SELECTOR } from '../in-page/read-node.ts';
 import { chromiumDrag, firefoxDrag } from './drag.ts';
 import { message, unlessRefused, unlessStale } from '../errors.ts';
 import type { NodeTarget } from './frames.ts';
-import { invert, project } from './projection.ts';
+import { invert, project, projectBox } from './projection.ts';
 import { ROOT_NODE_ID, stillLocated } from './observe.ts';
 import { CONTENT_TYPES } from './content-types.ts';
 import { type ClickOptions, clickSources, moveSources, nearestPixel, swipeDistance, swipeSources, typeSource, wheelDelta } from './input-sources.ts';
@@ -47,6 +47,9 @@ const SCROLL_ALIGNMENTS = [
   { block: 'center', inline: 'center' },
   { block: 'start', inline: 'start' },
 ] as const;
+
+/** Not yet, for an element in a frame no point is carried through. */
+const UNMAPPED_FRAME: Outcome<never> = { kind: 'not-yet', reason: 'element is in a frame that lays out no box, or whose transform the browser maps no point through' };
 
 /**
  * One action on a located or observed node; a `swipe` on the observation
@@ -302,12 +305,41 @@ async function clickControl(session: BidiSession, target: NodeTarget, deadline: 
   return click(session, { element: label, context: target.context }, deadline, options, signal, true);
 }
 
-/** Scrolls the element, and each frame holding it, into view as Playwright does, polling while it lays out no box or moves. */
+/**
+ * Scrolls the element into view as Playwright does, polling while it lays
+ * out no box or moves: each frame holding it (`scrollFrames`), the element
+ * in its own document, then the document of each of those frames for the
+ * element's box (`scrollThroughFrames`), which a frame larger than the view
+ * around it leaves out of that view.
+ */
 async function scrollIntoView(session: BidiSession, target: NodeTarget, deadline: Deadline, signal: AbortSignal): Promise<void> {
   await settle(deadline, signal, async () => {
     await scrollFrames(session, target);
-    return session.page.run(scrollIntoViewIfNeeded, [target.element], target.context);
+    const scrolled = await session.page.run(scrollIntoViewIfNeeded, [target.element], target.context);
+    return scrolled.kind === 'ok' ? scrollThroughFrames(session, target.context, scrolled.box) : scrolled;
   });
+}
+
+/**
+ * Scrolls the document of each frame holding `context` for `box`, a box in
+ * the viewport of the document `context` shows, innermost first
+ * (`scrollBoxIntoView`): the box is carried through the frame into that
+ * document's viewport, as the bounds of where its corners land, and the
+ * document answers where it ends. One read of the frames' maps serves
+ * every level: a document's scroll moves only the frames it holds, whose
+ * maps the box has passed through by then. Not yet while a frame on the
+ * way lays out no box, or the browser reports no quad for a turned one.
+ */
+async function scrollThroughFrames(session: BidiSession, context: string, box: Box): Promise<Outcome> {
+  const chain = session.frames.chain(context);
+  if (chain.length === 0) return { kind: 'ok' };
+  const maps = await session.frames.frameMaps(session.connection, context, session.browser.traits);
+  if (maps === null) return UNMAPPED_FRAME;
+  let at = box;
+  for (const [index, frame] of [...chain.entries()].toReversed()) {
+    at = await session.page.run(scrollBoxIntoView, [frame.element, projectBox(maps[index]!, at)], frame.context);
+  }
+  return { kind: 'ok' };
 }
 
 /**
@@ -384,9 +416,7 @@ function pointerAim(session: BidiSession, target: NodeTarget, enabled: boolean, 
     const chain = session.frames.chain(target.context);
     const maps = await session.frames.frameMaps(session.connection, target.context, session.browser.traits);
     const inverses = maps?.map(invert);
-    if (maps === null || inverses === undefined || inverses.includes(undefined)) {
-      return { kind: 'not-yet', reason: 'element is in a frame that lays out no box, or whose transform the browser maps no point through' };
-    }
+    if (maps === null || inverses === undefined || inverses.includes(undefined)) return UNMAPPED_FRAME;
     const point = maps.reduceRight((at, map) => project(map, at), { x: local.x, y: local.y });
     const top = { x: Math.round(point.x), y: Math.round(point.y) };
     const inDocuments: { x: number; y: number }[] = [];
