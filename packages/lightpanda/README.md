@@ -31,10 +31,9 @@ or `lightpanda` on `PATH`, `~/.lightpanda`, or `~/.local/bin`.
 `stylesheet`; `args` adds any other `serve` flag. A server already running,
 such as the Docker image in CI, is a `web({ connect })` target instead.
 
-Lightpanda has no layout engine: locators, assertions, and agent steps on
-the accessibility tree work, while drags, dialogs, downloads, scrolling,
-and session restore do not. The full list lives at
-[e2e.com/docs/integrations/lightpanda](https://e2e.com/docs/integrations/lightpanda).
+The web engine cannot open a page in Lightpanda: a test that opens one
+times out. The reason is at
+[e2e.com/docs/integrations/lightpanda](https://e2e.com/docs/integrations/lightpanda#what-does-not-work).
 
 ## License
 
