@@ -24,7 +24,7 @@ import { checkState, elementAttached, fileInput, fileInputTakes, fill as fillEle
 import { armHitInterceptor, hitInterceptorResult } from '../in-page/hit-interceptor.ts';
 import { SECURE_FIELD_SELECTOR } from '../in-page/read-node.ts';
 import { chromiumDrag, firefoxDrag } from './drag.ts';
-import { unlessStale } from '../errors.ts';
+import { message, unlessStale } from '../errors.ts';
 import type { NodeTarget } from './frames.ts';
 import { invert, project } from './projection.ts';
 import { ROOT_NODE_ID, stillLocated } from './observe.ts';
@@ -438,7 +438,7 @@ async function uploadKind(files: readonly string[]): Promise<boolean> {
     try {
       return (await stat(file)).isDirectory();
     } catch (cause) {
-      throw new TestError('INVALID_ARGUMENT', cause instanceof Error ? cause.message : String(cause));
+      throw new TestError('INVALID_ARGUMENT', message(cause));
     }
   }));
   const directories = kinds.filter(Boolean).length;
