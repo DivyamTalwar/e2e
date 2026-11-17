@@ -205,6 +205,15 @@ describe('browser.route decisions', () => {
     }
   });
 
+  it.each(['networkIdle', 'commit', null])('refuses goto with waitUntil %j before it navigates', async (waitUntil) => {
+    await expect(browser.goto(`${origin}/api/quote`, { waitUntil: waitUntil as never })).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT',
+      message: `browser.goto({ waitUntil }) must be "load", "domcontentloaded", or "networkidle", got ${JSON.stringify(waitUntil)}`,
+    });
+    expect(hits.get('/api/quote')).toBeUndefined();
+    expect(await browser.url()).toBe(`${origin}/`);
+  });
+
   it('rejects an invalid download count before running the trigger', async () => {
     let calls = 0;
     await expect(browser.waitForDownloads(async () => { calls += 1; }, { count: 0 })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });

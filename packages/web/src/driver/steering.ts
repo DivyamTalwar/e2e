@@ -6,8 +6,17 @@ import { isStale } from '../errors.ts';
 import { historyEntry, readyState } from '../in-page/document.ts';
 import type { BidiSession } from './session.ts';
 
+/** The `waitUntil` values the `browser` fixture takes. */
+export const WAIT_UNTIL = ['load', 'domcontentloaded', 'networkidle'] as const;
+
 /** How a navigation waits: the `waitUntil` the `browser` fixture takes. */
-export type WaitUntil = 'load' | 'domcontentloaded' | 'commit' | 'networkidle';
+export type WaitUntil = (typeof WAIT_UNTIL)[number];
+
+/** The document state a navigation waits for. */
+type Readiness = 'complete' | 'interactive';
+
+/** The document state each `waitUntil` waits for; `networkidle` then waits for the network too. */
+const READINESS: Readonly<Record<WaitUntil, Readiness>> = { load: 'complete', domcontentloaded: 'interactive', networkidle: 'complete' };
 
 /** Pause between reads of a history navigation that has not landed yet. */
 const POLL_MS = 50;
@@ -23,9 +32,8 @@ export function goto(session: BidiSession, url: string, waitUntil: WaitUntil, si
     const context = await session.ensureContext();
     await session.userContext.visit(url);
     if (waitUntil === 'networkidle') await session.network.track();
-    const wait = waitUntil === 'load' || waitUntil === 'networkidle' ? 'complete' : waitUntil === 'domcontentloaded' ? 'interactive' : 'none';
     signal.throwIfAborted();
-    await navigateOrDownload(session, context, url, wait, signal);
+    await navigateOrDownload(session, context, url, READINESS[waitUntil], signal);
     if (waitUntil === 'networkidle') await session.network.waitForIdle(signal);
   });
 }
@@ -41,7 +49,7 @@ export function goto(session: BidiSession, url: string, waitUntil: WaitUntil, si
  * from waits for that announcement, up to `DOWNLOAD_HANDOFF_MS`, and an
  * abort that gets none stands.
  */
-async function navigateOrDownload(session: BidiSession, context: string, url: string, wait: 'complete' | 'interactive' | 'none', signal: AbortSignal): Promise<void> {
+async function navigateOrDownload(session: BidiSession, context: string, url: string, wait: Readiness, signal: AbortSignal): Promise<void> {
   const connection = session.connection;
   const target = URL.canParse(url) ? new URL(url).href : url;
   let navigation: string | undefined;
@@ -107,8 +115,7 @@ const SUPERSEDED = /navigation canceled by concurrent navigation/i;
  * replaced ours (a client redirect), which Playwright's `goto` follows as
  * the one it waits for. A document still being replaced reads again.
  */
-async function documentReady(session: BidiSession, context: string, wait: 'complete' | 'interactive' | 'none', signal: AbortSignal): Promise<void> {
-  if (wait === 'none') return;
+async function documentReady(session: BidiSession, context: string, wait: Readiness, signal: AbortSignal): Promise<void> {
   for (;;) {
     signal.throwIfAborted();
     const state = await session.page.run(readyState, [], context).catch((cause: unknown) => {

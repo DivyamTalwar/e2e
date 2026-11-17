@@ -1,12 +1,22 @@
 /**
- * The `browser` fixture's argument checks: cookie targets, cookie filters,
- * emulated media, and download counts.
+ * The `browser` fixture's argument checks: a navigation's `waitUntil`, cookie
+ * targets, cookie filters, emulated media, and download counts.
  */
 
 import { ConfigurationError, obj, rejectUnknownOptions, TestError, type EngineFixtureContext } from '@e2e-dev/core/engine';
 import type { Browser, CookieFilter } from './types.ts';
 import type { CookieTarget } from '../driver/cookies.ts';
-import { MEDIA_KEYS, mediaProblem, type WebMedia } from '../options.ts';
+import { WAIT_UNTIL, type WaitUntil } from '../driver/steering.ts';
+import { choiceProblem, MEDIA_KEYS, mediaProblem, type WebMedia } from '../options.ts';
+
+/** The `waitUntil` `browser.goto` was given, `load` when it names none; refused unless it is one a navigation waits for. */
+export function requireWaitUntil(options: Parameters<Browser['goto']>[1]): WaitUntil {
+  const waitUntil = options?.waitUntil;
+  if (waitUntil === undefined) return 'load';
+  const problem = choiceProblem('browser.goto({ waitUntil })', WAIT_UNTIL, waitUntil);
+  if (problem !== undefined) throw new TestError('INVALID_ARGUMENT', problem);
+  return waitUntil;
+}
 
 /**
  * Each cookie of `browser.setCookies` with where it lands. The harness's URL

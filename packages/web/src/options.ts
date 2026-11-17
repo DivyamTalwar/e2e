@@ -192,15 +192,21 @@ export const MEDIA_KEYS = Object.keys(MEDIA_VALUES) as readonly (keyof WebMedia)
 
 /**
  * Why one feature's value is refused, naming it the way `where` does; undefined
- * for a value the browser emulates, and for an unset one. Config and tests run
- * as JavaScript, so the types alone are no guard.
+ * for a value the browser emulates, and for an unset one.
  */
 export function mediaProblem(where: (key: keyof WebMedia) => string, key: keyof WebMedia, value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  const allowed: readonly string[] = MEDIA_VALUES[key];
+  return value === undefined ? undefined : choiceProblem(where(key), MEDIA_VALUES[key], value);
+}
+
+/**
+ * Why `value` is refused where `where` takes one of `allowed`, naming them
+ * all; undefined for one of them. Config and tests run as JavaScript, so the
+ * types alone are no guard.
+ */
+export function choiceProblem(where: string, allowed: readonly string[], value: unknown): string | undefined {
   if (typeof value === 'string' && allowed.includes(value)) return undefined;
   const names = allowed.map((name) => JSON.stringify(name));
-  return `${where(key)} must be ${names.slice(0, -1).join(', ')}${names.length > 2 ? ',' : ''} or ${names.at(-1)}, got ${describe(value)}`;
+  return `${where} must be ${names.slice(0, -1).join(', ')}${names.length > 2 ? ',' : ''} or ${names.at(-1)}, got ${describe(value)}`;
 }
 
 /** The step label of a `browser.emulateMedia` call: the features it sets, read defensively since the label runs before validation. */

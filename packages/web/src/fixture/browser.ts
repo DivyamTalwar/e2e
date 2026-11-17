@@ -38,7 +38,7 @@ import { mediaLabel } from '../options.ts';
 import { evaluateInPage } from '../in-page/evaluation.ts';
 import { documentTitle } from '../in-page/document.ts';
 import { routePatternMatches, routePatternsEqual } from '../driver/route-pattern.ts';
-import { cookieTargets, requireCookieFilter, requireDownloadCount, requireMedia } from './arguments.ts';
+import { cookieTargets, requireCookieFilter, requireDownloadCount, requireMedia, requireWaitUntil } from './arguments.ts';
 import { typeInto } from '../driver/actions.ts';
 import type { OperationBudget } from '../driver/budget.ts';
 import { deleteCookies, readCookies, writeCookies } from '../driver/cookies.ts';
@@ -100,7 +100,8 @@ export function createBrowserFixture(surface: BidiSurface, context: EngineFixtur
   const browser: Omit<Browser, keyof Expectable<BrowserExpectation>> = {
     goto(url, options) {
       const resolved = context.app.resolveUrl(url);
-      return navigate('browser.goto', options, (session, { signal }) => goto(session, resolved, options?.waitUntil ?? 'load', signal));
+      const waitUntil = requireWaitUntil(options);
+      return navigate('browser.goto', options, (session, { signal }) => goto(session, resolved, waitUntil, signal));
     },
     reload: (options) => navigate('browser.reload', options, (session, { signal }) => reload(session, signal)),
     back: (options) => navigate('browser.back', options, (session, { timeoutMs, signal }) => traverse(session, -1, timeoutMs, signal)),
