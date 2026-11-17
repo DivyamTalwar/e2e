@@ -419,6 +419,28 @@ describe('BidiSession tabs', () => {
     expect(resetting.tabs.list()).toEqual([]);
   });
 
+  it('opens the first tab of the user context a reset moved to, never joining one still opening in the old', async () => {
+    const created: (() => void)[] = [];
+    const fake = numbered(new FakeBidi()).on('browsingContext.create', (params) =>
+      new Promise((resolve) => created.push(() => resolve({ result: { context: `tab in ${String(params['userContext'])}` } }))));
+    const resetting = unopened(fake);
+    await resetting.openUserContext(new AbortController().signal);
+    const opening = resetting.ensureContext();
+    await settle();
+    await resetting.replaceUserContext(new AbortController().signal);
+    const first = resetting.ensureContext();
+    await settle();
+    created[0]!();
+    await expect(opening).rejects.toMatchObject({ code: 'NODE_STALE' });
+    const second = resetting.ensureContext();
+    await settle();
+    expect(created).toHaveLength(2);
+    created[1]!();
+    await expect(Promise.all([first, second])).resolves.toEqual(['tab in uc-2', 'tab in uc-2']);
+    expect(fake.commands('browsingContext.create').map((command) => command.params['userContext'])).toEqual(['uc-1', 'uc-2']);
+    expect(closedTabs(fake)).toEqual(['tab in uc-1']);
+  });
+
   it('closes a tab still opening when the attempt closes in the browser’s own user context', async () => {
     const opened = ['first', 'second'];
     const fake = new FakeBidi()

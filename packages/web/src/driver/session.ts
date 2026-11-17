@@ -91,7 +91,7 @@ export class BidiSession {
   readonly artifacts: ArtifactPaths;
   /** The viewport `browser.setViewport` set for the rest of the attempt; the configured one until then. */
   private viewport: ViewportSize | null;
-  /** The attempt's first tab while it opens, which concurrent first uses share. */
+  /** The attempt's first tab while it opens in the user context in use, which concurrent first uses share. */
   private creating: Promise<AttemptTab> | undefined;
   /** The tab the attempt found open and adopted (`existingTab`), which it never closes. */
   private adopted: string | undefined;
@@ -192,12 +192,14 @@ export class BidiSession {
    * Replaces the user context with a clean one, the test's routes and added
    * init scripts carried over (`AttemptUserContext.replace`). Once the new
    * one is in use, the tabs of the old one are released and the network
-   * binds to the new one, before the old one is removed. One whose `signal`
-   * aborted, or that a later replacement or `close` overtook, leaves all of
-   * that as it was.
+   * binds to the new one, before the old one is removed; a first tab still
+   * opening in the old one is no longer shared, so the next first use opens
+   * its own. One whose `signal` aborted, or that a later replacement or
+   * `close` overtook, leaves all of that as it was.
    */
   async replaceUserContext(signal: AbortSignal): Promise<void> {
     await this.userContext.replace(signal, async () => {
+      this.creating = undefined;
       await this.releaseTabs();
       await this.network.bind(this.userContext.id);
     });
@@ -249,10 +251,10 @@ export class BidiSession {
 
   /** The attempt's first tab, which concurrent first uses open once. */
   private firstTab(): Promise<AttemptTab> {
-    this.creating ??= this.createContext().finally(() => {
-      this.creating = undefined;
+    const opening: Promise<AttemptTab> = this.creating ??= this.createContext().finally(() => {
+      if (this.creating === opening) this.creating = undefined;
     });
-    return this.creating;
+    return opening;
   }
 
   /**
