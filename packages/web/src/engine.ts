@@ -25,7 +25,7 @@ import { locate, observe, readStyle } from './driver/observe.ts';
 import { captureState, restoreState } from './driver/state.ts';
 import { goto, reset, traverse } from './driver/steering.ts';
 import { BidiSurface } from './driver/surface.ts';
-import { connectSource, launchSource, leaseSource, type BrowserSource } from './driver/browser-source.ts';
+import { attachSource, connectSource, launchSource, leaseSource, type BrowserSource } from './driver/browser-source.ts';
 import type { WebFixtures } from './fixtures.ts';
 import { createBrowserFixture } from './fixture/browser.ts';
 import { ConfiguredInitScripts } from './init-scripts.ts';
@@ -36,12 +36,21 @@ export function web(options: WebOptions = {}): EngineHandle<WebFixtures> {
 }
 
 /**
- * The web engine for `options`, its browser from `attachTo` when given:
- * `attachBrowser`'s source, whose attempt drives the tab already open in the
- * browser's own user context and leaves both behind, so the target needs no
- * `app.url`. Otherwise the browser comes from what `options` name.
+ * The web engine `attachBrowser` drives the Chromium at `cdpEndpoint` with:
+ * its attempt drives the tab already open in the browser's own user context
+ * and leaves both behind, so the target needs no `app.url`.
  */
-export function createWeb(options: WebOptions, attachTo?: BrowserSource): EngineHandle<WebFixtures> {
+export function attachedWeb(cdpEndpoint: string, options: WebOptions): EngineHandle<WebFixtures> {
+  return createWeb(options, attachSource(cdpEndpoint));
+}
+
+/**
+ * The web engine for `options`, its browser from `attachTo` when given, and
+ * otherwise from what `options` name. Not exported: a project that installs
+ * the package compiles this module's declarations, and a driver type in an
+ * exported signature would bring the whole driver's into them.
+ */
+function createWeb(options: WebOptions, attachTo?: BrowserSource): EngineHandle<WebFixtures> {
   const { browser, provider } = checkWebOptions(options);
   const media = obj({ colorScheme: options.colorScheme, reducedMotion: options.reducedMotion });
   const source = attachTo

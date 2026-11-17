@@ -1,18 +1,59 @@
 /**
  * The `browser` fixture's public types: the browser-shaped deterministic
- * surface this engine contributes, its routes, responses, and the
- * `expect(browser)` matchers, beside the cookie types, re-exported from the
- * driver's cookie jar (`driver/cookies.ts`). They live in this package, not
- * in core, because the harness knows the engine contract and never a
- * platform's fixture shape.
+ * surface this engine contributes, its routes, responses, cookies, dialogs,
+ * and the `expect(browser)` matchers. They live in this package, not in
+ * core, because the harness knows the engine contract and never a platform's
+ * fixture shape. A project that installs the package compiles them, so they
+ * are declared here in full and import nothing from the driver, whose types
+ * name the protocol packages only this workspace installs.
  */
 
 import type { ActionOptions, Expectable, JsonValue, Locator, Screen, TextMatch } from '@e2e-dev/core';
-import type { Cookie, CookieFilter } from '../driver/cookies.ts';
-import type { DialogHandler } from '../driver/dialogs.ts';
 import type { WebMedia } from '../options.ts';
 
-export type { Cookie, CookieFields, CookieFilter } from '../driver/cookies.ts';
+/** What every cookie carries, whichever way it names its site. */
+export interface CookieFields {
+  /** Cookie name. */
+  name: string;
+  /** Cookie value. */
+  value: string;
+  /** Unix timestamp in whole seconds. */
+  expires?: number;
+  /** HttpOnly flag. */
+  httpOnly?: boolean;
+  /** Secure flag. */
+  secure?: boolean;
+  /** SameSite attribute. */
+  sameSite?: 'Strict' | 'Lax' | 'None';
+}
+
+/** `url`, or `domain` with an optional `path`, never both. */
+export type Cookie = CookieFields &
+  (
+    | { url: string; domain?: never; path?: never }
+    | { url?: never; domain: string; path?: string }
+  );
+
+/** Cookie filters are combined; strings match exactly, RegExp matches the field. */
+export interface CookieFilter {
+  name?: string | RegExp;
+  domain?: string | RegExp;
+  path?: string | RegExp;
+}
+
+/** A native dialog as a test's handler sees it. */
+export interface Dialog {
+  /** The native dialog kind, independent of its message. */
+  readonly type: 'alert' | 'confirm' | 'prompt' | 'beforeunload';
+  /** The dialog's text. */
+  readonly message: string;
+  /** Accepts the dialog once. */
+  accept(text?: string): Promise<void>;
+  /** Dismisses the dialog once. */
+  dismiss(): Promise<void>;
+}
+
+export type DialogHandler = 'accept' | 'dismiss' | ((dialog: Dialog) => void | Promise<void>);
 
 /**
  * One of `json`, `body`, or `path`, or none for an empty body. `path` names a

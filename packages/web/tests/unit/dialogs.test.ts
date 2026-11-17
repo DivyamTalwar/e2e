@@ -3,7 +3,8 @@
  * go, and how a failure on the unawaited dialog path reaches the next step.
  */
 
-import { DialogRouter, type Dialog } from '../../src/driver/dialogs.ts';
+import { DialogRouter } from '../../src/driver/dialogs.ts';
+import type { Dialog } from '../../src/fixture/types.ts';
 import { TestError } from '@e2e-dev/core/engine';
 import { describe, expect, it, vi } from 'vitest';
 import { ErrorLatch } from '../../src/errors.ts';

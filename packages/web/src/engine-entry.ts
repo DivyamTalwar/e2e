@@ -20,7 +20,6 @@ export type {
   BrowserRequest,
 } from './provider.ts';
 export type { BrowserName } from './browsers.ts';
-export type { Dialog, DialogHandler } from './driver/dialogs.ts';
 export type {
   Browser,
   BrowserExpectation,
@@ -28,6 +27,8 @@ export type {
   Cookie,
   CookieFields,
   CookieFilter,
+  Dialog,
+  DialogHandler,
   FrameScreen,
   RouteContinueOverrides,
   RouteFulfillResponse,

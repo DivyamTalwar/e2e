@@ -4,39 +4,10 @@
  */
 
 import type { Network, Storage } from 'webdriver-bidi-protocol';
+import type { Cookie, CookieFields, CookieFilter } from '../fixture/types.ts';
 import type { BidiConnection } from './connection.ts';
 import { bytesText } from './network-wire.ts';
 import type { BidiSession } from './session.ts';
-
-/** What every cookie carries, whichever way it names its site. */
-export interface CookieFields {
-  /** Cookie name. */
-  name: string;
-  /** Cookie value. */
-  value: string;
-  /** Unix timestamp in whole seconds. */
-  expires?: number;
-  /** HttpOnly flag. */
-  httpOnly?: boolean;
-  /** Secure flag. */
-  secure?: boolean;
-  /** SameSite attribute. */
-  sameSite?: 'Strict' | 'Lax' | 'None';
-}
-
-/** `url`, or `domain` with an optional `path`, never both. */
-export type Cookie = CookieFields &
-  (
-    | { url: string; domain?: never; path?: never }
-    | { url?: never; domain: string; path?: string }
-  );
-
-/** Cookie filters are combined; strings match exactly, RegExp matches the field. */
-export interface CookieFilter {
-  name?: string | RegExp;
-  domain?: string | RegExp;
-  path?: string | RegExp;
-}
 
 /** One cookie of `browser.setCookies` with where the browser stores it: its domain, its path, and whether it is secure. */
 export interface CookieTarget {

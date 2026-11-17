@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 const DOCS = readFileSync(new URL('../../../../docs/reference/web.mdx', import.meta.url), 'utf8');
 
-const SOURCES = ['../../src/options.ts', '../../src/fixture/types.ts', '../../src/driver/cookies.ts', '../../src/driver/dialogs.ts', '../../src/attach.ts']
+const SOURCES = ['../../src/options.ts', '../../src/fixture/types.ts', '../../src/attach.ts']
   .map((file) => readFileSync(new URL(file, import.meta.url), 'utf8'))
   .join('\n');
 
