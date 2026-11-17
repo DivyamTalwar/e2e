@@ -39,6 +39,7 @@ export function selectChain(dom: Dom, parts: readonly PagePart[]): Element[] | s
       for (const element of root.querySelectorAll('*')) if (element.shadowRoot !== null) collect(element.shadowRoot);
     };
     collect(scope);
+    const scopeElement = scope.nodeType === 1 ? (scope as Element) : null;
     const isScope = (element: Element): boolean => (scope.nodeType === 9 ? element === (scope as Document).documentElement : element === scope);
     const matchesCompound = (element: Element, compound: string): boolean => (compound.includes(':scope') ? isScope(element) : element !== scope) && element.matches(compound);
     const parentOf = (element: Element): Element | null => (element === scope ? null : dom.parentOrHostOf(element));
@@ -75,7 +76,7 @@ export function selectChain(dom: Dom, parts: readonly PagePart[]): Element[] | s
       for (const root of roots) {
         for (const element of root.querySelectorAll(last.compound)) if (matchesBefore(element, chain.length - 1)) into.add(element);
       }
-      if (scope instanceof Element && matchesCompound(scope, last.compound) && matchesBefore(scope, chain.length - 1)) into.add(scope);
+      if (scopeElement !== null && matchesCompound(scopeElement, last.compound) && matchesBefore(scopeElement, chain.length - 1)) into.add(scopeElement);
     }
   };
   const queryXpath = (scope: Document | Element, body: string, into: Set<Element>): void => {

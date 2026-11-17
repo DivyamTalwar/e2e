@@ -132,6 +132,16 @@ describe('selectors as Playwright reads them', () => {
     expect(actual).toEqual(expected);
   });
 
+  it('matches a scope element created in a frame\'s document and moved into the page', async () => {
+    await page.setContent('<iframe></iframe><main></main>');
+    await page.evaluate(() => {
+      const made = document.querySelector('iframe')!.contentDocument!.createElement('article');
+      made.append(document.createElement('button'));
+      document.querySelector('main')!.append(made);
+    });
+    expect({ scope: await count('article >> :scope'), inside: await count('article >> :scope >> button'), under: await count('main >> :scope > article') }).toEqual({ scope: 1, inside: 1, under: 1 });
+  });
+
   it('matches a deep descendant selector in time linear in the DOM', async () => {
     await page.setContent(`${'<div>'.repeat(24)}<span>x</span>${'</div>'.repeat(24)}`);
     const timed = async (selector: string): Promise<{ matches: number; ms: number }> => {
