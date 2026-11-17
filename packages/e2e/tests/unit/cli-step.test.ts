@@ -24,7 +24,7 @@ function gate(holdSteps = true) {
     },
     { now: () => now, holdSteps },
   );
-  const context = (signal = new AbortController().signal): StepHoldContext => ({ signal, show: (prompt) => shown.push(prompt), readScreen: () => Promise.resolve(undefined) });
+  const context = (signal = new AbortController().signal): StepHoldContext => ({ signal, show: (prompt) => shown.push(prompt), readScreen: () => Promise.resolve(undefined), askSession: () => Promise.reject(new Error('nothing attaches here')) });
   /** Holds `held` and reports, after the microtasks drain, whether it was let through. */
   const hold = (held: HeldStep, signal?: AbortSignal) => {
     let released = false;

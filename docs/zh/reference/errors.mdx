@@ -124,12 +124,12 @@ export class AgentError extends Error {
 | `INVALID_GLOB` | 空模式；除 `tests` 排除项开头的一个 `!` 外，首个路径段仍以 `!` 开头（`!!tests/**`、`./!tests/**`）；单独的 `!`；花括号、字符类或扩展 glob；反斜杠分隔符；绝对路径或 `..` 段；结尾的 `/` 或 `.`；不含通配符却指向目录的 `tests` 条目（消息会指出应填写的 glob）；仅指向项目根目录的模式；或不独占整个路径段的 `**` | configuration | 2 |
 | `UNKNOWN_TARGET` | `--target`、`open_session.target` 或 `openHost`（`e2e/runner`）指定了未配置的测试目标 | configuration | 2 |
 | `TARGET_REQUIRED` | `e2e mcp` 或 `openHost`（`e2e/runner`）：配置声明了多个测试目标，但没有指定使用哪一个 | configuration | 2 |
-| `NO_SESSION` | `e2e mcp`：在 `open_session` 之前或会话结束后调用 `call` 或 `tools`（消息会指出原因），或 `call`、`tools`、`close_session` 指定的 `session` ID 未打开或正在关闭 | configuration | 2 |
+| `NO_SESSION` | `e2e mcp`：在 `open_session` 之前或会话结束后调用 `call` 或 `tools`（消息会指出原因），或 `call`、`tools`、`close_session` 指定的 `session` ID 未打开或正在关闭。此外，当服务器目录中的 `e2e run` 没有暂停的测试，或该运行以 `--step` 启动时，`open_session {attach: true}` 也会返回此错误 | configuration | 2 |
 | `SESSION_REQUIRED` | `e2e mcp`：多个会话打开时，调用 `call`、`tools` 或 `close_session` 未提供 `session`。消息会列出这些会话 | configuration | 2 |
 | `ENGINE_IN_USE` | `e2e mcp`：对某个测试目标调用 `open_session`，但其引擎实例正由另一个打开的会话操作，因为配置从所有会话共享的包中获取该实例。请在配置中，或在配置通过路径导入的文件中创建引擎 | configuration | 2 |
 | `ENGINE_NOT_INSTALLED` | `e2e mcp`：`open_session {engine}` 指定的包未安装在项目中、e2e 旁边或 `~/.e2e/engines` 中。消息会给出安装命令 | configuration | 2 |
 | `CONFIG_IN_USE` | `e2e mcp`：`open_session` 使用的配置与已打开会话的配置不同，或在通过 `engine` 打开的会话仍打开时使用配置。凭据和机密值在整个进程范围内解析，因此请使用同一配置打开，或先关闭这些会话 | configuration | 2 |
-| `SESSION_OPEN` | `e2e mcp`：调用 `open_session` 时，每个会话槽位（`--max-sessions`，默认为 4）都已有打开、正在打开或正在关闭的会话，或服务器正在关闭。请先关闭一个会话 | configuration | 2 |
+| `SESSION_OPEN` | `e2e mcp`：调用 `open_session` 时，每个会话槽位（`--max-sessions`，默认为 4）都已有打开、正在打开或正在关闭的会话，或服务器正在关闭，或在另一个会话已附加到同一个暂停的测试时使用了 `attach: true`。请先关闭一个会话 | configuration | 2 |
 | `UNKNOWN_TOPIC` | `e2e mcp`：`e2e://guide/{topic}` 资源指定了技能中不存在的主题。消息会列出可用主题 | configuration | 2 |
 | `UNKNOWN_TOOL` | `e2e mcp`：`call` 或 `tools` 指定了会话目录中不存在的工具。消息会列出目录。引擎未声明的操作动词则使用 `UNSUPPORTED_CAPABILITY` | configuration | 2 |
 | `TEST_AMBIGUOUS` | `e2e mcp`：`open_session` 的 `test` 在会话的测试目标上选中了多个测试。消息会以 `file:line` 列出它们 | configuration | 2 |

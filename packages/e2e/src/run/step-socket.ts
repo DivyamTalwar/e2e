@@ -1,7 +1,8 @@
 /**
  * Defines the socket used by later commands from the same directory
- * (`e2e run --step next`, `rest`, `stop`). It also reads one JSON line. The
- * run handles the socket in `cli/step-control.ts`.
+ * (`e2e run --step next`, `rest`, `stop`) and by `e2e mcp` when it attaches
+ * to a paused test. It also reads one JSON line. The run handles the socket
+ * in `cli/step-control.ts`, and `mcp/attach.ts` connects to it.
  */
 
 import { createHash } from 'node:crypto';

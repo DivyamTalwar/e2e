@@ -101,6 +101,7 @@ open_session {target: "web", headed: true}
 | `test` | string | 否 | 首先运行的一个测试，命名方式与 `e2e run` 的位置参数相同。会话停在测试停止的位置。参阅[运行测试](#running-a-test)。 |
 | `engine` | string 或 object | 否 | 在没有配置文件的目录中指定会话引擎，可以是包名或 `{package, export, options}`。参阅[没有配置时](#without-a-config)。 |
 | `app` | object | 否 | `engine` 会话的被测应用，使用 `url`、`bundleId` 或 `appPath`。 |
+| `attach` | boolean | 否 | 设为 `true` 时，附加到服务器工作目录中某个 `e2e run` 里在 `screen.pause()` 处暂停的测试。不能与其他输入一起使用。参阅[附加到暂停的测试](#attaching-to-a-paused-test)。 |
 
 #### `tools`
 
@@ -429,6 +430,8 @@ open_session {engine: {package: "@e2e-dev/mobile", options: {platform: "ios"}}, 
 
 一个会话是在一个测试目标上的一次尝试。未打开任何会话前调用 `call` 会以 `NO_SESSION` 失败。
 
+[附加到暂停的测试](#attaching-to-a-paused-test)的会话没有时间限制。它的操作会记录在测试的步骤中。
+
 会话会在以下情况下关闭：
 
 - 调用 `close_session`，
@@ -472,6 +475,28 @@ open_session {test: "tests/checkout.e2e.ts:12"}
 | `TEST_AMBIGUOUS` | `test` 选中了多个测试。消息会以 `file:line` 列出它们。 |
 | `SESSION_TEST_UNSUPPORTED` | 测试位于串行组中、从准备测试的 `session` 开始，或以多个智能体运行。 |
 | `COLLECTION_ERROR` | 测试文件收集失败，与 `e2e run` 相同。 |
+
+## 附加到暂停的测试
+
+使用 `open_session {attach: true}`，会话会附加到服务器工作目录（客户端 MCP 配置中的 `cwd`，参阅[配置](#setup)）中某个 `e2e run` 里在 [`screen.pause()`](/reference/screen#screen-pause) 处暂停的测试。之后，无论运行是否有终端，智能体都会在测试暂停的屏幕上，驱动与测试相同的浏览器或设备。
+
+```txt
+open_session {attach: true}
+```
+
+- **哪个测试。** 会话附加到当前暂停的测试。有多个测试暂停时，附加到最先暂停的那个。会话的第一个响应会指出该测试及其暂停所在的行。
+- **工具。** 目录与普通会话相同，但不包含 [`run_code`](#run_code)，因为它只能在未附加的会话中使用；也不包含 `start_recording` 和 `stop_recording`，因为视频由运行录制。通过 `type_secret`，智能体可以填写运行配置中的机密值。
+- **分离。** 当智能体调用 [`close_session`](#close_session)、客户端断开连接或服务器退出时，会话会分离。测试保持暂停，因此智能体可以再次附加。
+- **恢复。** 用户可以在运行的终端中按键，或使用 `e2e run --step next`、`rest` 或 `stop` 恢复测试或停止运行（参阅[暂停测试](/debugging#pause-a-test)）。智能体在运行所在的目录中使用这些命令。随后，会话会在测试的下一行运行之前结束，智能体在下一次暂停时再次附加。之后的 `call` 会以 `NO_SESSION` 失败并说明原因。如果会话未在 [`cleanupTimeout`](/reference/config#cleanuptimeout) 内关闭，测试会在暂停处以 `TEST_TIMEOUT` 失败。
+- **超时。** 会话和暂停的测试都不会超时。但没有终端时，有测试暂停的运行在 30 分钟没有任何活动后会停止（参阅[暂停测试](/debugging#pause-a-test)）。
+- **测试记录的内容。** 附加的会话在测试的步骤、报告和追踪记录页面中显示为暂停处的一个 `session` 步骤，包含它执行的每个操作。会话不会向回放缓存保存任何内容。
+
+| 抛出错误 | 何时发生 |
+| --- | --- |
+| `NO_SESSION` | 服务器目录中的 `e2e run` 没有暂停的测试，或该运行以 `--step` 启动。 |
+| `SESSION_OPEN` | 另一个会话已附加到该暂停的测试。请先关闭另一个会话。 |
+| `INVALID_ARGUMENT` | `attach` 与其他输入一起使用。请只传入 `attach`。 |
+| `CANCELLED` | 在会话附加之前，客户端取消了请求或断开了连接，或服务器关闭。 |
 
 ## 多个会话
 

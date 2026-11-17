@@ -6,7 +6,7 @@
  * its runner code alone.
  */
 
-/** How a session ended: the agent's `close_session`, idleness, its step concluding (the TTL), or the server going away. */
+/** How a session ended: the agent's `close_session`, idleness, its step concluding (the TTL) or its paused test resuming, or the server going away. */
 export type SessionEndedBy = 'agent' | 'idle' | 'step' | 'server';
 
 /** One session, from `open_session` to its close or failed open. */

@@ -81,6 +81,7 @@ describe('SessionHost', { timeout: 60_000 }, () => {
    */
   const host = (engine: () => FakeEngineHandle, options: HostOptions = {}) =>
     new SessionHost({
+      cwd: dir,
       locateConfig: (requested) => path.join(dir, requested ?? 'e2e.config.ts'),
       loadConfig: async (configPath) => {
         await options.loaded;

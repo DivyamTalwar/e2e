@@ -336,7 +336,9 @@ Next: e2e run --step next to resume the test, or e2e run --step stop to end the 
 
 测试再次暂停或运行结束时，你会收到响应。运行结束时，你会收到 `The run has ended.` 和本次运行的退出码。每次响应包含的内容见[无终端时单步执行测试](#step-through-a-test-without-a-terminal)。
 
-- 暂停时间不计入任何超时。但没有终端时，如果暂停 30 分钟且未收到命令，运行会停止。
+你的编码智能体可以通过 [MCP 服务器](/mcp-server)，使用 `open_session {attach: true}` 驱动暂停的应用。参阅[附加到暂停的测试](/reference/mcp#attaching-to-a-paused-test)。
+
+- 暂停时间不计入任何超时。但没有终端时，如果在暂停处 30 分钟没有任何活动，运行会停止。活动是指一条命令，或来自已附加会话的一次调用。
 - 每次尝试都会暂停测试，包括重试和准备测试。
 - 有多个工作进程时，暂停会按从早到晚的顺序逐个显示，其他工作进程继续运行。
 - 请在 [`beforeEach`](/reference/test#beforeeach) 钩子、[测试夹具](/fixtures)的准备阶段或测试体中使用 `await` 调用 `screen.pause()`。在其他位置调用时会发生什么，见 [`screen.pause()`](/reference/screen#screen-pause)。

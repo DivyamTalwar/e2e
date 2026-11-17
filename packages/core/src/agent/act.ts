@@ -24,6 +24,7 @@ import { join } from 'node:path';
 import { resolveVision } from '../config/agent.ts';
 import { ConfigurationError } from '../internal/errors.ts';
 import { withAbort, withTimeout } from '../internal/time.ts';
+import type { SourceLocation } from '../internal/source.ts';
 import type { ActionHook, ActOptions, AssertOptions, BeforeActionHook, ActResult, AgentErrorCode, JsonValue, ModelInstance, Secret, VisionMode } from '../types.ts';
 import { AgentError, CATEGORY_BY_CODE, toAgentError } from './error.ts';
 import { redactParams, validateActOptions, validateInstruction, validateParams, validateVerdict } from './act-validation.ts';
@@ -76,6 +77,8 @@ export interface DispatchSpec {
   readonly onAction?: ActionHook | undefined;
   /** Act only: the test's hook before each action. */
   readonly onBeforeAction?: BeforeActionHook | undefined;
+  /** The source line to record for a step opened outside the test. */
+  readonly source?: SourceLocation | undefined;
 }
 
 /** Runs one `agent.act()` call as a harness-dispatched executor step. */
@@ -196,7 +199,7 @@ export async function dispatchAgentStep(
     } finally {
       dispatch.finish();
     }
-  }, { verifies: spec.kind === 'assert', agent: agent.name });
+  }, { verifies: spec.kind === 'assert', agent: agent.name, source: spec.source });
 }
 
 /**

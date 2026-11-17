@@ -15,6 +15,8 @@ import type { DebugSnapshot } from '@e2e-dev/core/lib/internal/debug';
 import type { SerializedError } from '@e2e-dev/core/lib/internal/errors';
 import type { AttemptRecord, ResultRecord, RunError, SerialAttemptRecord, SerialGroupRecord, SerialMemberRecord, WireResultRecord } from '@e2e-dev/core/lib/run/records';
 import type { SerialAttemptStart } from '../serial.ts';
+import type { McpToolResult } from '../../mcp/tools.ts';
+import type { AttachRequest } from '../../mcp/wire.ts';
 import type { HeldStep } from '../step-hold.ts';
 import type { StepProgress } from '@e2e-dev/core/lib/run/steps';
 
@@ -156,6 +158,18 @@ export interface ScreenRequestMessage {
   readonly requestId: string;
 }
 
+/**
+ * A request for the session attached to the pause named by `holdId`.
+ * The worker answers with `session-reply`. It handles the request right
+ * away, like `step-release`, in the unit paused there.
+ */
+export interface SessionRequestMessage {
+  readonly type: 'session-request';
+  readonly holdId: string;
+  readonly requestId: string;
+  readonly request: AttachRequest;
+}
+
 export type MainToWorker =
   | RunUnitMessage
   | InterruptMessage
@@ -164,6 +178,7 @@ export type MainToWorker =
   | PingMessage
   | StepReleaseMessage
   | ScreenRequestMessage
+  | SessionRequestMessage
   | ContinueMessage;
 
 export interface ReadyMessage {
@@ -280,6 +295,12 @@ export interface ScreenReplyMessage {
   readonly screen?: string;
 }
 
+/** The reply to `session-request`, with a result or an error if the pause ended. */
+export type SessionReplyMessage = { readonly type: 'session-reply'; readonly requestId: string } & (
+  | { readonly result: McpToolResult }
+  | { readonly error: SerializedError }
+);
+
 /** The hold `holdId` names ended without a release: its step was abandoned, or its attempt ended. */
 export interface StepCancelMessage {
   readonly type: 'step-cancel';
@@ -390,6 +411,7 @@ export type WorkerToMain =
   | StepHoldMessage
   | StepCancelMessage
   | ScreenReplyMessage
+  | SessionReplyMessage
   | OutputMessage
   | NoticeMessage
   | ResultMessage

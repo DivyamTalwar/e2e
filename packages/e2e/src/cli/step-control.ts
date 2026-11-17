@@ -10,16 +10,19 @@
  * directory only this user can open, keyed by the working directory, so one
  * directory has one stepped run at a time. A run without `--step` starts
  * listening on the same socket at its first `screen.pause()`. The commands
- * can then resume the test.
+ * can then resume the test, and `e2e mcp` can attach a session to it
+ * (`mcp/attach.ts`).
  */
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
+import { createInterface } from 'node:readline';
 import { setTimeout as sleep } from 'node:timers/promises';
 import picocolors from 'picocolors';
 import { z } from 'zod';
 import { classifyError, codedMessage, ConfigurationError, errorMessage, exitCodeForCategory } from '@e2e-dev/core/lib/internal/errors';
+import { AttachCall, AttachStart, type AttachReply, type AttachRequest } from '../mcp/wire.ts';
 import { bounded } from '../report/format.ts';
 import { stepLine, stepPromptText } from '../report/list-steps.ts';
 import type { RunEventSink } from '../run/events.ts';
@@ -246,11 +249,13 @@ function answerWaiting(waiting: Map<net.Socket, string>, reply: StepReply, sent:
 }
 
 /**
- * Reads the first request on each connection and sends it to `step`. A
- * connection that sends anything else is closed.
+ * Reads the first request on each connection. Commands go to `step`, while
+ * attach requests go to `attach`, which reads the later lines. A connection
+ * that sends anything else is closed.
  */
 function commandServer(handle: {
   readonly step: (client: net.Socket, request: z.infer<typeof StepRequest>) => void;
+  readonly attach: (client: net.Socket) => void;
 }): net.Server {
   return net.createServer((client) => {
     let received = '';
@@ -265,10 +270,14 @@ function commandServer(handle: {
       }
 
       client.off('data', onData);
-      const request = parseLine(received.slice(0, end), StepRequest);
+      const request = parseLine(received.slice(0, end), z.union([StepRequest, AttachStart]));
 
       if (request === undefined) {
         client.destroy();
+      } else if ('attach' in request) {
+        // Put back what came after the first line for the session's reader.
+        client.unshift(received.slice(end + 1));
+        handle.attach(client);
       } else {
         handle.step(client, request);
       }
@@ -387,7 +396,8 @@ export async function serveSteps(options: RunOptions, signals: SignalLadder, add
     answerSoon();
   };
 
-  const server = commandServer({ step: handle });
+  // A session can be attached only to a run without `--step`.
+  const server = commandServer({ step: handle, attach: (client) => client.destroy() });
   await claim(server, address, ALREADY_GOING);
 
   const beforeStep: BeforeStep = (step, context) =>
@@ -452,6 +462,9 @@ export async function serveSteps(options: RunOptions, signals: SignalLadder, add
  * - From the same directory, `e2e run --step next` and `rest` resume the
  *   shown test. `stop` stops the run, as `q` does. The command returns at
  *   the next pause or when the run ends.
+ * - One `e2e mcp` session can attach to the shown pause with
+ *   `open_session {attach: true}`. It can drive the paused test's app until
+ *   it detaches or the test resumes.
  * - The run claims the directory's socket (`stepAddress`) at its first
  *   pause, so a run that never pauses leaves it free. It closes the socket
  *   when the run ends.
@@ -461,7 +474,7 @@ export async function serveSteps(options: RunOptions, signals: SignalLadder, add
  * - Pauses from several workers are shown one at a time, oldest first. The
  *   other workers continue.
  * - Without a terminal, each pause is printed in the run's output. The run
- *   stops after 30 minutes at a pause with no command.
+ *   stops after 30 minutes at a pause with no command or attached call.
  */
 export async function servePauses(
   options: RunOptions & { readonly processOutput: RunnerOutput },
@@ -486,8 +499,9 @@ export async function servePauses(
   // Print beside the list reporter's lines. Keep stdout free for reporters that use it.
   const print = (line: string): void => options.processOutput.printLine(line);
   /**
-   * Stops the run if nobody acts on a pause, as with a held step. A terminal
-   * pause has no idle limit.
+   * Stops the run if nobody acts on a pause, as with a held step. A call from
+   * an attached session resets the timer. A terminal pause doesn't have an
+   * idle limit.
    */
   const restartIdle = (): void => {
     clearTimeout(idle);
@@ -495,6 +509,107 @@ export async function servePauses(
     if (stdin === undefined && shown !== undefined) {
       idle = setTimeout(stop, IDLE_STOP_MS);
     }
+  };
+  /** The worker request handler for each pause waiting at the gate. */
+  const holds = new Map<HeldStep, StepHoldContext['askSession']>();
+  /** The attached session and the pause it belongs to. */
+  let attached: { readonly step: HeldStep; readonly hangUp: () => void } | undefined;
+  /**
+   * Attaches a session to the shown pause. Its requests go straight to the
+   * worker with the paused test. The worker answers them in order, so the
+   * next session opens after the last one closes.
+   */
+  const attach = (client: net.Socket): void => {
+    const step = shown;
+    const relay = step === undefined ? undefined : holds.get(step);
+
+    if (step === undefined || relay === undefined) {
+      client.end(
+        `${JSON.stringify({
+          error: {
+            code: 'NO_SESSION',
+            message: 'no test is paused in this directory right now. Attach once a test is paused at screen.pause()',
+          },
+        } satisfies AttachReply)}\n`,
+      );
+
+      return;
+    }
+
+    if (attached !== undefined) {
+      client.end(
+        `${JSON.stringify({
+          error: { code: 'SESSION_OPEN', message: 'another session is attached to this paused test. Close the other session first' },
+        } satisfies AttachReply)}\n`,
+      );
+
+      return;
+    }
+
+    /** A promise that settles when every answer so far is written. */
+    let written: Promise<void> = Promise.resolve();
+    const lines = createInterface({ input: client });
+    // A socket error is emitted again here. Without a listener it would end the run.
+    lines.on('error', () => undefined);
+
+    const session = {
+      step,
+      // Hang up after the answers to calls sent before the test resumed.
+      // The run waits for the connection to close, so its last answer is sent.
+      hangUp: (): void => {
+        sent.push(new Promise((resolve) => client.once('close', resolve)));
+        void written.then(() => client.end());
+      },
+    };
+
+    attached = session;
+    /**
+     * Writes one answer after the answers before it, since the session
+     * matches answers to its calls by order. Answers after the client
+     * hangs up are dropped.
+     */
+    const answer = (line: AttachReply | Promise<AttachReply>): void => {
+      written = written
+        .then(() => line)
+        .then((reply) => {
+          if (client.writable) {
+            client.write(`${JSON.stringify(reply)}\n`);
+          }
+        });
+    };
+    /** Sends one request to the worker. */
+    const send = (request: AttachRequest): void => {
+      restartIdle();
+      answer(
+        relay(request).then(
+          (result) => ({ result, target: step.target }),
+          (cause: unknown) => ({ error: { code: classifyError(cause).code, message: errorMessage(cause) } }),
+        ),
+      );
+    };
+    /** Detaches the session, leaving the test paused. */
+    const detach = (): void => {
+      if (attached !== session) {
+        return;
+      }
+
+      attached = undefined;
+      send({ type: 'close' });
+    };
+    // Detach on `end`, before this side hangs up. A waiting session can then attach.
+    client.once('end', detach);
+    client.on('close', detach);
+    send({ type: 'open' });
+
+    lines.on('line', (line) => {
+      const call = parseLine(line, AttachCall);
+
+      if (call === undefined) {
+        client.destroy();
+      } else {
+        send(call);
+      }
+    });
   };
   const server = commandServer({
     step: (client, { action, log }) => {
@@ -523,6 +638,7 @@ export async function servePauses(
         gate.press(action === 'next' ? 'continue' : 'rest', { guard: false });
       }
     },
+    attach,
   });
 
   /** Stops reading pause keys and returns keyboard control to `keys`. */
@@ -613,7 +729,20 @@ export async function servePauses(
         print('Only the keys work for this run.');
       });
     await claimed;
-    return gate.beforeStep(step, { ...context, show: (prompt) => show(prompt, context) });
+    holds.set(step, context.askSession);
+
+    try {
+      return await gate.beforeStep(step, { ...context, show: (prompt) => show(prompt, context) });
+    } finally {
+      holds.delete(step);
+
+      // The worker closes the session before the test resumes. The hang-up
+      // tells the agent.
+      if (attached?.step === step) {
+        attached.hangUp();
+        attached = undefined;
+      }
+    }
   };
   /** Closes the socket and sends the final answer to waiting commands. */
   const end = async (reply: StepReply): Promise<void> => {
