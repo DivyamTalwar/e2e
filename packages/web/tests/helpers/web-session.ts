@@ -130,6 +130,11 @@ export function flatten(node: SemanticNode, out: SemanticNode[] = []): SemanticN
   return out;
 }
 
+/** One observation of `session`'s page, keyed by test id. */
+export async function captureByTestId(session: WebSession): Promise<Map<string | undefined, SemanticNode>> {
+  return new Map((await session.nodes()).map((node) => [node.testId, node]));
+}
+
 /** A role query with an exact role and, when given, a name: an exact one unless `exact` is false. */
 export function byRole(role: string, name?: string, exact = true): LocatorExpression {
   return {

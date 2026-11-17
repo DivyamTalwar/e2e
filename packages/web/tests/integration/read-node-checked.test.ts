@@ -5,8 +5,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { LocatorExpression, SemanticNode } from '@e2e-dev/core/engine';
-import { byRole, byTestId, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import type { LocatorExpression } from '@e2e-dev/core/engine';
+import { byRole, byTestId, captureByTestId, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 let page: WebSession;
 
@@ -17,11 +17,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await page.close();
 });
-
-/** One observation of the page, keyed by test id. */
-async function captureByTestId(): Promise<Map<string | undefined, SemanticNode>> {
-  return new Map((await page.nodes()).map((node) => [node.testId, node]));
-}
 
 /** The names of the nodes a locate finds. */
 async function namesOf(expression: LocatorExpression): Promise<(string | undefined)[]> {
@@ -42,7 +37,7 @@ describe('checked and selected', () => {
         <optgroup style="visibility:hidden" label="Restored group"><option data-testid="restored" style="visibility:visible">Restored</option></optgroup>
       </select>
     `);
-    const nodes = await captureByTestId();
+    const nodes = await captureByTestId(page);
     expect(nodes.get('visible')).toMatchObject({ name: 'Visible', states: { selected: true } });
     expect(nodes.get('visible')?.value).toBeUndefined();
     expect(nodes.get('visible')?.states?.hidden).toBeUndefined();
@@ -63,7 +58,7 @@ describe('checked and selected', () => {
       <div><option data-testid="stray" value="stray-value">Stray</option></div>
     `);
     const testIds = ['choice', 'grouped', 'suggestion', 'stray'];
-    const nodes = await captureByTestId();
+    const nodes = await captureByTestId(page);
     expect(testIds.map((testId) => nodes.get(testId)?.value)).toEqual([undefined, undefined, 'Warsaw', 'stray-value']);
     const located = await Promise.all(testIds.map(async (testId) => (await page.locate(byTestId(testId)))[0]?.value));
     expect(located).toEqual(['plan-token', 'group-token', 'Warsaw', 'stray-value']);
@@ -76,7 +71,7 @@ describe('checked and selected', () => {
       <label><input class="shrunk" type="radio" data-testid="large">Large</label>
       <input class="shrunk" type="checkbox" id="unlabelled" data-testid="hidden-label"><label for="unlabelled" style="display:none">Gone</label>
     `);
-    const nodes = await captureByTestId();
+    const nodes = await captureByTestId(page);
     expect(nodes.get('agree')).toMatchObject({ role: 'checkbox', name: 'Agree', states: { checked: true } });
     expect(nodes.get('large')).toMatchObject({ role: 'radio', name: 'Large', states: { checked: false } });
     for (const id of ['agree', 'large']) expect(nodes.get(id)?.states?.hidden).not.toBe(true);
@@ -103,7 +98,7 @@ describe('checked and selected', () => {
         });
       </script>
     `);
-    const nodes = await captureByTestId();
+    const nodes = await captureByTestId(page);
     for (const id of ['invisible', 'text', 'skipped', 'contents', 'link', 'button-label', 'link-label', 'editable-label']) {
       expect(nodes.has(id), id).toBe(false);
     }
@@ -111,7 +106,7 @@ describe('checked and selected', () => {
 
   it('applies the option limit to offered choices after hidden options are excluded', async () => {
     await page.setContent(`<select aria-label="Many choices">${'<option hidden>Excluded</option>'.repeat(60)}${Array.from({ length: 61 }, (_, index) => `<option data-testid="choice-${index}">Choice ${index}</option>`).join('')}</select>`);
-    const nodes = await captureByTestId();
+    const nodes = await captureByTestId(page);
     expect(nodes.get('choice-0')?.name).toBe('Choice 0');
     expect(nodes.get('choice-59')?.name).toBe('Choice 59');
     expect(nodes.has('choice-60')).toBe(false);
@@ -132,7 +127,7 @@ describe('checked and selected', () => {
       </select>
       <div role="button" data-testid="embedded">Pick <div role="listbox"><div role="option" aria-selected="true">Chosen</div><div role="option" aria-selected="false">Other</div></div></div>
     `);
-    const nodes = await captureByTestId();
+    const nodes = await captureByTestId(page);
     expect(nodes.get('upper')?.states?.selected).toBe(true);
     expect(nodes.get('mixed')?.states?.selected).toBe(true);
     expect(nodes.get('off')?.states?.selected).toBe(false);
@@ -162,7 +157,7 @@ describe('checked and selected', () => {
       <button data-testid="referenced" aria-labelledby="reference">Fallback</button>
       <div aria-hidden="TRUE"><span id="reference">Label <i style="display:none">whole</i></span></div>
     `);
-    const nodes = await captureByTestId();
+    const nodes = await captureByTestId(page);
     expect(nodes.has('hidden')).toBe(false);
     expect(nodes.get('save')?.name).toBe('Save');
     expect(nodes.get('shown')?.name).toBe('Shown');
@@ -188,7 +183,7 @@ describe('checked and selected', () => {
       </select>
       <div role="tablist"><button role="tab" aria-selected="true" data-testid="tab">All</button></div>
     `);
-    const nodes = await captureByTestId();
+    const nodes = await captureByTestId(page);
     const checked = (testId: string) => nodes.get(testId)?.states?.checked;
     const selected = (testId: string) => nodes.get(testId)?.states?.selected;
 
@@ -228,7 +223,7 @@ describe('a checkable control\'s value', () => {
     );
     expect(inputValues).toEqual(values);
     // The tree drops the token, as it drops an option's value; the checked state says what matters.
-    const nodes = await captureByTestId();
+    const nodes = await captureByTestId(page);
     expect(testIds.map((testId) => nodes.get(testId)?.value)).toEqual([undefined, undefined, undefined, undefined, undefined]);
   });
 });
