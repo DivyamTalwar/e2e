@@ -44,10 +44,14 @@ export function checkState(element: Element): Outcome<{ checked: boolean; radio:
  * sees the trusted `input` an edit fires. A date, color,
  * range, or similar input takes the value directly, with `input` and
  * `change`. A number input takes the value trimmed, as it sanitizes its own,
- * and is refused one that is no number or that it does not keep. Nothing
- * changes until the element proved editable and took focus, and nothing of
- * an element out of the document. Not yet while the field is disabled or
- * read-only; refused for what no fill can do.
+ * and is refused, untouched, one that is no number or that no number input
+ * keeps: a detached one is asked, since the field's own value is the app's
+ * to rewrite as the edit lands. The field is not read after the edit, so it
+ * stays as the app's handlers left it; only an edit the browser did not
+ * perform is made through the value setter, with `input` and `change`.
+ * Nothing changes until the element proved editable and took focus, and
+ * nothing of an element out of the document. Not yet while the field is
+ * disabled or read-only; refused for what no fill can do.
  */
 export const fill = withDom((dom, element: Element, value: string): Outcome => {
   if (!element.isConnected) return { kind: 'detached' };
@@ -60,7 +64,13 @@ export const fill = withDom((dom, element: Element, value: string): Outcome => {
     const type = field.nodeName === 'INPUT' ? (field as HTMLInputElement).type.toLowerCase() : 'textarea';
     if (['checkbox', 'radio', 'file', 'button', 'submit', 'reset', 'image'].includes(type)) return { kind: 'refused', reason: `Input of type "${type}" cannot be filled` };
     if (field.disabled || field.readOnly) return { kind: 'not-yet', reason: 'element is not editable' };
-    if (number && Number.isNaN(Number(text))) return { kind: 'refused', reason: 'Cannot type text into input[type=number]' };
+    if (number) {
+      if (Number.isNaN(Number(text))) return { kind: 'refused', reason: 'Cannot type text into input[type=number]' };
+      const sanitizer = document.createElement('input');
+      sanitizer.type = 'number';
+      sanitizer.value = text;
+      if (sanitizer.value !== text) return { kind: 'refused', reason: 'Malformed value' };
+    }
     if (!dom.focus(element)) return unfocused;
     if (type !== 'textarea' && !typed.includes(type)) {
       // As Playwright 1.65: the browser sanitizes what it does not take, as for a person's input.
@@ -80,11 +90,10 @@ export const fill = withDom((dom, element: Element, value: string): Outcome => {
     return { kind: 'refused', reason: 'Element is not an <input>, <textarea> or [contenteditable] element' };
   }
   const edited = text === '' ? document.execCommand('delete') : document.execCommand('insertText', false, text);
-  if (field !== null && (!edited || (number && field.value !== text))) {
+  if (field !== null && !edited) {
     Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')?.set?.call(field, text);
     dom.fireEdit(field);
   }
-  if (number && field.value !== text) return { kind: 'refused', reason: 'Malformed value' };
   return { kind: 'ok' };
 });
 

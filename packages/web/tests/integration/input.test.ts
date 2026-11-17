@@ -353,7 +353,11 @@ describe('input', () => {
     [' -1.5e3 ', '-1.5e3', ['input:-1.5e3']],
     ['\t7\n', '7', ['input:7']],
     ['   ', '', ['input:']],
-  ])('fills a number input with %j trimmed, in one edit', async (value, held, events) => {
+    ['', '', ['input:']],
+    ['1e3', '1e3', ['input:1e3']],
+    ['-0', '-0', ['input:-0']],
+    ['012', '012', ['input:012']],
+  ])('fills a number input with %j, trimmed, in one edit', async (value, held, events) => {
     await page.setContent(`<input id=n type=number value=5><script>
       window.log = [];
       for (const type of ['input', 'change']) n.addEventListener(type, (event) => log.push(type + ':' + event.target.value));
@@ -363,11 +367,42 @@ describe('input', () => {
     expect(await log()).toEqual(events);
   });
 
-  it('refuses a number input a padded value that is no number, and leaves the field as it was', async () => {
-    await page.setContent('<input id=n type=number value=5>');
+  it.each([
+    ['1,5', 'Cannot type text into input[type=number]'],
+    [' 1 2 ', 'Cannot type text into input[type=number]'],
+    ['1.', 'Malformed value'],
+    ['+1', 'Malformed value'],
+    ['0x10', 'Malformed value'],
+  ])('refuses a number input %j, which no number input keeps, and leaves the field as it was', async (value, reason) => {
+    await page.setContent(`<input id=n type=number value=5 min=0 max=3 step=2><script>
+      window.log = [];
+      for (const type of ['focus', 'beforeinput', 'input', 'change']) n.addEventListener(type, () => log.push(type));
+    </script>`);
     const [number] = await page.locate(bySelector('#n'));
-    await expect(page.engine.perform!(number!.ref, { kind: 'fill', value: ' 1 2 ', sensitive: false }, page.op())).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('Cannot type text into input[type=number]') });
+    await expect(page.engine.perform!(number!.ref, { kind: 'fill', value, sensitive: false }, page.op())).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining(reason) });
     expect(await page.browser.evaluate('document.getElementById("n").value')).toBe('5');
+    expect(await log()).toEqual([]);
+  });
+
+  it('fills a number input with a number its own step, min, and max do not allow, which it keeps', async () => {
+    await page.setContent('<input id=n type=number value=2 min=0 max=3 step=2>');
+    await page.act(bySelector('#n'), { kind: 'fill', value: '7.5', sensitive: false });
+    expect(await page.browser.evaluate('document.getElementById("n").value')).toBe('7.5');
+  });
+
+  it.each([
+    ['clamps a value past its limit', 'if (n.valueAsNumber > 10) n.value = 10', { kind: 'fill', value: '25', sensitive: false }, '10'],
+    ['writes a number back over an emptied field, on a fill', 'n.value = String(Number(n.value))', { kind: 'fill', value: '', sensitive: false }, '0'],
+    ['writes a number back over an emptied field, on a clear', 'n.value = String(Number(n.value))', { kind: 'clear' }, '0'],
+  ] as const)('leaves a number input as its own input handler left it, in one edit: it %s', async (_name, handler, action, held) => {
+    await page.setContent(`<input id=n type=number value=5><script>
+      window.log = [];
+      n.addEventListener('input', () => { ${handler}; });
+      for (const type of ['input', 'change']) n.addEventListener(type, (event) => log.push(type + ':' + String(event.isTrusted)));
+    </script>`);
+    await page.act(bySelector('#n'), action);
+    expect(await page.browser.evaluate('document.getElementById("n").value')).toBe(held);
+    expect(await log()).toEqual(['input:true']);
   });
 
   it.each([
@@ -385,11 +420,12 @@ describe('input', () => {
     expect(await page.browser.evaluate('[document.getElementById("i").type, document.getElementById("i").value]')).toEqual([onFirefox && (type === 'month' || type === 'week') ? 'text' : type, held]);
   });
 
-  it('counts a fill the field took and then refused as input, so a ref reused after it is checked again', async () => {
-    await page.setContent('<input id=n type=number oninput="document.body.append(Object.assign(document.createElement(\'button\'), { className: \'twin\', textContent: \'twin\' }))"><button class=twin>twin</button>');
+  it('counts a fill the page saw and then refused as input, so a ref reused after it is checked again', async () => {
+    // The field gives focus up as it takes it, after its handler added a twin of the located element.
+    await page.setContent('<input id=i onfocus="document.body.append(Object.assign(document.createElement(\'button\'), { className: \'twin\', textContent: \'twin\' })); this.blur()"><button class=twin>twin</button>');
     const [twin] = await page.locate(bySelector('.twin'));
-    const [number] = await page.locate(bySelector('#n'));
-    await expect(page.engine.perform!(number!.ref, { kind: 'fill', value: '0x10', sensitive: false }, page.op())).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('Malformed value') });
+    const [field] = await page.locate(bySelector('#i'));
+    await expect(page.engine.perform!(field!.ref, { kind: 'fill', value: 'x', sensitive: false }, page.op())).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('element could not be focused') });
     await expect(page.engine.perform!(twin!.ref, { kind: 'tap' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', message: expect.stringContaining('elements') });
   });
 
