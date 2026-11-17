@@ -38,7 +38,7 @@ async function network(fake: FakeBidi, browser: BrowserName) {
   await net.bind('user-1');
   contexts.created('tab', 'user-1', null);
   await net.addContext('tab');
-  return { net, failures };
+  return { net, failures, contexts };
 }
 
 /** A route on every URL that runs `handle`. */
@@ -130,6 +130,26 @@ describe('the body of a held request on Chromium', () => {
     expect(request).toBeUndefined();
     expect(fake.commands('network.failRequest').map((command) => command.params)).toEqual([{ request: 'post' }]);
     expect(failures.map((failure) => failure.message)).toEqual([expect.stringContaining('Session with given id not found')]);
+  });
+
+  it('takes a request whose tab closed under the read as unreadable, which is no failure of the attempt', async () => {
+    const fake = new FakeBidi();
+    const { net, failures, contexts } = await network(fake, 'chromium');
+    fake.on('goog:cdp.sendCommand', () => {
+      contexts.destroyed('tab');
+      return { error: 'unknown error', message: 'Session with given id not found' };
+    });
+    const seen: InterceptedRequest[] = [];
+    await net.addRoute(route(async (intercepted, decisions) => {
+      seen.push(intercepted);
+      await decisions.continue({});
+    }));
+    fake.emit('network.beforeRequestSent', held('post', {}));
+    await settle();
+    await settle();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toHaveProperty('postData');
+    expect(failures).toEqual([]);
   });
 
   it.each(['GET', 'HEAD'])('asks for no body of a %s', async (method) => {

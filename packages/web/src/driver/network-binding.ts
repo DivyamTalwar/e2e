@@ -373,7 +373,8 @@ export class NetworkBinding implements DecisionScope {
    * `Network.getRequestPostData`, which the fixups in front of the mapper
    * answer from the pause (`cdp-fixups.ts`): the bytes the browser will
    * send, none for a request without a body, and unreadable when a part of
-   * it has no bytes the browser reports. A GET or HEAD carries no body, and
+   * it has no bytes the browser reports, or when `context` closed under the
+   * read and took the request with it. A GET or HEAD carries no body, and
    * is not asked for.
    */
   private async pausedBody(request: Network.RequestData, context: string): Promise<Buffer | 'none' | 'unreadable'> {
@@ -385,6 +386,7 @@ export class NetworkBinding implements DecisionScope {
     } catch (cause) {
       if (cause instanceof BidiError && cause.message.includes(NO_POST_DATA)) return 'none';
       if (cause instanceof BidiError && cause.message.includes(UNREPORTED_POST_DATA)) return 'unreadable';
+      if (this.options.contexts.owner(context) === undefined) return 'unreadable';
       throw cause;
     }
   }
