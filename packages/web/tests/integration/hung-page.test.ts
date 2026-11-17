@@ -7,8 +7,6 @@
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -16,7 +14,7 @@ import type { Locator } from 'e2e';
 import type { EngineFixtureContext, EngineHandle, NodeRef, OperationContext } from '@e2e-dev/core/engine';
 import type { BrowserExpectation } from '../../src/index.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { byRole, cleanup, initInfo, onFirefox, operation as attemptOperation, testWeb } from '../helpers/web-session.ts';
+import { byRole, cleanup, initInfo, onFirefox, operation as attemptOperation, startPageServer, testWeb, type PageServer } from '../helpers/web-session.ts';
 
 const BUDGET_MS = 1_000;
 /** The action timeout a read left to the harness's default budget takes. */
@@ -61,25 +59,22 @@ async function bounded(call: () => Promise<unknown>): Promise<{ error: unknown }
 }
 
 describe('operations on a hung page', () => {
-  let server: Server;
+  let server: PageServer;
   let origin: string;
   let artifactsDir: string;
   let engine: EngineHandle;
 
   beforeAll(async () => {
-    server = createServer((request, response) => {
-      if (request.url === '/never') return;
-      response.writeHead(200, { 'content-type': 'text/html' });
-      response.end(request.url === '/covered' ? COVERED_PAGE : BUSY_PAGE);
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    server = await startPageServer();
+    ({ origin } = server);
+    server.serve('/', BUSY_PAGE);
+    server.serve('/covered', COVERED_PAGE);
+    server.serve('/never', () => undefined);
     artifactsDir = mkdtempSync(path.join(tmpdir(), 'e2e-hung-page-'));
   });
 
   afterAll(async () => {
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
+    await server.close();
     rmSync(artifactsDir, { recursive: true, force: true });
   });
 
