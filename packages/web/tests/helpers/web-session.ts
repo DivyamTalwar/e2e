@@ -26,6 +26,8 @@ import type { TargetApp } from 'e2e';
 import { web, type Browser, type WebOptions } from '../../src/index.ts';
 import { BROWSER_NAMES, isBrowserName, type BrowserName } from '../../src/browsers.ts';
 import { createAccessibleNames } from '../../src/in-page/accessible-name.ts';
+import { CLOSED_SHADOW_ROOTS_KEY } from '../../src/in-page/closed-shadow.ts';
+import { createDom } from '../../src/in-page/dom.ts';
 import { createSemanticReader } from '../../src/in-page/read-semantics.ts';
 import { SECURE_FIELD_SELECTOR, type RawNodeData } from '../../src/in-page/read-node.ts';
 
@@ -288,7 +290,7 @@ export async function startWebSession(options: WebSessionOptions = {}): Promise<
 
   /** What the in-page reader's `read` answers for the first element `selector` matches, on a reader built for this one call. */
   const readElement = (read: 'describe' | 'labels', selector: string) => session.browser.evaluate(
-    `({ selector, options }) => (${createSemanticReader.toString()})(options, (${createAccessibleNames.toString()})).${read}(document.querySelector(selector))`,
+    `({ selector, options }) => (${createSemanticReader.toString()})(options, (${createAccessibleNames.toString()}), (${createDom.toString()})(${JSON.stringify(CLOSED_SHADOW_ROOTS_KEY)})).${read}(document.querySelector(selector))`,
     { selector, options: { testIdAttribute: 'data-testid', secureFieldSelector: SECURE_FIELD_SELECTOR } },
   );
 

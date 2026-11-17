@@ -5,19 +5,20 @@
  * self-contained function under the rule `read-semantics.ts` states.
  */
 
-/** What the name computation reads through the reader that builds it: each is the reader's function of that name. */
+/** What the name computation reads through the reader that builds it: each is the reader's function of that name, `shadowRootOf` its `dom.shadowOf`. */
 interface NameFacts {
   readonly implicitRole: (el: Element) => string | null;
   readonly explicitRole: (el: Element) => string | null;
   readonly isHidden: (el: Element) => boolean;
-  readonly shadowRootOf: (el: Element) => ShadowRoot | null;
   readonly isEditingHost: (el: Element) => boolean;
+  readonly shadowRootOf: (el: Element) => ShadowRoot | null;
+  readonly styleOf: (el: Element) => CSSStyleDeclaration | undefined;
   readonly memoized: <T>(compute: (el: Element) => T) => (el: Element) => T;
 }
 
 /** Builds the name computation over one reader's facts; `secureFieldSelector` matches the fields whose value no name may carry. */
 export const createAccessibleNames = (
-  { implicitRole, explicitRole, isHidden, shadowRootOf, isEditingHost, memoized }: NameFacts,
+  { implicitRole, explicitRole, isHidden, isEditingHost, shadowRootOf, styleOf, memoized }: NameFacts,
   secureFieldSelector: string,
 ) => {
   /** Input types whose accessible name falls back to the placeholder (HTML-AAM 4.1.1). */
@@ -44,10 +45,6 @@ export const createAccessibleNames = (
     readonly accessible: boolean;
     readonly fromContent: boolean;
   }
-
-  /** Computed style of any element, SVG included, or undefined in a document with no view. */
-  const styleOf = (el: Element): CSSStyleDeclaration | undefined =>
-    el.ownerDocument.defaultView?.getComputedStyle(el);
 
   /** A walk from the top, with the elements that may not contribute again already visited. */
   const nameWalk = (visited: readonly Element[], accessible: boolean, fromContent = false): NameWalk => ({

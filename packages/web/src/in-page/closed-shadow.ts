@@ -5,9 +5,9 @@
 
 /**
  * Where the init script below records closed shadow roots, keyed by host, and
- * where the in-page reader looks for them. The reader is serialized into the
- * page and cannot import this constant, so the literal is repeated inside it;
- * the two must agree, like `SECURE_FIELD_SELECTOR` on both sides of masking.
+ * where the DOM helpers every page function shares (`createDom`) look for
+ * them. The helpers are serialized into the page and cannot import this
+ * constant, so they take it as an argument.
  *
  * The record is a `WeakMap` from host to root with one own property beside
  * the map: `count`, the number of closed roots the document has attached. It

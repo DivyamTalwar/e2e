@@ -54,19 +54,20 @@ export function createDom(key: string) {
     return found;
   };
 
+  /** The element's parent element, else the host of the shadow root it is a child of. */
+  const parentOrHostOf = (at: Element): Element | null => at.parentElement ?? (at.parentNode instanceof ShadowRoot ? at.parentNode.host : null);
+
   /**
    * The element's parent in the flat tree: the slot it is assigned to (in a
    * recorded closed root too, whose slots still list what they hold), else
-   * its parent element, else the host of the shadow root it is in. A slot
-   * assigned to another slot is that slot's child, so the lists are read
-   * unflattened.
+   * its parent element or shadow host. A slot assigned to another slot is
+   * that slot's child, so the lists are read unflattened.
    */
   const parentOf = (at: Element): Element | null => {
     if (at.assignedSlot !== null) return at.assignedSlot;
     const closed = at.parentElement === null ? undefined : recorded()?.get(at.parentElement);
     for (const slot of closed?.querySelectorAll('slot') ?? []) if (slot.assignedElements().includes(at)) return slot;
-    const root = at.getRootNode();
-    return at.parentElement ?? (root instanceof ShadowRoot ? root.host : null);
+    return parentOrHostOf(at);
   };
 
   /** Whether a rotation, skew, reflection, or 3D transform turns the element: its own, or a flat-tree ancestor's (`transform`, `rotate`, or a negative `scale`). */
@@ -234,8 +235,11 @@ export function createDom(key: string) {
     target.dispatchEvent(new EventClass('change', { bubbles: true }));
   };
 
-  return { shadowOf, roots, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, fireEdit };
+  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, fireEdit };
 }
+
+/** The shared DOM helpers, as a page function takes them. */
+export type Dom = ReturnType<typeof createDom>;
 
 /**
  * A page function that takes the shared DOM helpers before the arguments
@@ -243,7 +247,7 @@ export function createDom(key: string) {
  * registry the closed-roots preload fills, so it stays self-contained and
  * the driver calls it with its arguments alone; it only runs in a page.
  */
-export function withDom<A extends unknown[], R>(fn: (dom: ReturnType<typeof createDom>, ...args: A) => R): (...args: A) => R {
+export function withDom<A extends unknown[], R>(fn: (dom: Dom, ...args: A) => R): (...args: A) => R {
   const source = `(...args) => (${fn.toString()})((${createDom.toString()})(${JSON.stringify(CLOSED_SHADOW_ROOTS_KEY)}), ...args)`;
   const inPageOnly = (..._args: A): R => {
     throw new Error('a page function runs only in the page');

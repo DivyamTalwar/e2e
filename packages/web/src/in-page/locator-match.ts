@@ -19,8 +19,9 @@ import type { createSemanticReader } from './read-semantics.ts';
  * apart from false (`getAriaChecked`, `getAriaPressed`, `getAriaExpanded`,
  * `getAriaSelected`), and its level (`getAriaLevel`: a heading tag's before
  * `aria-level`, none without either). Each read is computed when first
- * asked and kept for the rest of the locate, so a query pays only for what
- * it compares. In a hidden frame (`frameHidden`) every element is hidden.
+ * asked and kept for the rest of the locate (the reader's `memoized`), so a
+ * query pays only for what it compares. In a hidden frame (`frameHidden`)
+ * every element is hidden.
  */
 export const createLocatorMatch = (
   reader: ReturnType<typeof createSemanticReader>,
@@ -28,16 +29,7 @@ export const createLocatorMatch = (
   matchesText: TextMatching['matchesText'],
   frameHidden: boolean,
 ) => {
-  /** Per-node memo, as the semantic reader keeps its own. */
-  const memoized = <N extends Node, T>(compute: (node: N) => T): ((node: N) => T) => {
-    const cache = new Map<N, T>();
-    return (node) => {
-      if (cache.has(node)) return cache.get(node) as T;
-      const value = compute(node);
-      cache.set(node, value);
-      return value;
-    };
-  };
+  const { memoized, styleOf, parentOrHostOf } = reader;
   const joinedTextOf = memoized((root: Element | ShadowRoot): string => {
     let full = '';
     const skipped = root.nodeType === 1 && (['SCRIPT', 'NOSCRIPT', 'STYLE'].indexOf(root.nodeName) !== -1 || (document.head !== null && document.head.contains(root)));
@@ -57,14 +49,13 @@ export const createLocatorMatch = (
   });
   const belongsHidden = memoized((el: Element): boolean => {
     if (el.parentElement !== null && el.parentElement.shadowRoot !== null && el.assignedSlot === null) return true;
-    if (el.ownerDocument.defaultView?.getComputedStyle(el).display === 'none' || (el.getAttribute('aria-hidden') ?? '').toLowerCase() === 'true') return true;
-    const root = el.getRootNode();
-    const parent = el.parentElement ?? (root instanceof ShadowRoot ? root.host : null);
+    if (styleOf(el)?.display === 'none' || (el.getAttribute('aria-hidden') ?? '').toLowerCase() === 'true') return true;
+    const parent = parentOrHostOf(el);
     return parent !== null && belongsHidden(parent);
   });
   const hiddenForAria = memoized((el: Element): boolean => {
     if (['STYLE', 'SCRIPT', 'NOSCRIPT', 'TEMPLATE'].indexOf(el.nodeName) !== -1) return true;
-    const style = el.ownerDocument.defaultView?.getComputedStyle(el);
+    const style = styleOf(el);
     if (style === undefined) return true;
     const slot = el.nodeName === 'SLOT';
     if (style.display === 'contents' && !slot) {

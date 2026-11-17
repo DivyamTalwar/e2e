@@ -3,18 +3,20 @@
  * runs it inside the page (`readers.ts` builds the readers a document keeps
  * from its source), so it must stay one self-contained function: no imports
  * beyond types, no module-scope references, every constant inside the body.
- * That is why it has a file of its own, and why the name computation it
- * builds on (`accessible-name.ts`) reaches it as an argument.
+ * That is why it has a file of its own, and why what it builds on, the name
+ * computation (`accessible-name.ts`) and the DOM helpers (`dom.ts`), reaches
+ * it as an argument.
  */
 
 import type { createAccessibleNames } from './accessible-name.ts';
+import type { Dom } from './dom.ts';
 import type { RawNodeData, RawObservation, RawObservedFrame, RawObservedNode, TreeLimits } from './read-node.ts';
 
 /**
  * Builds the semantic reader for one read of a document: it keeps what it
  * reads of an element (`memoized`) and the page may change between two
  * calls, so each call into the page builds its own. Must stay
- * self-contained: no outer captures beyond its two arguments.
+ * self-contained: no outer captures beyond its arguments.
  *
  * `tree` walks the document for one agent observation. The other methods
  * read one element as a locate matches and reports it (`locator-match.ts`).
@@ -24,6 +26,7 @@ import type { RawNodeData, RawObservation, RawObservedFrame, RawObservedNode, Tr
 export const createSemanticReader = (
   options: { testIdAttribute: string; secureFieldSelector: string },
   accessibleNames: typeof createAccessibleNames,
+  dom: Dom,
 ) => {
   const SKIP_TAGS = [
     'script',
@@ -61,17 +64,17 @@ export const createSemanticReader = (
   const MAX_SELECT_OPTIONS = 60;
 
   /**
-   * Per-element memo for the facts several passes need. A tree walk asks for
+   * Per-node memo for the facts several passes need. A tree walk asks for
    * an element's role, name, and direct text from `isInteresting`, `describe`,
    * and the empty-box test; each is a pure function of the element for the
    * duration of one read, and `innerText` in particular forces layout.
    */
-  const memoized = <T,>(compute: (el: Element) => T): ((el: Element) => T) => {
-    const cache = new Map<Element, T>();
-    return (el) => {
-      if (cache.has(el)) return cache.get(el) as T;
-      const value = compute(el);
-      cache.set(el, value);
+  const memoized = <N, T>(compute: (node: N) => T): ((node: N) => T) => {
+    const cache = new Map<N, T>();
+    return (node) => {
+      if (cache.has(node)) return cache.get(node) as T;
+      const value = compute(node);
+      cache.set(node, value);
       return value;
     };
   };
@@ -398,7 +401,7 @@ export const createSemanticReader = (
    * assigned nodes or else its fallback content, any other element's children.
    */
   const renderedChildrenOf = (el: Element): Node[] => {
-    const shadow = shadowRootOf(el);
+    const shadow = dom.shadowOf(el);
     if (shadow !== null) return Array.from(shadow.childNodes);
     if (el instanceof HTMLSlotElement) {
       const assigned = el.assignedNodes();
@@ -445,33 +448,8 @@ export const createSemanticReader = (
     return el instanceof HTMLElement && el.onclick !== null;
   });
 
-  /**
-   * Closed shadow roots the context's init script recorded, when it ran in this
-   * document. Same literal as `CLOSED_SHADOW_ROOTS_KEY`; the reader cannot import it.
-   */
-  const closedShadowRoots = (globalThis as Record<symbol, WeakMap<Element, ShadowRoot> | undefined>)[
-    Symbol.for('e2e.closedShadowRoots')
-  ];
-  const shadowRootOf = (el: Element): ShadowRoot | null =>
-    el.shadowRoot ?? closedShadowRoots?.get(el) ?? null;
-
-  /**
-   * The element that holds focus, through every shadow root on the way.
-   * `document.activeElement` is retargeted to the outermost host and each
-   * root's `activeElement` names the next hop, so the chain is followed until
-   * a root holds no focus of its own; a closed root is reached through the
-   * record, as everywhere else in the reader.
-   */
-  const focusedElementOf = (doc: Document): Element | null => {
-    let active = doc.activeElement;
-    while (active !== null) {
-      const next = shadowRootOf(active)?.activeElement ?? null;
-      if (next === null) return active;
-      active = next;
-    }
-    return null;
-  };
-  const focusedElement = focusedElementOf(document);
+  /** The element that holds focus, through every shadow root on the way, read once for the read. */
+  const focusedElement = dom.activeElement();
 
   /**
    * The text selected inside a focused field: the slice between an input's or
@@ -650,30 +628,14 @@ export const createSemanticReader = (
   const openModalDialogsIn = (root: Document | ShadowRoot, found: Element[] = []): Element[] => {
     for (const el of Array.from(root.querySelectorAll('*'))) {
       if (isOpenModalDialog(el)) found.push(el);
-      const shadow = shadowRootOf(el);
+      const shadow = dom.shadowOf(el);
       if (shadow !== null) openModalDialogsIn(shadow, found);
     }
     return found;
   };
 
-  /**
-   * The slot an element is assigned to: `assignedSlot`, which a closed root
-   * hides from the outside, else the tracked closed root's own slots, read
-   * the way `contentChildrenOf` reads them.
-   */
-  const slotOf = (el: Element): Element | null => {
-    if (el.assignedSlot !== null) return el.assignedSlot;
-    const host = el.parentElement;
-    const shadow = host === null ? undefined : closedShadowRoots?.get(host);
-    if (shadow === undefined) return null;
-    for (const slot of Array.from(shadow.querySelectorAll('slot'))) {
-      if (slot.assignedElements().indexOf(el) !== -1) return slot;
-    }
-    return null;
-  };
-
-  /** An element's parent in the flat tree: its slot, the tree parent, or the host at a shadow root. */
-  const flatParentOf = memoized((el: Element): Element | null => slotOf(el) ?? parentOrHostOf(el));
+  /** An element's parent in the flat tree (`dom.parentOf`), kept for the read: a closed root's slots are searched once per element. */
+  const flatParentOf = memoized(dom.parentOf);
 
   /** Whether `el` is `container` or under it in the flat tree. */
   const isInFlatTree = (el: Element, container: Element): boolean => {
@@ -739,14 +701,14 @@ export const createSemanticReader = (
     const dialog = topModalOf(openModalDialogsIn(doc));
     if (dialog === undefined) return undefined;
     const ancestors = new Set<Element>();
-    for (let up = parentOrHostOf(dialog); up !== null; up = parentOrHostOf(up)) ancestors.add(up);
+    for (let up = dom.parentOrHostOf(dialog); up !== null; up = dom.parentOrHostOf(up)) ancestors.add(up);
     return { placeOf: (el) => (ancestors.has(el) ? 'ancestor' : isInFlatTree(el, dialog) ? 'inside' : 'outside') };
   };
 
   /** A closed select has no option boxes; explicit exclusions still remove choices it does not offer. */
   const isOfferedOption = (option: HTMLOptionElement): boolean => {
     if (isSkippedContent(option)) return false;
-    for (let current: Element | null = option; current !== null && current.tagName.toLowerCase() !== 'select'; current = parentOrHostOf(current)) {
+    for (let current: Element | null = option; current !== null && current.tagName.toLowerCase() !== 'select'; current = dom.parentOrHostOf(current)) {
       if (hidesSubtree(current, styleOf(current))) return false;
     }
     return true;
@@ -910,13 +872,6 @@ export const createSemanticReader = (
     'select', 'slider', 'spinbutton', 'switch', 'tablist', 'textbox', 'toolbar', 'tree', 'treegrid', 'treeitem',
   ];
 
-  /** The parent `aria-disabled` inherits across: the tree parent, or the host at a shadow root. */
-  const parentOrHostOf = (el: Element): Element | null => {
-    if (el.parentElement !== null) return el.parentElement;
-    const root = el.getRootNode();
-    return root instanceof ShadowRoot ? root.host : null;
-  };
-
   /**
    * What the nearest `aria-disabled` on the element or above it says
    * (WAI-ARIA: the state applies to every descendant), across shadow
@@ -927,7 +882,7 @@ export const createSemanticReader = (
     const attribute = (el.getAttribute('aria-disabled') ?? '').toLowerCase();
     if (attribute === 'true') return true;
     if (attribute === 'false') return false;
-    const parent = parentOrHostOf(el);
+    const parent = dom.parentOrHostOf(el);
     return parent === null ? false : ariaDisabledInChain(parent);
   });
 
@@ -946,7 +901,7 @@ export const createSemanticReader = (
     return role !== null && ARIA_DISABLED_ROLES.indexOf(role) !== -1 && ariaDisabledInChain(el);
   };
 
-  const names = accessibleNames({ implicitRole, explicitRole, isHidden, shadowRootOf, isEditingHost, memoized }, options.secureFieldSelector);
+  const names = accessibleNames({ implicitRole, explicitRole, isHidden, isEditingHost, shadowRootOf: dom.shadowOf, styleOf, memoized }, options.secureFieldSelector);
 
   /**
    * How a read projects one node, expressed as data so `describe` stays
@@ -1299,7 +1254,7 @@ export const createSemanticReader = (
       // tree holds the `<slot>` placeholders rather than copies of them. A closed
       // root is unreachable from `shadowRoot`, so it comes from the record the
       // context's init script kept when the page attached it.
-      const shadow = shadowRootOf(el);
+      const shadow = dom.shadowOf(el);
       if (shadow !== null) {
         for (const child of Array.from(shadow.children)) walk(child, nextParent);
       }
@@ -1336,5 +1291,9 @@ export const createSemanticReader = (
     /** The element as a node read, in a locate's projection. */
     describe: (el: Element): RawNodeData => describe(el, LOCATOR),
     tree,
+    /** The helpers a locate's matching shares with this read (`locator-match.ts`), handed over as `NameFacts` are. */
+    memoized,
+    styleOf,
+    parentOrHostOf: dom.parentOrHostOf,
   };
 };

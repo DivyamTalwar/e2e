@@ -89,10 +89,10 @@ interface SelectedFrames {
 
 /**
  * Builds the readers in the page over the reader `semantics` builds for each
- * read from its name computation `names`, a locate's matching `locatorMatch`,
- * the contract's locator rules `resolver`, its text rule `matchesText`, the
- * selector chain `select`, the DOM helpers `dom` over the recorded closed
- * shadow roots, and `contentInset` (`frameContentInset`). Serialized with
+ * read from its name computation `names` and the DOM helpers `dom` over the
+ * recorded closed shadow roots, a locate's matching `locatorMatch`, the
+ * contract's locator rules `resolver`, its text rule `matchesText`, the
+ * selector chain `select`, and `contentInset` (`frameContentInset`). Serialized with
  * `toString()`, so it closes over nothing of this module; the builtins it
  * names are the ones `READERS` binds around it, which the document had
  * before its own scripts ran.
@@ -123,14 +123,14 @@ function createReaders(
 
   /** Whether `element` reads as hidden to the semantic reader, its `states.hidden`: for an iframe, whether everything inside it is hidden. */
   const hidden = (element: Element, options: ReadOptions): boolean => {
-    return element.isConnected ? semantics(options, names).hidden(element) : true;
+    return element.isConnected ? semantics(options, names, dom).hidden(element) : true;
   };
 
   /** Reads the document's semantic tree within `limits`: the walk's metadata, and the walked elements. */
   const tree = (options: ReadOptions, limits: TreeLimits): Encoded<TreeMetadata> => {
     // A document a navigation just opened has no root yet: it reads as no nodes, which the caller repeats.
     if (document.documentElement === null) return [encode({ nodes: [], ids: [], truncated: false, frames: [] }), []];
-    const observation = semantics(options, names).tree(document.documentElement, limits);
+    const observation = semantics(options, names, dom).tree(document.documentElement, limits);
     const frames = observation.frames.map((frame) => ({ ...frame, box: frameBox(observation.elements[frame.node]!) }));
     return [encode({ nodes: observation.nodes, ids: observation.ids, truncated: observation.truncated, frames }), observation.elements];
   };
@@ -149,7 +149,7 @@ function createReaders(
   const locate = (options: ReadOptions, expression: string, selectors: [string, PagePart[]][], frameHidden: boolean): Encoded<RawNodeData[] | UnparsedSelector> => {
     const selections = new Map<string, Set<Element>>();
     for (const [selector, parts] of selectors) {
-      const found = select(parts);
+      const found = select(dom, parts);
       if (typeof found === 'string') return [encode({ selector, reason: found }), []];
       selections.set(selector, new Set(found));
     }
@@ -170,7 +170,7 @@ function createReaders(
       for (const [shadowHost, shadow] of shadows) walkRoot(shadow.children, shadowHost);
     };
     walkRoot([document.documentElement], undefined);
-    const reader = semantics(options, names);
+    const reader = semantics(options, names, dom);
     const { matches, text } = locatorMatch(reader, options, matchesText, frameHidden);
     // oxlint-disable-next-line e2e/no-unchecked-json -- the expression the driver serialized for this call
     const parsed = JSON.parse(expression) as LocatorExpression;
@@ -213,7 +213,7 @@ function createReaders(
         if (control) element = control;
       }
     }
-    return semantics(options, names).disabled(element);
+    return semantics(options, names, dom).disabled(element);
   };
 
   /** Whether `element` is a frame element, of any realm: one adopted from another document is no `HTMLElement` of this window. */
@@ -240,7 +240,7 @@ function createReaders(
    * The frame's window is not read here: see `FRAME_SANDBOX` (`frames.ts`).
    */
   const selectFrame = (parts: PagePart[], options: ReadOptions): SelectedFrames | string => {
-    const found = select(parts);
+    const found = select(dom, parts);
     if (typeof found === 'string') return found;
     const frames = found.filter(isFrame);
     const [only] = frames;
