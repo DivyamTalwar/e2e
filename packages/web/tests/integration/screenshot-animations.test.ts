@@ -309,6 +309,40 @@ it('covers a secure field an infinite animation moves where the field rests with
   expect(image.pixelAt(250, 40)).toEqual(WHITE);
 });
 
+it('hides the caret of a focused field whose transition takes in the caret color', async () => {
+  await session.setContent(`<!doctype html>
+    <style>
+      body { margin: 0; background: #fff; }
+      input { position: absolute; left: 20px; top: 20px; width: 200px; height: 60px; margin: 0; padding: 0; border: 0; outline: 0; background: #fff; font-size: 40px; caret-color: rgb(255, 0, 0); transition: all 600s linear; }
+    </style>
+    <input>`);
+  /** The field's caret color, as the capture's own transition holds it. Runs in the page. */
+  const caretColor = (): string => getComputedStyle(document.querySelector('input')!).caretColor;
+  await session.browser.evaluate(() => {
+    document.querySelector('input')!.focus();
+    return null;
+  });
+  expect(await session.browser.evaluate(caretColor)).toBe('rgb(255, 0, 0)');
+  const during: string[] = [];
+  aroundCapture({
+    before: async () => {
+      during.push(await session.browser.evaluate(caretColor));
+    },
+  });
+
+  const first = await capture();
+  const second = await capture();
+  vi.restoreAllMocks();
+
+  expect(during).toEqual(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
+  expect(Buffer.compare(second.bytes, first.bytes)).toBe(0);
+  const inked: string[] = [];
+  for (let y = 20; y < 80; y += 1) {
+    for (let x = 20; x < 220; x += 1) if (first.image.pixelAt(x, y).join() !== WHITE.join()) inked.push(`${String(x)},${String(y)}`);
+  }
+  expect(inked).toEqual([]);
+});
+
 it('leaves an animation that holds still as the page set it: paused, at a zero rate, or driven by scroll', async () => {
   await session.setContent(`<!doctype html>
     <style>

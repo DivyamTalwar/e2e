@@ -33,10 +33,16 @@ type Mask = {
  * events, and one that repeats forever is cancelled to the style under it,
  * for `unmaskSecureFields` to play again. One that holds still is left as
  * the page set it: paused, at a zero playback rate, or driven by a scroll
- * position.
+ * position. The caret's stylesheet is adopted first, so a transition of the
+ * caret color it starts in a field that transitions `all` is finished with
+ * the rest: a transition's value outranks the sheet's `!important`, and the
+ * caret would fade through the screenshot.
  */
 export const maskSecureFields = withDom((dom, selector: string, token: string): number => {
   const sheeted = dom.roots();
+  const caret = new CSSStyleSheet();
+  caret.replaceSync('input, textarea, [contenteditable] { caret-color: transparent !important; }');
+  for (const root of sheeted) root.adoptedStyleSheets = [...root.adoptedStyleSheets, caret];
   const cancelled: Animation[] = [];
   for (const animation of sheeted.flatMap((root) => root.getAnimations())) {
     if (animation.playState !== 'running' || animation.playbackRate === 0 || !(animation.timeline instanceof DocumentTimeline)) continue;
@@ -100,9 +106,6 @@ export const maskSecureFields = withDom((dom, selector: string, token: string): 
     layer.append(box);
     boxes.push({ field, rect, box });
   }
-  const caret = new CSSStyleSheet();
-  caret.replaceSync('input, textarea, [contenteditable] { caret-color: transparent !important; }');
-  for (const root of sheeted) root.adoptedStyleSheets = [...root.adoptedStyleSheets, caret];
   const kept: Map<string, Mask> | undefined = Reflect.get(globalThis, Symbol.for('e2e.bidi.mask'));
   const masks = kept ?? new Map<string, Mask>();
   masks.set(token, { hosts: [...hosts].map(([container, { host }]) => ({ container, host })), caret, sheeted, boxes, selector, cancelled });
