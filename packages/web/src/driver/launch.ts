@@ -43,8 +43,6 @@ export interface BidiLaunchOptions {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** Kills the browser and fails the launch `CANCELLED` at any stage. */
   readonly signal: AbortSignal;
-  /** Overrides the pinned build's binary. */
-  readonly executablePath?: string;
   /** Firefox preferences for this launch, beside the driver's own. */
   readonly firefoxPrefs?: Readonly<Record<string, string | number | boolean>>;
 }
@@ -84,7 +82,7 @@ export async function launchBidiBrowser(name: BrowserName, options: BidiLaunchOp
   const { signal, timeoutMs } = options;
   const what = `BiDi ${name} launch`;
   if (signal.aborted) throw cancelled(`${what} cancelled`);
-  const executable = options.executablePath ?? browserExecutable(name, options.headed, options.env);
+  const executable = browserExecutable(name, options.headed, options.env);
   const profile = mkdtempSync(path.join(os.tmpdir(), `e2e-bidi-${name}-`));
   const failure = (cause: unknown): EngineError => launchFailure(`${what} failed`, cause);
   let watchdog: Watchdog;

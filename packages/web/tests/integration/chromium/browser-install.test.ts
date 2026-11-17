@@ -32,7 +32,7 @@ describe('installing the pinned headless shell', () => {
     expect(logs).toEqual([`Downloading chrome-headless-shell ${buildId} into ${cache}`]);
     expect(readdirSync(path.join(cache, 'chrome-headless-shell'))).toEqual([`${browserPlatform()!.cacheKey}-${buildId}`]);
 
-    const browser = await launchBidiBrowser('chromium', { headed: false, timeoutMs: 30_000, executablePath: executable, env: process.env, signal: new AbortController().signal });
+    const browser = await launchBidiBrowser('chromium', { headed: false, timeoutMs: 30_000, env, signal: new AbortController().signal });
     try {
       const { context } = await browser.connection.send('browsingContext.create', { type: 'tab' });
       const result = await browser.connection.send('script.evaluate', {
