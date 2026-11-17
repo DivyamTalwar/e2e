@@ -8,10 +8,9 @@
 import { describe, expect, it } from 'vitest';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
 import { ContextTree } from '../../src/driver/context-tree.ts';
-import { routeEvents } from '../../src/driver/events.ts';
-import { BidiSession, type SessionSettings } from '../../src/driver/session.ts';
-import { ProtectedApp } from '../../src/protected-app.ts';
+import type { BidiSession, SessionSettings } from '../../src/driver/session.ts';
 import { adoptable, contextInfo, FakeBidi, navigationInfo, settle } from '../helpers/bidi-fake.ts';
+import { closedTabs, unopened } from '../helpers/session-fake.ts';
 
 /** One browsing context as `getTree` lists it under the adopted tab. */
 interface Listed {
@@ -39,13 +38,9 @@ function showing(frames: readonly Listed[] = []): FakeBidi {
  * browser's events as the running attempt is.
  */
 function adopting(fake: FakeBidi, settings: Partial<SessionSettings> = {}): BidiSession {
-  const all = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'adopt-tab', testIdAttribute: 'data-testid', ...settings };
-  const attempt = { protectedApp: new ProtectedApp(new Set(), undefined, undefined), navigation: () => undefined };
   const tree = new ContextTree();
   tree.created('theirs', 'default', null);
-  const session = new BidiSession({ connection: fake.connection, exclusive: false, traits: BROWSER_TRAITS.chromium } as never, all as never, attempt as never, tree);
-  routeEvents(fake.connection, tree, () => session);
-  return session;
+  return unopened(fake, 'chromium', 'adopt-tab', { settings: { viewport: null, ...settings }, traits: BROWSER_TRAITS.chromium, exclusive: false, tree, routed: true });
 }
 
 /** The contexts the driver's own preloads were run in by hand (`prepareOpen`), each script in a `try` of its own. */
@@ -77,11 +72,6 @@ async function appOpensTabs(fake: FakeBidi): Promise<void> {
   fake.emit('browsingContext.domContentLoaded', navigationInfo('joined', 'http://app.test/joined'));
   fake.emit('browsingContext.navigationFailed', navigationInfo('nowhere', 'http://app.test/nowhere'));
   await settle();
-}
-
-/** The tabs the driver asked the browser to close, in order. */
-function closedTabs(fake: FakeBidi): unknown[] {
-  return fake.commands('browsingContext.close').map((command) => command.params['context']);
 }
 
 describe('the tabs an attempt closes in a browser it adopted a tab of', () => {

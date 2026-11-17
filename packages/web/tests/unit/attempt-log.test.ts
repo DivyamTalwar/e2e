@@ -8,48 +8,33 @@
 
 import { describe, expect, it } from 'vitest';
 import type { AppLogEntry } from '@e2e-dev/core/engine';
-import { ContextTree } from '../../src/driver/context-tree.ts';
-import { routeEvents, SESSION_EVENTS } from '../../src/driver/events.ts';
-import { BidiSession } from '../../src/driver/session.ts';
-import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
+import { SESSION_EVENTS } from '../../src/driver/events.ts';
+import type { BidiSession } from '../../src/driver/session.ts';
+import type { BrowserName } from '../../src/browsers.ts';
 import type { UserContextMode } from '../../src/driver/user-context.ts';
-import { ProtectedApp } from '../../src/protected-app.ts';
-import { adoptable, contextInfo, FakeBidi, navigationInfo, settle } from '../helpers/bidi-fake.ts';
+import { contextInfo, FakeBidi, navigationInfo, settle } from '../helpers/bidi-fake.ts';
+import { opensTabs, unopened } from '../helpers/session-fake.ts';
 
 /**
- * A session on `browser` with its events routed and its user context open,
- * which opens `tab` first, or adopts the tab `theirs` it finds open. `fake`
- * names each CDP session after its context, except a frame's whose name
- * starts `same`, which its tab's process renders.
+ * A session on `browser` with its events routed, its user context open, and
+ * no tab yet: it opens `tab` first, or adopts the tab `theirs` it finds
+ * open. `fake` names each CDP session after its context, except a frame's
+ * whose name starts `same`, which its tab's process renders.
  */
-async function unopened(fake: FakeBidi, browser: BrowserName, userContext: UserContextMode = 'fresh'): Promise<{ held: BidiSession; log: AppLogEntry[] }> {
-  const tree = new ContextTree();
-  const tabs = ['tab', 'tab-2'];
+async function tabless(fake: FakeBidi, browser: BrowserName, userContext: UserContextMode = 'fresh'): Promise<{ held: BidiSession; log: AppLogEntry[] }> {
   const log: AppLogEntry[] = [];
   let subscriptions = 0;
-  if (userContext === 'adopt-tab') adoptable(fake, 'theirs');
-  fake
-    .on('browser.createUserContext', { result: { userContext: 'mine' } })
-    .on('network.addDataCollector', { result: { collector: 'c' } })
+  opensTabs(fake, userContext)
     .on('session.subscribe', () => ({ result: { subscription: `subscription-${String(++subscriptions)}` } }))
-    .on('browsingContext.getTree', { result: { contexts: [{ context: 'theirs', userContext: 'default' }] } })
-    .on('browsingContext.create', () => {
-      const context = tabs.shift() ?? 'none';
-      fake.emit('browsingContext.contextCreated', contextInfo(context));
-      return { result: { context } };
-    })
     .on('goog:cdp.getSession', (params) => ({ result: { session: `cdp of ${String(params['context']).startsWith('same') ? 'tab' : String(params['context'])}` } }));
-  const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext, testIdAttribute: 'data-testid' };
-  const attempt = { protectedApp: new ProtectedApp(new Set(), undefined, undefined), appLog: (entry: AppLogEntry) => log.push(entry), navigation: () => undefined };
-  const held = new BidiSession({ connection: fake.connection, exclusive: true, traits: { ...BROWSER_TRAITS[browser], windowClipsViewport: false } } as never, settings as never, attempt as never, tree);
-  routeEvents(fake.connection, tree, () => held);
+  const held = unopened(fake, browser, userContext, { settings: { viewport: null }, appLog: (entry) => log.push(entry), routed: true });
   if (userContext !== 'adopt-tab') await held.openUserContext(new AbortController().signal);
   return { held, log };
 }
 
-/** A session (`unopened`) with its first tab open. */
+/** A session (`tabless`) with its first tab open. */
 async function session(fake: FakeBidi, browser: BrowserName, userContext: UserContextMode = 'fresh'): Promise<{ held: BidiSession; log: AppLogEntry[] }> {
-  const opened = await unopened(fake, browser, userContext);
+  const opened = await tabless(fake, browser, userContext);
   if (userContext === 'adopt-tab') await opened.held.openUserContext(new AbortController().signal);
   else await opened.held.ensureContext();
   return opened;
@@ -125,7 +110,7 @@ describe('the log of an attempt\'s pages', () => {
 
   it('fails the tab\'s open when the subscription is refused, closing the tab, and subscribes again for the next one', async () => {
     const fake = new FakeBidi();
-    const { held } = await unopened(fake, 'firefox');
+    const { held } = await tabless(fake, 'firefox');
     fake.on('session.subscribe', (params) => (forLog(params) ? { error: 'invalid argument', message: 'no such event' } : { result: { subscription: 'other' } }));
     await expect(held.ensureContext()).rejects.toThrow('no such event');
     expect(fake.commands('browsingContext.close').map((command) => command.params['context'])).toEqual(['tab']);

@@ -7,14 +7,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ContextTree } from '../../src/driver/context-tree.ts';
-import { routeEvents } from '../../src/driver/events.ts';
 import { fixtureKeyStroke } from '../../src/driver/keyboard.ts';
-import { BidiSession } from '../../src/driver/session.ts';
-import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
+import type { BidiSession } from '../../src/driver/session.ts';
+import type { BrowserName } from '../../src/browsers.ts';
 import type { UserContextMode } from '../../src/driver/user-context.ts';
-import { ProtectedApp } from '../../src/protected-app.ts';
-import { adoptable, contextInfo, FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import { contextInfo, FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import { opensTabs, unopened } from '../helpers/session-fake.ts';
 
 /**
  * A session on `browser` with its events routed and its first tab open:
@@ -23,24 +21,10 @@ import { adoptable, contextInfo, FakeBidi, settle } from '../helpers/bidi-fake.t
  * after it, and answers whether a tab's document holds focus from `focused`.
  */
 async function session(fake: FakeBidi, browser: BrowserName, userContext: UserContextMode = 'fresh', focused: () => boolean = () => true): Promise<BidiSession> {
-  const tree = new ContextTree();
-  const tabs = ['tab', 'tab-2'];
-  if (userContext === 'adopt-tab') adoptable(fake, 'theirs');
-  fake
-    .on('browser.createUserContext', { result: { userContext: 'mine' } })
-    .on('network.addDataCollector', { result: { collector: 'c' } })
-    .on('browsingContext.getTree', { result: { contexts: [{ context: 'theirs', userContext: 'default' }] } })
-    .on('browsingContext.create', () => {
-      const context = tabs.shift() ?? 'none';
-      fake.emit('browsingContext.contextCreated', contextInfo(context));
-      return { result: { context } };
-    })
+  opensTabs(fake, userContext)
     .on('goog:cdp.getSession', (params) => ({ result: { session: `cdp of ${String(params['context'])}` } }))
     .on('script.callFunction', () => ({ result: { type: 'success', realm: 'r', result: { type: 'boolean', value: focused() } } }));
-  const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext, testIdAttribute: 'data-testid' };
-  const attempt = { protectedApp: new ProtectedApp(new Set(), undefined, undefined) };
-  const opened = new BidiSession({ connection: fake.connection, exclusive: true, traits: { ...BROWSER_TRAITS[browser], windowClipsViewport: false } } as never, settings as never, attempt as never, tree);
-  routeEvents(fake.connection, tree, () => opened);
+  const opened = unopened(fake, browser, userContext, { settings: { viewport: null }, routed: true });
   await opened.openUserContext(new AbortController().signal);
   await opened.ensureContext();
   return opened;
