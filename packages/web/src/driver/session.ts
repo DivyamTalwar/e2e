@@ -219,11 +219,20 @@ export class BidiSession {
    */
   private async releaseTabs(): Promise<void> {
     const opened = this.tabs.list().filter((tab) => tab.context !== this.adopted);
+    await this.forgetTabs();
+    if (this.settings.userContext === 'fresh') return;
+    await Promise.all(opened.map((tab) => releaseQuietly(this.connection.send('browsingContext.close', { context: tab.context }))));
+  }
+
+  /**
+   * Forgets every tab of the attempt, the shown one with them, at once,
+   * then ends the recording while its tab can still flush it. The tabs
+   * are about to close: nothing may fail between this and their close.
+   */
+  private async forgetTabs(): Promise<void> {
     this.tabs.clear();
     this.retireContext();
     await this.video.contextClosing();
-    if (this.settings.userContext === 'fresh') return;
-    await Promise.all(opened.map((tab) => releaseQuietly(this.connection.send('browsingContext.close', { context: tab.context }))));
   }
 
   /** The attempt's tab; `INVALID_STATE` before the first open. */
@@ -347,17 +356,16 @@ export class BidiSession {
 
   /**
    * Closes the tab and every tab the app opened, keeping the user context's
-   * storage, as a restart closes every page. Nothing more is closed once
-   * `signal` aborted.
+   * storage, as a restart closes every page. One whose `signal` aborted
+   * before the open tabs were read closes none and leaves the attempt's
+   * tabs as they were; after that every one is forgotten and closed.
    */
   async closeContext(signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
-    await this.video.contextClosing();
-    this.tabs.clear();
-    this.retireContext();
     const { contexts } = await this.connection.send('browsingContext.getTree', { maxDepth: 0 });
     signal.throwIfAborted();
     const tabs = contexts.filter((info) => info.userContext === this.userContext.id).map((info) => info.context);
+    await this.forgetTabs();
     await Promise.all(tabs.map(async (context) => {
       await this.network.removeContext(context);
       await unlessStale(this.connection.send('browsingContext.close', { context }), undefined);

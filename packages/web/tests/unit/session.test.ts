@@ -438,6 +438,22 @@ describe('BidiSession tabs', () => {
     expect(closedTabs(fake)).toEqual(['first', 'second']);
     expect(kept.tabs.list()).toEqual([]);
   });
+
+  it('keeps its tabs when a restart is given up on before it closed them', async () => {
+    let listed: () => void = () => undefined;
+    const fake = new FakeBidi();
+    const held = await session(fake);
+    fake.on('browsingContext.getTree', () => new Promise((resolve) => (listed = () => resolve({ result: { contexts: [{ context: 'tab', userContext: 'mine' }] } }))));
+    const givenUp = new AbortController();
+    const restarting = held.closeContext(givenUp.signal);
+    await settle();
+    givenUp.abort(new Error('given up'));
+    listed();
+    await expect(restarting).rejects.toThrow('given up');
+    expect(closedTabs(fake)).toEqual([]);
+    expect(held.context).toBe('tab');
+    expect(held.tabs.list().map((tab) => tab.context)).toEqual(['tab']);
+  });
 });
 
 describe('BidiSession.close', () => {
