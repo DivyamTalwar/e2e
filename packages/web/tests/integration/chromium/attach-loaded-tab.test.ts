@@ -12,6 +12,7 @@ import { attachBrowser } from '../../../src/index.ts';
 import { closeRemoteChrome, installedChrome, launchRemoteChrome, type RemoteChrome, type RemoteChromeOptions } from '../../helpers/cdp-host.ts';
 import { openTab, openTabs, showOnly, showTab } from '../../helpers/cdp-tabs.ts';
 import { startPageServer, type PageServer } from '../../helpers/web-session.ts';
+import { gate } from '../../helpers/gate.ts';
 
 /** A button that counts its clicks, two fields that log their edits, a framed button, a shadow host, and two dialogs over a button. */
 const APP = `<!doctype html><title>App</title>
@@ -161,8 +162,7 @@ describe('the tab attachBrowser drives of several', () => {
 
   it('is never a page the full Chrome prerenders beside the tab', async () => {
     await withChrome({ fullChrome: installedChrome() }, async (endpoint) => {
-      let prerendered = (): void => undefined;
-      const requested = new Promise<void>((resolve) => { prerendered = resolve; });
+      const { held: requested, release: prerendered } = gate();
       server.serve('/next', (request, response) => {
         if (String(request.headers['sec-purpose']).includes('prerender')) prerendered();
         response.writeHead(200, { 'content-type': 'text/html' });

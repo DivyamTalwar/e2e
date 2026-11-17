@@ -14,7 +14,7 @@ import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
 import type { UserContextMode } from '../../src/driver/user-context.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
-import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import { adoptable, contextInfo, FakeBidi, navigationInfo, settle } from '../helpers/bidi-fake.ts';
 
 /**
  * A session on `browser` with its events routed and its user context open,
@@ -27,14 +27,15 @@ async function unopened(fake: FakeBidi, browser: BrowserName, userContext: UserC
   const tabs = ['tab', 'tab-2'];
   const log: AppLogEntry[] = [];
   let subscriptions = 0;
+  if (userContext === 'adopt-tab') adoptable(fake, 'theirs');
   fake
     .on('browser.createUserContext', { result: { userContext: 'mine' } })
     .on('network.addDataCollector', { result: { collector: 'c' } })
     .on('session.subscribe', () => ({ result: { subscription: `subscription-${String(++subscriptions)}` } }))
     .on('browsingContext.getTree', { result: { contexts: [{ context: 'theirs', userContext: 'default' }] } })
     .on('browsingContext.create', () => {
-      const context = tabs.shift();
-      fake.emit('browsingContext.contextCreated', { context, userContext: 'mine', parent: null });
+      const context = tabs.shift() ?? 'none';
+      fake.emit('browsingContext.contextCreated', contextInfo(context));
       return { result: { context } };
     })
     .on('goog:cdp.getSession', (params) => ({ result: { session: `cdp of ${String(params['context']).startsWith('same') ? 'tab' : String(params['context'])}` } }));
@@ -81,7 +82,7 @@ describe('the log of an attempt\'s pages', () => {
     const { held } = await session(fake, 'chromium');
     expect(subscribed(fake)).toEqual([{ events: CDP_EVENTS, userContexts: ['mine'] }]);
     await held.newTab();
-    fake.emit('browsingContext.contextCreated', { context: 'popup', userContext: 'mine', parent: null, originalOpener: 'tab', url: 'about:blank', children: null });
+    fake.emit('browsingContext.contextCreated', contextInfo('popup', { originalOpener: 'tab' }));
     await settle();
     expect(subscribed(fake)).toHaveLength(1);
     expect(reporting(fake)).toEqual(['cdp of tab', 'cdp of tab-2', 'cdp of popup']);
@@ -107,9 +108,9 @@ describe('the log of an attempt\'s pages', () => {
     const fake = new FakeBidi().on('script.callFunction', { result: { type: 'success', realm: 'r', result: { type: 'string', value: '' } } });
     await session(fake, 'chromium');
     for (const frame of ['same-site-frame', 'cross-site-frame']) {
-      fake.emit('browsingContext.contextCreated', { context: frame, parent: 'tab', url: 'about:blank', children: null });
-      fake.emit('browsingContext.navigationCommitted', { context: frame, navigation: 'n', timestamp: 0, url: 'https://pay.test/frame' });
-      fake.emit('browsingContext.navigationCommitted', { context: frame, navigation: 'n-2', timestamp: 0, url: 'https://pay.test/frame-2' });
+      fake.emit('browsingContext.contextCreated', contextInfo(frame, { parent: 'tab' }));
+      fake.emit('browsingContext.navigationCommitted', navigationInfo(frame, 'https://pay.test/frame'));
+      fake.emit('browsingContext.navigationCommitted', navigationInfo(frame, 'https://pay.test/frame-2', 'n-2'));
     }
     await settle();
     expect(reporting(fake)).toEqual(['cdp of tab', 'cdp of cross-site-frame']);
@@ -136,7 +137,7 @@ describe('the log of an attempt\'s pages', () => {
   it('routes Chromium\'s console calls, uncaught errors, and own lines to the app log, and leaves out debug lines and the echo of a failed load', async () => {
     const fake = new FakeBidi();
     const { log } = await session(fake, 'chromium');
-    const cdp = (event: string, params: unknown): void => fake.emit(`goog:cdp.${event}`, { event, params, session: 'cdp of tab' });
+    const cdp = (event: string, params: unknown): void => fake.emitExtension(`goog:cdp.${event}`, { event, params, session: 'cdp of tab' });
     const at = { callFrames: [{ functionName: '', scriptId: '1', url: 'https://app.test/app.js', lineNumber: 11, columnNumber: 2 }] };
     cdp('Runtime.consoleAPICalled', { type: 'warning', args: [{ type: 'string', value: 'deprecated %s' }, { type: 'string', value: 'prop' }], executionContextId: 1, timestamp: 0, stackTrace: at });
     cdp('Runtime.consoleAPICalled', { type: 'debug', args: [{ type: 'string', value: 'noise' }], executionContextId: 1, timestamp: 0 });

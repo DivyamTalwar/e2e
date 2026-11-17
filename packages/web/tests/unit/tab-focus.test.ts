@@ -14,7 +14,7 @@ import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
 import type { UserContextMode } from '../../src/driver/user-context.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
-import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import { adoptable, contextInfo, FakeBidi, settle } from '../helpers/bidi-fake.ts';
 
 /**
  * A session on `browser` with its events routed and its first tab open:
@@ -25,13 +25,14 @@ import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
 async function session(fake: FakeBidi, browser: BrowserName, userContext: UserContextMode = 'fresh', focused: () => boolean = () => true): Promise<BidiSession> {
   const tree = new ContextTree();
   const tabs = ['tab', 'tab-2'];
+  if (userContext === 'adopt-tab') adoptable(fake, 'theirs');
   fake
     .on('browser.createUserContext', { result: { userContext: 'mine' } })
     .on('network.addDataCollector', { result: { collector: 'c' } })
     .on('browsingContext.getTree', { result: { contexts: [{ context: 'theirs', userContext: 'default' }] } })
     .on('browsingContext.create', () => {
-      const context = tabs.shift();
-      fake.emit('browsingContext.contextCreated', { context, userContext: 'mine', parent: null });
+      const context = tabs.shift() ?? 'none';
+      fake.emit('browsingContext.contextCreated', contextInfo(context));
       return { result: { context } };
     })
     .on('goog:cdp.getSession', (params) => ({ result: { session: `cdp of ${String(params['context'])}` } }))
@@ -54,7 +55,7 @@ function emulated(fake: FakeBidi): unknown[] {
 
 /** A tab the app opened from `tab`, as the browser announces it. */
 function popup(fake: FakeBidi, context: string): void {
-  fake.emit('browsingContext.contextCreated', { context, userContext: 'mine', parent: null, originalOpener: 'tab', url: 'about:blank', children: null });
+  fake.emit('browsingContext.contextCreated', contextInfo(context, { originalOpener: 'tab' }));
 }
 
 describe('focus on Chromium', () => {
@@ -81,8 +82,8 @@ describe('focus on Chromium', () => {
   it('leaves a tab of another user context, and a frame, as they are', async () => {
     const fake = new FakeBidi();
     await session(fake, 'chromium');
-    fake.emit('browsingContext.contextCreated', { context: 'elsewhere', userContext: 'other', parent: null, originalOpener: 'tab', url: 'about:blank', children: null });
-    fake.emit('browsingContext.contextCreated', { context: 'frame', parent: 'tab', url: 'about:blank', children: null });
+    fake.emit('browsingContext.contextCreated', contextInfo('elsewhere', { userContext: 'other', originalOpener: 'tab' }));
+    fake.emit('browsingContext.contextCreated', contextInfo('frame', { parent: 'tab' }));
     await settle();
     expect(emulated(fake)).toEqual([{ session: 'cdp of tab', enabled: true }]);
   });
@@ -97,7 +98,7 @@ describe('focus on Chromium', () => {
     const fake = new FakeBidi();
     const held = await session(fake, 'chromium');
     fake.on('goog:cdp.sendCommand', (params) => {
-      if (params['session'] === 'cdp of popup') fake.emit('browsingContext.contextDestroyed', { context: 'popup', userContext: 'mine', parent: null });
+      if (params['session'] === 'cdp of popup') fake.emit('browsingContext.contextDestroyed', contextInfo('popup'));
       return { error: 'unknown error', message: `Unknown CDP session ID: ${String(params['session'])}` };
     });
     popup(fake, 'popup');

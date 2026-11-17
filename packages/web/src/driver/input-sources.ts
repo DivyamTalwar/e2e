@@ -11,7 +11,7 @@ const ENTER = keyValue(KEYS.get('Enter')!, false)!;
 export function typeSource(graphemes: readonly string[]): Input.KeySourceActions {
   const actions: Input.KeySourceAction[] = [];
   for (const grapheme of graphemes) {
-    const value = grapheme === '\n' || grapheme === '\r\n' ? ENTER : grapheme;
+    const value = grapheme === '\n' || grapheme === '\r' || grapheme === '\r\n' ? ENTER : grapheme;
     actions.push({ type: 'keyDown', value }, { type: 'keyUp', value });
   }
   return { type: 'key', id: 'keyboard', actions };

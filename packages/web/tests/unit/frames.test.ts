@@ -135,7 +135,7 @@ async function children(iframes: Record<string, ChildFrame>): Promise<{ fake: Fa
       if (frame.gone === 'realms') return { error: 'no such frame' };
       return { result: { realms: [{ type: 'window', realm: 'r', origin: 'http://app.test', context: frame.window, ...(frame.bare === true ? { sandbox: 'e2e-frames' } : {}) }] } };
     });
-  const documents = await childDocuments(fake.connection, 'top', Object.keys(iframes).map((id) => new ElementRef(id)), (url) => url.startsWith('http://app.test'));
+  const documents = await childDocuments(fake.connection, 'top', Object.keys(iframes).map((id) => new ElementRef(id)), (url) => new URL(url).origin === 'http://app.test');
   return { fake, documents };
 }
 

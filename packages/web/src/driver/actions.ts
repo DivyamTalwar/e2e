@@ -181,7 +181,7 @@ async function takesKeystrokes(session: BidiSession, documents: readonly string[
 export async function typeInto(session: BidiSession, text: string, signal: AbortSignal): Promise<void> {
   const runs: { readonly keys: boolean; readonly graphemes: string[] }[] = [];
   for (const { segment } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
-    const keys = /^[\x20-\x7e]$/.test(segment) || segment === '\n' || segment === '\r\n' || segment === '\t';
+    const keys = /^[\x20-\x7e]$/.test(segment) || segment === '\n' || segment === '\r' || segment === '\r\n' || segment === '\t';
     const last = runs.at(-1);
     if (last?.keys === keys) last.graphemes.push(segment);
     else runs.push({ keys, graphemes: [segment] });

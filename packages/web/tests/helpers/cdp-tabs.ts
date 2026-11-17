@@ -6,6 +6,7 @@
 
 import { expect } from 'vitest';
 import type { PageServer } from './web-session.ts';
+import { gate } from './gate.ts';
 
 /** One tab Chrome lists: its target id and the URL it shows. */
 export interface OpenTab {
@@ -24,8 +25,7 @@ export async function openTabs(endpoint: string): Promise<OpenTab[]> {
  * open, and resolves once its document has run its scripts.
  */
 export async function openTab(endpoint: string, server: PageServer, pathname: string, html: string): Promise<OpenTab> {
-  let loaded = (): void => undefined;
-  const ready = new Promise<void>((resolve) => { loaded = resolve; });
+  const { held: ready, release: loaded } = gate();
   server.serve(`${pathname}-loaded`, (_request, response) => {
     loaded();
     response.end();

@@ -86,6 +86,11 @@ export class FakeBidi {
     this.deliver(JSON.stringify({ type: 'event', method, params }));
   }
 
+  /** Emits one vendor event (`goog:cdp.*`), which the protocol's typings do not list. */
+  emitExtension(method: `${string}:${string}`, params: Record<string, unknown>): void {
+    this.deliver(JSON.stringify({ type: 'event', method, params }));
+  }
+
   /** Emits `events` to the driver, in order. */
   emitAll(events: readonly FakeEvent[]): void {
     for (const [method, params] of events) this.deliver(JSON.stringify({ type: 'event', method, params }));
@@ -115,4 +120,12 @@ export class FakeBidi {
 /** Resolves after pending microtasks and one macrotask, so queued sends and replies settle. */
 export function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** Has `fake` answer what an adoption asks beside the open contexts: each of `tabs` is a page target, the first the visible one, and no document takes a call. */
+export function adoptable(fake: FakeBidi, ...tabs: string[]): FakeBidi {
+  return fake
+    .on('goog:cdp.sendCommand', { result: { result: { targetInfos: tabs.map((targetId) => ({ targetId, type: 'page' })) } } })
+    .on('script.getRealms', { result: { realms: [] } })
+    .on('script.callFunction', (params) => ({ result: { type: 'success', realm: 'r', result: { type: 'boolean', value: (params['target'] as { context: string }).context === tabs[0] } } }));
 }

@@ -17,6 +17,7 @@ import { TestError, type EngineFixtureContext, type EngineHandle, type EngineSna
 import type { Browser } from '../../src/index.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
 import { byRole, cleanup, flatten, initInfo, onFirefox, operation as attemptOperation, testWeb } from '../helpers/web-session.ts';
+import { gate } from '../helpers/gate.ts';
 
 const PAGES: Readonly<Record<string, string>> = {
   '/opener': `<!doctype html><title>Opener</title><h1>Opener</h1>
@@ -72,8 +73,7 @@ describe('tabs', () => {
     else answerHeld(response);
   };
   /** Opens the gate: requests for `/gate` are answered from then on, and held until then. */
-  let openGate: () => void = () => undefined;
-  const gateOpened = new Promise<void>((resolve) => (openGate = resolve));
+  const { held: gateOpened, release: openGate } = gate();
 
   beforeAll(async () => {
     server = createServer((request, response) => {

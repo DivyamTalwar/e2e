@@ -13,7 +13,7 @@ import { BidiInput } from './input.ts';
 import { ArtifactPaths } from './artifact-paths.ts';
 import type { ContextTree } from './context-tree.ts';
 import { AttemptDownloads, type RemoteDownloads } from './downloads.ts';
-import { BidiError, ErrorLatch, invalidState, releaseQuietly, unlessStale } from '../errors.ts';
+import { ErrorLatch, invalidState, releaseQuietly, unlessStale } from '../errors.ts';
 import { AttemptLog } from './events.ts';
 import { FrameRegistry, scriptedContexts } from './frames.ts';
 import type { BidiBrowser } from './launch.ts';

@@ -22,6 +22,7 @@ import { decodePng } from '../helpers/png.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
 import { browserFixture, byRole, cleanup, flatten, initInfo, operation, startPageServer, testWeb as web, type PageServer } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
+import { gate } from '../helpers/gate.ts';
 
 /** The segments as files: a local recording never links, so a link here is a failure. */
 function videoFiles(segments: readonly VideoSegment[]): VideoFile[] {
@@ -924,8 +925,7 @@ describe('web engine lifecycle', () => {
     await withAttempt(engine, app, artifactsDir, 's3', async () => {
       const page = pageOf(engine);
       const { browser } = page;
-      let asked: () => void = () => undefined;
-      const inFlight = new Promise<void>((resolve) => (asked = resolve));
+      const { held: inFlight, release: asked } = gate();
       const stuck = pages.serve('/stuck', () => asked());
       const frame = pages.serve('/stuck-frame', `<script>addEventListener('message', () => void fetch(${JSON.stringify(stuck)}))</script>`);
       await browser.goto(pages.serve('/stuck-outer', `<iframe src="${frame}"></iframe>`), { waitUntil: 'networkidle' });

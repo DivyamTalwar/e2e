@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Browser } from '../../src/fixture/types.ts';
 import { onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { gate } from '../helpers/gate.ts';
 
 /**
  * One origin with a body for every outcome `waitForResponse` reports: a full
@@ -14,8 +15,7 @@ import { onFirefox, startWebSession, type WebSession } from '../helpers/web-sess
  * and reports the response rather than an empty reply.
  */
 function startBodyServer(): Promise<{ server: Server; url: string; sendSlowBody: () => void }> {
-  let sendSlowBody: () => void = () => undefined;
-  const slowBodyDue = new Promise<void>((resolve) => (sendSlowBody = resolve));
+  const { held: slowBodyDue, release: sendSlowBody } = gate();
   const server = createServer((request, response) => {
     switch (request.url) {
       case '/':

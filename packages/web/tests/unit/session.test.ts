@@ -15,7 +15,7 @@ import type { UserContextMode } from '../../src/driver/user-context.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
 import { afterDispatch, BidiError, classify } from '../../src/errors.ts';
 import type { NodeRef } from '@e2e-dev/core/engine';
-import { contextInfo, FakeBidi, type Reply, type SentCommand, settle } from '../helpers/bidi-fake.ts';
+import { adoptable, contextInfo, FakeBidi, type Reply, type SentCommand, settle } from '../helpers/bidi-fake.ts';
 import { gate } from '../helpers/gate.ts';
 import { callOf } from '../helpers/page-call.ts';
 import { ElementRef } from '../../src/driver/script.ts';
@@ -49,14 +49,6 @@ async function session(fake: FakeBidi, browser: BrowserName = 'chromium'): Promi
   await opened.openUserContext(new AbortController().signal);
   await opened.ensureContext();
   return opened;
-}
-
-/** Has `fake` answer what an adoption asks beside the open contexts: each of `tabs` is a page target, the first the visible one, and no document takes a call. */
-function adoptable(fake: FakeBidi, ...tabs: string[]): FakeBidi {
-  return fake
-    .on('goog:cdp.sendCommand', { result: { result: { targetInfos: tabs.map((targetId) => ({ targetId, type: 'page' })) } } })
-    .on('script.getRealms', { result: { realms: [] } })
-    .on('script.callFunction', (params) => ({ result: { type: 'success', realm: 'r', result: { type: 'boolean', value: (params['target'] as { context: string }).context === tabs[0] } } }));
 }
 
 /** The BiDi key source of one `browser.keyboard` call, with Shift held before it or not. */

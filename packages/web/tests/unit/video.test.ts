@@ -18,6 +18,7 @@ import { EngineError } from '@e2e-dev/core/engine';
 import { BidiVideo, type RecordedTab, type VideoOptions } from '../../src/driver/video.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
 import { FakeBidi, type Reply } from '../helpers/bidi-fake.ts';
+import { gate } from '../helpers/gate.ts';
 
 const VIEWPORT = { width: 320, height: 200 };
 
@@ -233,8 +234,7 @@ describe('BidiVideo', () => {
   });
 
   it('ends at once a segment whose start outlived the stop', async () => {
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
+    const { held, release } = gate();
     bidi.on('browsingContext.startScreencast', async () => {
       await held;
       return { result: { screencast: 'cast-tab-1' } };

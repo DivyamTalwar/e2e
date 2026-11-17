@@ -12,12 +12,7 @@ import { attachBrowser } from '../../../src/index.ts';
 import { launchRemoteChrome, recordGoodbyes, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { startPageServer, type PageServer } from '../../helpers/web-session.ts';
-
-/** The page targets Chrome lists over its DevTools HTTP endpoint. */
-async function pages(endpoint: string): Promise<{ id: string; url: string }[]> {
-  const targets = (await (await fetch(`${endpoint}/json/list`)).json()) as { id: string; type: string; url: string }[];
-  return targets.filter((target) => target.type === 'page').map(({ id, url }) => ({ id, url }));
-}
+import { openTab, openTabs } from '../../helpers/cdp-tabs.ts';
 
 describe('attachBrowser', () => {
   let app: FixtureApp;
@@ -41,7 +36,7 @@ describe('attachBrowser', () => {
   });
 
   it('signs in on the open tab and leaves the tab, the browser, and the cookie behind', async () => {
-    const [tab] = await pages(endpoint);
+    const [tab] = await openTabs(endpoint);
     expect(tab).toBeDefined();
     const goodbyes = recordGoodbyes();
 
@@ -57,7 +52,7 @@ describe('attachBrowser', () => {
     }
 
     expect(goodbyes()).toEqual(['session.end']);
-    expect(await pages(endpoint)).toEqual([{ id: tab!.id, url: `${app.url}/` }]);
+    expect(await openTabs(endpoint)).toEqual([{ id: tab!.id, url: `${app.url}/` }]);
 
     await using second = await attachBrowser(endpoint);
     expect(await second.browser.url()).toBe(`${app.url}/`);
@@ -66,17 +61,17 @@ describe('attachBrowser', () => {
   });
 
   it('closes the tabs it opened when it detaches, whichever tab is active, and leaves the open tab', async () => {
-    const before = await pages(endpoint);
+    const before = await openTabs(endpoint);
     const attached = await attachBrowser(endpoint);
     try {
       const opened = await attached.browser.newTab();
-      expect(await pages(endpoint)).toHaveLength(before.length + 1);
+      expect(await openTabs(endpoint)).toHaveLength(before.length + 1);
       await attached.browser.tabs()[0]!.activate();
       expect(opened.isActive()).toBe(false);
     } finally {
       await attached.close();
     }
-    expect(await pages(endpoint)).toEqual(before);
+    expect(await openTabs(endpoint)).toEqual(before);
   });
 
   it('routes and waits for the requests of a frame the tab loaded before it attached', async () => {
@@ -140,19 +135,11 @@ describe('attachBrowser', () => {
    * preload of an attach ever ran in the document, and returns its URL.
    */
   async function showUnattached(pathname: string, html: string): Promise<string> {
-    let loaded = (): void => undefined;
-    const ready = new Promise<void>((resolve) => { loaded = resolve; });
-    server.serve(`${pathname}-loaded`, (_request, response) => {
-      loaded();
-      response.end();
-    });
-    const url = server.serve(pathname, `${html}<script>fetch(${JSON.stringify(`${pathname}-loaded`)})</script>`);
-    const before = await pages(endpoint);
-    const opened = (await (await fetch(`${endpoint}/json/new?${url}`, { method: 'PUT' })).json()) as { id: string };
-    await ready;
+    const before = await openTabs(endpoint);
+    const opened = await openTab(endpoint, server, pathname, html);
     for (const tab of before) await fetch(`${endpoint}/json/close/${tab.id}`);
-    await expect.poll(() => pages(endpoint)).toEqual([{ id: opened.id, url }]);
-    return url;
+    await expect.poll(() => openTabs(endpoint)).toEqual([opened]);
+    return opened.url;
   }
 
   it('taps the page it finds open, which no attach loaded, with no navigation first', async () => {

@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { aroundCapture, heldByCapture } from '../../helpers/capture-hooks.ts';
 import { installedChrome, launchRemoteChrome, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startWebSession, type WebSession } from '../../helpers/web-session.ts';
+import { gate } from '../../helpers/gate.ts';
 
 /** A block that blinks forever beside a secure field, in a page that records whether each `pageshow` restored it from the cache. */
 const MASKED = `<!doctype html>
@@ -41,8 +42,7 @@ describe('a document that leaves masked on a browser that keeps it in its back-f
     const next = session.serve('/next', '<!doctype html><title>Next</title><p>Next</p>');
     await session.open(masked);
     const during: string[] = [];
-    let left!: () => void;
-    const whenLeft = new Promise<void>((resolve) => (left = resolve));
+    const { held: whenLeft, release: left } = gate();
     aroundCapture({
       before: async (order) => {
         if (order > 1) return;
