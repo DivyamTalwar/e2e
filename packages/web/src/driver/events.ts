@@ -43,8 +43,10 @@ const ABORTED = new Set(['net::ERR_ABORTED', 'NS_BINDING_ABORTED']);
  * Routes `connection`'s events to the attempt `current` returns; returns the
  * unsubscribe. A prompt in a context of another session (a browser shared
  * over CDP) is left for that session to answer. A tab the app opens joins
- * the attempt's tabs once a document loads in it, and a tab that closes
- * leaves them, with the input state kept of it. Where the app went is told
+ * the attempt's tabs once a document loads in it, its page behaving as
+ * focused from when it opened (`BidiInput.emulateFocus`; one that closed
+ * before it was told has no page to tell), and a tab that closes leaves
+ * them, with the input state kept of it. Where the app went is told
  * to the app log: the shown tab's own navigations, the tabs the app opens,
  * where a background tab went, and the frames it loads, never the driver's.
  * Every origin a document starts or lands at (after a redirect) is visited,
@@ -112,6 +114,10 @@ export function routeEvents(connection: BidiConnection, contexts: ContextTree, c
       const session = ours(info.context);
       if (info.parent != null || info.originalOpener == null || session === undefined) return;
       void session.network.addContext(info.context).catch((cause: unknown) => session.latch.latch(asError(cause)));
+      void session.input.emulateFocus(info.context).catch((cause: unknown) => {
+        // The browser announces a tab's close ahead of the failure of a command still out for it.
+        if (contexts.owner(info.context) !== undefined) session.latch.latch(asError(cause));
+      });
       session.tabs.appOpened(info.context, info.originalOpener);
     }),
     connection.on('browsingContext.contextDestroyed', (info) => {

@@ -14,6 +14,7 @@ import { chromiumKeyCommands, holdsAfter, type CdpKeyCommand } from './chromium-
 import { codeOfValue, MODIFIER_CODES, pressStroke, strokeSource, type KeyStroke, type Modifier } from './keyboard.ts';
 import type { BrowserTraits } from '../browsers.ts';
 import { nextFrame } from '../in-page/document.ts';
+import { holdsFocus } from '../in-page/edits.ts';
 import type { BidiConnection } from './connection.ts';
 import { BidiError, unlessStale } from '../errors.ts';
 import { callFunction } from './script.ts';
@@ -74,8 +75,8 @@ class InputState {
   }
 }
 
-/** How the operation running now takes a change to its dispatch count (`DispatchScope`). */
-const operationDispatches = new AsyncLocalStorage<(delta: number) => void>();
+/** The dispatch count of the operation running now (`DispatchScope`). */
+const operationDispatches = new AsyncLocalStorage<DispatchScope>();
 
 /**
  * One operation's own dispatch count, so whether it sent input that may have
@@ -88,7 +89,12 @@ export class DispatchScope {
 
   /** Runs `work` with every input send and page mutation it makes counted here too. */
   run<T>(work: () => Promise<T>): Promise<T> {
-    return operationDispatches.run((delta) => { this.count += delta; }, work);
+    return operationDispatches.run(this, work);
+  }
+
+  /** Counts one send or mutation of `run`'s work (1), or takes one back (-1). */
+  add(delta: 1 | -1): void {
+    this.count += delta;
   }
 
   /** Whether `run`'s work sent input or changed the page, or has a send whose verdict is still out. */
@@ -155,7 +161,16 @@ export class BidiInput {
   /** Counts one input send or page mutation, for the attempt and for the operation running it (`DispatchScope`). */
   private count(): void {
     this.total += 1;
-    operationDispatches.getStore()?.(1);
+    operationDispatches.getStore()?.add(1);
+  }
+
+  /**
+   * Whether the operation running now sent input or changed the page so far
+   * (`DispatchScope.dispatched`), which decides how a failure after it
+   * reads: nothing happened, or the app may have taken part of it.
+   */
+  get dispatched(): boolean {
+    return operationDispatches.getStore()?.dispatched === true;
   }
 
   /**
@@ -164,12 +179,43 @@ export class BidiInput {
    * changed nothing. The attempt's count keeps it (`dispatches`).
    */
   takeBack(): void {
-    operationDispatches.getStore()?.(-1);
+    operationDispatches.getStore()?.add(-1);
   }
 
   /** Forgets what the tab `context` held and where its mouse was, once the browser closed it. */
   forget(context: string): void {
     this.states.delete(context);
+  }
+
+  /**
+   * Has the page of the tab `context` behave as focused whatever window or
+   * tab the system shows in front of it, where the browser emulates focus
+   * per tab (`BrowserTraits.focus`): its documents report focus, its fields
+   * get their `focus` and `blur`, and text typed there is taken, in a
+   * headed window behind another as in a headless one. It lasts as long as
+   * the tab, through its navigations. Elsewhere it does nothing: the tab at
+   * the front holds focus (`holdFocus`).
+   */
+  async emulateFocus(context: string): Promise<void> {
+    if (this.target.traits.focus !== 'emulated') return;
+    const cdp = await ChromiumCdp.forContext(this.target.connection, context);
+    await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+  }
+
+  /**
+   * Resolves once the shown tab holds the browser's focus, where only the
+   * tab at the front does (`BrowserTraits.focus`): one that lost the front,
+   * to a tab the app opened or to another window, is brought back to it.
+   * Keys reach a tab without it, but text inserted where focus is does not,
+   * so a string typed there would be entered in part. A tab whose document
+   * went away under the read is left to the input that follows.
+   */
+  async holdFocus(): Promise<void> {
+    if (this.target.traits.focus !== 'front-tab') return;
+    const { connection } = this.target;
+    const context = this.target.context();
+    if (await unlessStale(callFunction(connection, context, holdsFocus), true) === true) return;
+    await connection.send('browsingContext.activate', { context });
   }
 
   /**
@@ -300,12 +346,20 @@ export class BidiInput {
     return this.cdpSession.cdp;
   }
 
-  /** The tab the sources go to, the sources as they go out, that tab's state they were read against, and what they leave of it (`after`) once the browser took them; refuses a pointer target outside the viewport. */
+  /**
+   * The tab the sources go to, the sources as they go out, that tab's state
+   * they were read against, and what they leave of it (`after`) once the
+   * browser took them; refuses a pointer target outside the viewport. Keys
+   * go to a tab that holds the browser's focus (`holdFocus`), a pointer to
+   * one that shows a frame where the browser needs it (`framePresented`).
+   */
   private async prepare(actions: readonly Input.SourceActions[], signal: AbortSignal | undefined): Promise<{ context: string; sent: Input.SourceActions[]; state: InputState; after: InputState }> {
     signal?.throwIfAborted();
     this.target.context();
     await this.checkInViewport(actions.flatMap(targets));
-    if (this.target.traits.pointerWaitsForFrame && actions.some((source) => source.type !== 'key')) await this.framePresented();
+    const keysOnly = actions.every((source) => source.type === 'key');
+    if (keysOnly) await this.holdFocus();
+    else if (this.target.traits.pointerWaitsForFrame) await this.framePresented();
     signal?.throwIfAborted();
     const context = this.target.context();
     const state = this.stateOf(context);

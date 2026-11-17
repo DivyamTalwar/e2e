@@ -138,12 +138,9 @@ export async function performAt(session: BidiSession, point: ViewportPoint, acti
   }
 }
 
-/** Types into whatever holds focus, in any document of the tab, refusing when nothing there takes keystrokes. */
+/** Types into whatever holds focus, in any document of the tab (`typeInto`), refusing when nothing there takes keystrokes. */
 export async function typeText(session: BidiSession, text: string, replace: boolean, signal: AbortSignal): Promise<void> {
-  const documents = await session.callableDocuments(session.requireContext());
-  const editable = await Promise.all(documents.map((context) =>
-    unlessStale(session.page.run(focusTakesKeys, [], context), false)));
-  if (!editable.includes(true)) {
+  if (!(await takesKeystrokes(session, await session.callableDocuments(session.requireContext())))) {
     throw new EngineError(
       'NOT_ACTIONABLE',
       'nothing that takes keystrokes has focus: the typed text would reach no field. Tap the field first, or type into a listed input by id.',
@@ -157,14 +154,29 @@ export async function typeText(session: BidiSession, text: string, replace: bool
   await typeInto(session, text, signal);
 }
 
+/** Whether the focused element of any of `documents` takes keystrokes (`focusTakesKeys`); a document gone under the read takes none. */
+async function takesKeystrokes(session: BidiSession, documents: readonly string[]): Promise<boolean> {
+  const takes = await Promise.all(documents.map((context) => unlessStale(session.page.run(focusTakesKeys, [], context), false)));
+  return takes.includes(true);
+}
+
 /**
  * Types `text` into whatever holds focus, as Playwright's `keyboard.type`
  * does: a run of characters the US keyboard has is key presses, a run of
  * anything else (an emoji, letters of another alphabet) is inserted as text,
  * one edit per character, in the document holding focus, since no key types
  * it. The tab's documents are read once, when the first such run is
- * inserted. Each of them is offered what is left of a run until one takes
- * some; a character none takes is dropped, as a key press with no focus is.
+ * inserted, and each is offered what is left of a run until one takes some.
+ *
+ * A string is never entered in part. A character to insert that no document
+ * takes, while what holds focus takes keystrokes (it is no field or editing
+ * host, or its document does not hold the browser's focus), fails the
+ * operation: `NOT_ACTIONABLE` when nothing of the operation went out before
+ * it, `ACTION_MAY_HAVE_COMMITTED` once something did. The failure names the
+ * character by its place in the text, never by the text. With nothing that
+ * takes keystrokes holding focus the whole string goes nowhere, as key
+ * presses do there: its keys reach the page's key listeners, and a
+ * character to insert is left out.
  */
 export async function typeInto(session: BidiSession, text: string, signal: AbortSignal): Promise<void> {
   const runs: { readonly keys: boolean; readonly graphemes: string[] }[] = [];
@@ -174,24 +186,48 @@ export async function typeInto(session: BidiSession, text: string, signal: Abort
     if (last?.keys === keys) last.graphemes.push(segment);
     else runs.push({ keys, graphemes: [segment] });
   }
+  const total = runs.reduce((count, run) => count + run.graphemes.length, 0);
+  let entered = 0;
   let contexts: readonly string[] | undefined;
   for (const run of runs) {
     if (run.keys) {
       await session.input.send([typeSource(run.graphemes)], signal);
+      entered += run.graphemes.length;
       continue;
     }
     contexts ??= await session.callableDocuments(session.requireContext());
     for (let left = run.graphemes; left.length > 0;) {
       signal.throwIfAborted();
+      await session.input.holdFocus();
       session.input.mutated();
       let inserted = 0;
       for (const context of contexts) {
         inserted = await unlessStale(session.page.run(insertFocusedText, [left], context), 0);
         if (inserted > 0) break;
       }
-      left = left.slice(Math.max(inserted, 1));
+      if (inserted === 0) {
+        session.input.takeBack();
+        if (await takesKeystrokes(session, contexts)) throw notInserted(entered + 1, total, session.input.dispatched);
+      }
+      const done = Math.max(inserted, 1);
+      entered += done;
+      left = left.slice(done);
     }
   }
+}
+
+/**
+ * The failure of typed text whose character `place` of `total`, one no key
+ * types, no document took while what holds focus takes keystrokes:
+ * `dispatched` says whether the operation's earlier input went out, so the
+ * app may hold part of the text.
+ */
+function notInserted(place: number, total: number, dispatched: boolean): EngineError {
+  const why = `character ${String(place)} of the ${String(total)} typed is one no key types, so it is inserted as text, and nothing took it: `
+    + 'what holds focus is no field or editing host, or its document does not hold the browser\'s focus';
+  return dispatched
+    ? new EngineError('ACTION_MAY_HAVE_COMMITTED', `the text was typed only in part: ${why}. What was typed before it went to the page`, { retryable: false })
+    : new EngineError('NOT_ACTIONABLE', `the text was not typed: ${why}`, { retryable: false });
 }
 
 /**

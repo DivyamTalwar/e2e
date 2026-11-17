@@ -22,6 +22,11 @@ export function focus(element: Element): Outcome {
   return { kind: 'ok' };
 }
 
+/** Whether this document, or a frame in it, holds the browser's focus: a top-level one does while its tab does. */
+export function holdsFocus(): boolean {
+  return document.hasFocus();
+}
+
 /**
  * A checkable's state and kind, as Playwright reads it: a checkable role
  * without `aria-checked` is unchecked. Refused for an element with no
@@ -176,14 +181,17 @@ export function fileInputTakes(element: Element): { directory: boolean; multiple
  * each, as an IME would commit it (Playwright's `insertText`): for
  * characters no key of the keyboard types. Answers how many it inserted. It
  * stops at the first this document does not take: it does not hold focus,
- * its focus is an iframe whose own document does, or the edit was refused.
+ * its focus is an iframe whose own document does, the focused element is no
+ * field or editing host that can be edited (`:read-write`), where the edit
+ * would land at a selection kept somewhere else, or the edit was refused.
+ * An edit it did not make reached no listener of the page.
  */
 export const insertFocusedText = withDom((dom, graphemes: readonly string[]): number => {
   let inserted = 0;
   for (const text of graphemes) {
     if (!document.hasFocus()) break;
     const active = dom.activeElement();
-    if (active === null || active.nodeName === 'IFRAME' || active.nodeName === 'FRAME') break;
+    if (active === null || active.nodeName === 'IFRAME' || active.nodeName === 'FRAME' || !active.matches(':read-write')) break;
     if (!document.execCommand('insertText', false, text)) break;
     inserted += 1;
   }

@@ -165,7 +165,7 @@ describe('BidiInput.send', () => {
         shown = true;
         return { result: {} };
       })
-      .on('script.callFunction', () => ({ result: { type: 'success', realm: 'r', result: shown ? { type: 'undefined' } : { type: 'boolean', value: false } } }));
+      .on('script.callFunction', () => ({ result: { type: 'success', realm: 'r', result: { type: 'boolean', value: shown } } }));
     const held = await session(fake, 'firefox');
     await held.input.send(clickSources(5, 5));
     await held.input.send([typeSource(['a'])]);
@@ -273,7 +273,7 @@ describe('BidiInput.send', () => {
     await held.input.key(fixtureKeyStroke('Shift', 'keyUp'));
     expect(fake.commands('input.performActions')).toHaveLength(2);
     const cdp = fake.commands('goog:cdp.sendCommand').map((command) => command.params as { method: string; session: string; params: { type: string; modifiers: number } });
-    expect(cdp.map((command) => [command.session, command.params.type, command.params.modifiers])).toEqual([['cdp', 'rawKeyDown', 8], ['cdp', 'keyUp', 8]]);
+    expect(cdp.filter((command) => command.method === 'Input.dispatchKeyEvent').map((command) => [command.session, command.params.type, command.params.modifiers])).toEqual([['cdp', 'rawKeyDown', 8], ['cdp', 'keyUp', 8]]);
   });
 
   it('keeps what each tab holds while another is shown: its keys, its button, and where its mouse is', async () => {

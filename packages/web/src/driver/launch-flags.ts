@@ -67,8 +67,11 @@ const CHROMIUM_ARGS = [
 /**
  * The Firefox preferences an automated profile takes, Playwright 1.64's BiDi
  * launcher's set (beside the Remote Agent's recommended set, which it applies on
- * start): nothing reaches the network on its own, background windows keep
- * focus and full-rate timers, and startup opens no page of its own. Beside
+ * start): nothing reaches the network on its own, the tab at the front of
+ * the browser holds focus whatever window the system shows in front
+ * (`focusmanager.testmode`; a tab behind it holds none, `BrowserTraits.focus`),
+ * background windows keep full-rate timers, and startup opens no page of its
+ * own. Beside
  * it, `layout.css.getBoxQuads.enabled` gives pages `getBoxQuads`, which the
  * driver maps a point through a frame a rotation or 3D transform turns with,
  * and no link hands its scheme (`mailto:`, an app's own) to the system, as

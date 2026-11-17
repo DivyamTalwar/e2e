@@ -82,7 +82,7 @@ describe('an attach the last attempt gave up on', () => {
 describe('a video segment that cannot start', () => {
   it('lets the navigation that opened its tab pass, and fails stopVideo instead', async () => {
     const fake = fakeBrowser();
-    fake.peer.on('goog:cdp.getSession', { error: 'unknown error', message: 'no CDP session for this tab' });
+    fake.peer.on('goog:cdp.sendCommand', (params) => (params['method'] === 'Page.startScreencast' ? { error: 'unknown error', message: 'no screencast for this tab' } : { result: {} }));
     connectCdp.mockImplementation(async () => fake.browser);
     const leases = provider({ scope: 'worker' }).impl;
     const engine = web({ browser: leases });
@@ -90,7 +90,7 @@ describe('a video segment that cannot start', () => {
     await engine.startAttempt!(attempt('a1'));
     await engine.artifacts!.startVideo!(op());
     await expect(engine.session!.open!('https://app.test/', op())).resolves.toBeUndefined();
-    await expect(engine.artifacts!.stopVideo!(op())).rejects.toMatchObject({ code: 'ENGINE_FAILURE', message: expect.stringContaining('no CDP session for this tab') });
+    await expect(engine.artifacts!.stopVideo!(op())).rejects.toMatchObject({ code: 'ENGINE_FAILURE', message: expect.stringContaining('no screencast for this tab') });
     await engine.endAttempt!(cleanup());
     await engine.dispose!(cleanup());
   });

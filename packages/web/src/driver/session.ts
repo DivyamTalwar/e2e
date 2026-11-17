@@ -292,8 +292,9 @@ export class BidiSession {
 
   /**
    * Opens a tab in `userContext` and shows it: `adopted`, the tab the
-   * attempt found open there, else a new one. The network covers it before
-   * it joins the attempt's tabs, which show it (`AttemptTabs.own`). Until
+   * attempt found open there, else a new one. The network covers it, and
+   * its page behaves as focused (`BidiInput.emulateFocus`), before it joins
+   * the attempt's tabs, which show it (`AttemptTabs.own`). Until
    * it is shown a tab created here is this call's to close: when a step
    * fails, or the attempt closed or replaced its user context while the tab
    * opened, it is closed again, and an adopted one is left as it was found.
@@ -306,6 +307,7 @@ export class BidiSession {
     try {
       this.requireUserContext(userContext);
       await this.network.addContext(context);
+      await this.input.emulateFocus(context);
       this.requireUserContext(userContext);
       return await this.tabs.own(context);
     } catch (cause) {

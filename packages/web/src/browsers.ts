@@ -72,6 +72,16 @@ export interface BrowserTraits {
    * have run in the document that went away.
    */
   readonly resendsPageCalls: boolean;
+  /**
+   * How a tab's page comes to hold focus whatever window the system shows
+   * in front of the browser. `emulated`: each tab is told to behave as
+   * focused (CDP `Emulation.setFocusEmulationEnabled`), so every tab of the
+   * attempt does at once. `front-tab`: only the tab at the front of the
+   * browser does, which a launch preference makes independent of the
+   * system's own focus (`focusmanager.testmode`), so a tab that lost the
+   * front is brought back to it before keys or text go to it.
+   */
+  readonly focus: 'emulated' | 'front-tab';
   /** The permission names a target's `app.permissions` may grant. */
   readonly permissions: readonly string[];
 }
@@ -92,6 +102,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     pointerWaitsForFrame: false,
     windowClipsViewport: false,
     resendsPageCalls: false,
+    focus: 'emulated',
     permissions: [
       'accelerometer', 'ambient-light-sensor', 'background-sync', 'camera', 'clipboard-read', 'clipboard-write',
       'geolocation', 'gyroscope', 'local-fonts', 'local-network-access', 'magnetometer', 'microphone', 'midi',
@@ -112,6 +123,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     pointerWaitsForFrame: true,
     windowClipsViewport: true,
     resendsPageCalls: true,
+    focus: 'front-tab',
     permissions: ['geolocation', 'local-network-access', 'notifications', 'persistent-storage', 'push', 'screen-wake-lock'],
   },
 };
