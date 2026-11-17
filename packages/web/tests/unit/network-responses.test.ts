@@ -89,6 +89,17 @@ describe('AttemptNetwork', () => {
     await expect(response.body().then(String)).resolves.toBe('fast');
   });
 
+  it('says the browser kept no body, and past what size it keeps none, when a read finds none collected', async () => {
+    const fake = new FakeBidi().on('network.getData', () => ({ error: 'no such network data', message: 'Collector c did not collect response data' }));
+    const { net } = network(fake);
+    await net.bind('user-1');
+    const waiting = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
+    const event = responded('big', `${SITE}/big`, 200);
+    fake.emit('network.responseStarted', event);
+    fake.emit('network.responseCompleted', event);
+    await expect((await waiting).body()).rejects.toThrow('the browser kept none of the response body (it keeps none over 20 MB)');
+  });
+
   describe('a response body still loading', () => {
     /** A network bound to user-1, and a response whose headers arrived but whose body never finished. */
     async function pending() {

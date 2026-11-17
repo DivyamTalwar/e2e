@@ -511,7 +511,9 @@ export class NetworkBinding implements DecisionScope {
             void releaseQuietly(connection.send('network.disownData', { dataType: 'response', collector, request }));
             return Buffer.alloc(0);
           }
-          record.body ??= connection.send('network.getData', { dataType: 'response', request, collector, disown: true }).then((data) => bytesOf(data.bytes));
+          record.body ??= connection.send('network.getData', { dataType: 'response', request, collector, disown: true }).then((data) => bytesOf(data.bytes), (cause: unknown) => {
+            throw unkeptBody(cause);
+          });
           return await record.body;
         } finally {
           record.waits -= 1;
@@ -594,6 +596,12 @@ function hopLoaded(record: RequestRecord): Promise<void> {
   });
   loaded.catch(() => undefined);
   return loaded;
+}
+
+/** The failure of a response body read: one the browser refused for want of the body says so, with the size past which a collector keeps none; any other stands as it is. */
+function unkeptBody(cause: unknown): unknown {
+  if (!(cause instanceof BidiError) || cause.error !== 'no such network data') return cause;
+  return new Error(`the browser kept none of the response body (it keeps none over ${String(MAX_COLLECTED_BODY / 1024 / 1024)} MB)`);
 }
 
 /**
