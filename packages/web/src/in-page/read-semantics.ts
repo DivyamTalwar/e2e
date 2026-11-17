@@ -543,10 +543,10 @@ export const createSemanticReader = (
    * read it serves. The tree's is the model-bound projection: bounded line
    * text (`lineTextOf`), a bounded attribute projection, hrefs reduced to
    * origin+path, the root document named by its title, a list row, a
-   * status, or an alert named from its content, and no value on a checkbox,
+   * status, or an alert named from its content, no value on a checkbox,
    * a radio, or a select's option, whose value attribute is an app token
-   * its checked or selected state already says more than. A locate's is the
-   * full locator-read surface (`LOCATOR`).
+   * its checked or selected state already says more than, and no node
+   * hidden. A locate's is the full locator-read surface (`LOCATOR`).
    */
   interface Projection {
     /** The attributes kept beside the `aria-` ones; null keeps all. */
@@ -559,6 +559,13 @@ export const createSemanticReader = (
     readonly documentRoot: boolean;
     /** Whether a checkbox, a radio, and a select's option report their value attribute. */
     readonly choiceValue: boolean;
+    /**
+     * Whether a node reports that it is hidden. The walk lists what shows,
+     * and beside it only what it lists on purpose (the root whatever its
+     * box, a closed select's options, a control its label draws), so
+     * nothing in a tree is.
+     */
+    readonly hiddenState: boolean;
     readonly text: (el: Element) => string;
     readonly name: (el: Element) => string | null;
   }
@@ -681,7 +688,7 @@ export const createSemanticReader = (
         expanded: ariaExpanded === null ? null : ariaExpanded === 'true',
         pressed: ariaPressed === null ? null : ariaPressed === 'true',
         focused: focusedElement === el,
-        hidden: isHidden(el, style),
+        hidden: projection.hiddenState && isHidden(el, style),
         secure,
       },
       level,
@@ -709,6 +716,7 @@ export const createSemanticReader = (
     redactHref: false,
     documentRoot: false,
     choiceValue: true,
+    hiddenState: true,
     text: textOf,
     name: locatorName,
   };
@@ -760,6 +768,7 @@ export const createSemanticReader = (
       redactHref: true,
       documentRoot: true,
       choiceValue: false,
+      hiddenState: false,
       text: lineTextOf,
       name: (el) => names.reportedName(el, accessibleName(el)),
     };
@@ -844,8 +853,6 @@ export const createSemanticReader = (
           return;
         }
         nextParent = include(el, parent, style);
-        // Listed on purpose, so not "hidden", as a select's options are below.
-        if (drawnByLabel) nodes[nextParent]!.states.hidden = false;
       }
       // A closed select paints none of its options, so the hidden test would
       // drop every one of them, and a model shown `combobox "Category"` alone
@@ -861,8 +868,7 @@ export const createSemanticReader = (
             truncated = true;
             return;
           }
-          // Listed on purpose, so not "hidden".
-          nodes[include(option, nextParent, styleOf(option))]!.states.hidden = false;
+          include(option, nextParent, styleOf(option));
         }
         return;
       }
@@ -887,7 +893,7 @@ export const createSemanticReader = (
     const modal = modalScopeOf(flatParentOf);
     // The root is the document the screen shows, listed whatever its own box: a
     // page of fixed controls leaves `<html>` with no height of its own.
-    nodes[include(root, -1)]!.states.hidden = false;
+    include(root, -1);
     if (isInert(root)) return { nodes, frames, elements, ids, truncated };
     for (const child of Array.from(root.children)) walk(child, 0);
 

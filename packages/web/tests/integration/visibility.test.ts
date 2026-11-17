@@ -142,6 +142,15 @@ describe('the tree walk through a box with no size', () => {
     expect(nodes.find((node) => node.testId === 'wrapper')).toBeUndefined();
   });
 
+  it('lists the root of a page with no height of its own as shown, which a locate reads as hidden', async () => {
+    await page.setContent('<style>html, body { margin: 0; height: 0 }</style><button style="position:fixed;left:0;top:0;width:100px;height:30px">Reset</button>');
+    const nodes = await captureTree();
+    expect(nodes[0]).toMatchObject({ role: 'document' });
+    expect(nodes[0]!.states?.hidden).toBeUndefined();
+    expect(nodes.find((node) => node.role === 'button')?.name).toBe('Reset');
+    expect((await page.locate({ kind: 'selector', selector: 'html' }))[0]?.states?.hidden).toBe(true);
+  });
+
   it('lists neither the document of a frame with no box nor the options of a select with none', async () => {
     await page.setContent(`
       <iframe style="width:0;height:0;border:0" srcdoc="<button>Pay</button>"></iframe>
