@@ -365,6 +365,8 @@ export type WebInitScript = string | { readonly path: string } | (() => unknown)
 | On Firefox, `waitForResponse` resolves once the response's body starts, not when its headers arrive | Firefox reports a response only then. |
 | On Firefox, a key WebDriver defines no value for, such as `MediaPlayPause`, throws `UNSUPPORTED_CAPABILITY` | Chromium presses those keys over CDP. |
 | On Chromium, a request for `/favicon.ico` goes to the network past its own route | chromium-bidi reports no events for it. |
+| On Chromium, a route on a form submission that navigates gets no `route.request.postData`, and `route.fetch()` on it throws `ACTION_FAILED` | Chromium does not report the body of a held navigation. |
+| On Firefox, an init script sees a same-origin frame's first, empty document (`about:blank`), not the page the frame then loads | Firefox keeps that document's `window` for the page and runs no script again. What the script set on `window` stays. |
 | On Firefox, a `browser.evaluate` can run more than once: one still running when a tab from `browser.newTab()` loads its first page, or one that starts while a navigation to another site commits | Firefox sends a command again when the empty document it went to (a new tab's first, the one a new site's process starts with) is replaced by a page. Wait for the page first, as with `waitForURL`. |
 | With a browser provider, `setInputFiles` sends the files' bytes to the page, up to 50 MB in all, and throws `UNSUPPORTED_CAPABILITY` for a directory; downloads throw it when the provider serves none | The browser's filesystem is another machine's. |
 | A saved session throws `UNSUPPORTED_CAPABILITY` for an IndexedDB value that is not JSON or a `Date` | A `Blob` or class instance can't be restored. |
@@ -593,7 +595,7 @@ const title = await browser.evaluate<string>('document.title');
 | Throws | When |
 | --- | --- |
 | `INVALID_ARGUMENT` | `arg` or the return value is not a [`JsonValue`](#jsonvalue). A class instance, such as a `DOMRect` or an element, is not: return `rect.toJSON()` or the fields you need. |
-| `EVALUATE_FAILED` | The evaluated code threw, or the page replaced a JavaScript built-in such as `Map` that the engine needs. The error carries the message. |
+| `EVALUATE_FAILED` | The evaluated code threw. The error carries the message. |
 | `ACTION_FAILED` | The evaluation did not settle in time. |
 | `ENGINE_FAILURE` | The page closed or the context was lost. |
 

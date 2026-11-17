@@ -38,7 +38,7 @@ export interface RouteContinueOverrides {
   url?: string;
   /** Request method. */
   method?: string;
-  /** Replaces every request header; `undefined` drops one, and the configured `headers` for the app's site are added on top. */
+  /** Replaces every request header; `undefined` drops one, and the configured `headers` for an allowed origin are added on top. */
   headers?: Record<string, string | undefined>;
   /** Request body. */
   postData?: string;
@@ -184,7 +184,7 @@ export interface Browser extends Expectable<BrowserExpectation> {
   ): Promise<void>;
   /** Removes matching attempt-scoped routes. */
   unroute(pattern: string | RegExp): Promise<void>;
-  /** Removes all routes registered by this browser fixture, preserving configured site headers. */
+  /** Removes all routes registered by this browser fixture, preserving the configured headers. */
   unrouteAll(): Promise<void>;
   /** Waits for a matching response. */
   waitForResponse(

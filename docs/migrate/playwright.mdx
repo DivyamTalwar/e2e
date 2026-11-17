@@ -293,7 +293,7 @@ purpose. Use the workaround, or keep the test in Playwright.
 | `test.setTimeout()`, `test.slow()`, `test.fixme()`, `test.describe.only()`, `test.fail()` on a describe | `{ timeout }` or `{ skip: 'reason' }` on the test or group; `test.only` and `test.fail()` on each test |
 | `failOnFlakyTests`, `use.navigationTimeout`, `--timeout`, `--quiet` | `run.summary.flaky` in `report.json`; `browser.goto(url, { timeout })`; `timeout` in the config |
 | The `blob` reporter and `merge-reports` | One report for each shard |
-| The Playwright Docker image | Any Node.js image, with `npx @e2e-dev/web install chromium --with-deps` |
+| The Playwright Docker image | A Debian or Ubuntu Node.js image, with `npx @e2e-dev/web install chromium --with-deps` |
 | `test.use({ ... })` in a file or describe | Runner options on the group, engine options on a target, `browser.setViewport` at runtime |
 | `projects[].dependencies`, `teardown` | A top-level `test.setup` for sign-in; a script around the run |
 | `page.pause()` | `--step --headed` holds each step until a key |

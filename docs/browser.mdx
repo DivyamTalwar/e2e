@@ -413,8 +413,9 @@ locally. A hosted browser saves a download to its own disk, where the runner
 can't open it. With `downloads`, it saves each attempt's files in a folder
 under `dir`, and the engine passes each finished file's path to `read`.
 `read` fetches the bytes through the service's file API.
-[Kernel](/integrations/kernel#downloads) and
-[smol machines](/integrations/smol) serve downloads this way.
+[Kernel](/integrations/kernel#downloads),
+[smol machines](/integrations/smol), and [E2B](/integrations/e2b) serve
+downloads this way.
 
 Without `downloads`, `browser.waitForDownload` throws
 `UNSUPPORTED_CAPABILITY`, naming the provider. `setInputFiles` on a
