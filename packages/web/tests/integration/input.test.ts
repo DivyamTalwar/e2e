@@ -4,9 +4,10 @@
  * a swipe leaves the mouse on what it scrolled, a drag carries pressure,
  * lasts as long as asked, and reaches a target in a rotated frame, a
  * pointer target outside the viewport is refused as never sent, a tap
- * cancelled while it aims leaves no click watch behind, and a ref reused
- * after input, the hover of a swallowed click included, checks its locator
- * again.
+ * cancelled while it aims leaves no click watch behind, a click the app
+ * dispatched itself is left to the app while the driver's own arrives
+ * trusted, and a ref reused after input, the hover of a swallowed click
+ * included, checks its locator again.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -174,6 +175,46 @@ describe('input', () => {
     const [covered] = await page.locate(bySelector('#b'));
     await expect(page.engine.perform!(covered!.ref, { kind: 'tap' }, page.op(2_000))).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('<div#cover> intercepts pointer events') });
     expect(await log()).toEqual([]);
+  });
+
+  it('leaves a click the app dispatched itself as the pointer arrived to the app, and lands the tap on the first try', async () => {
+    await page.setContent(`<button id=target style="position:absolute;left:300px;top:300px;width:100px;height:40px">target</button>
+      <button id=other style="position:absolute;left:300px;top:400px;width:100px;height:40px">other</button>
+      <script>
+        window.log = [];
+        window.moves = 0;
+        other.addEventListener('click', (event) => log.push('other:' + event.isTrusted));
+        target.addEventListener('click', (event) => log.push('target:' + event.isTrusted));
+        target.addEventListener('pointermove', () => {
+          moves += 1;
+          other.click();
+        });
+      </script>`);
+    await page.browser.mouse.move(600, 600);
+    const [target] = await page.locate(bySelector('#target'));
+    await page.engine.perform!(target!.ref, { kind: 'tap' }, page.op(2_000));
+    const moves = await page.browser.evaluate<number>('window.moves');
+    expect(moves).toBeGreaterThan(0);
+    expect(await log()).toEqual([...Array.from({ length: moves }, () => 'other:false'), 'target:true']);
+  });
+
+  it('sends every event the click watch decides on as a trusted one', async () => {
+    await page.setContent(`<button id=b style="position:absolute;left:300px;top:300px;width:100px;height:40px">b</button>
+      <script>
+        window.log = [];
+        for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu']) {
+          addEventListener(type, (event) => {
+            if (type === 'contextmenu') event.preventDefault();
+            log.push(type + ':' + event.isTrusted);
+          }, true);
+        }
+      </script>`);
+    const [button] = await page.locate(bySelector('#b'));
+    await page.engine.perform!(button!.ref, { kind: 'doubleTap' }, page.op());
+    await page.engine.perform!(button!.ref, { kind: 'secondaryTap' }, page.op());
+    const seen = (await log()) as string[];
+    expect(seen.filter((entry) => !entry.endsWith(':true'))).toEqual([]);
+    expect([...new Set(seen)].toSorted()).toEqual(['auxclick:true', 'click:true', 'contextmenu:true', 'dblclick:true', 'mousedown:true', 'mouseup:true', 'pointerdown:true', 'pointerup:true']);
   });
 
   it('counts the hover of a click an overlay swallowed as input, so a ref located before it is checked again', async () => {

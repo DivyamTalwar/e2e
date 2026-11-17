@@ -26,11 +26,10 @@ const installHitInterceptor = withDom((dom): void => {
   const isElement = (target: EventTarget | undefined): target is Element => target !== undefined && 'nodeType' in target && target.nodeType === 1;
   const listener = (event: MouseEvent): void => {
     const watch: HitWatch | undefined = Reflect.get(globalThis, Symbol.for('e2e.bidi.hit.active'));
-    if (watch === undefined) return;
+    if (watch === undefined || !event.isTrusted) return;
     if (watch.verdict === undefined) {
       const path = event.composedPath();
-      // An event the page built itself (`new Event('click')`) carries no point.
-      const reached = path.includes(watch.target) || ('clientX' in event && contains(watch.target, event.clientX, event.clientY));
+      const reached = path.includes(watch.target) || contains(watch.target, event.clientX, event.clientY);
       const [hit] = path;
       watch.verdict = reached ? { kind: 'ok' } : dom.interceptedBy(isElement(hit) ? hit : undefined);
     }
@@ -74,6 +73,8 @@ export const HIT_INTERCEPTOR_INIT_SCRIPT = `(${installHitInterceptor.toString()}
  * release, or click decides whether the input reaches the element
  * (retargeted to its button or link, through slots, shadow hosts, and
  * recorded closed roots), and every later one is suppressed when it did not.
+ * Only trusted events count: one the page dispatched itself (`el.click()`,
+ * `dispatchEvent`) is the app's own, neither judged nor suppressed.
  * The listeners are added again first (`listen` in `installHitInterceptor`).
  * `hitInterceptorResult` reads the decision.
  */
