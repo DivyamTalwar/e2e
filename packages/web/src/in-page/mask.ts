@@ -14,7 +14,7 @@ type Mask = {
 /**
  * Covers every secure field of the document, through open and recorded
  * closed shadow roots, with an opaque box, and hides the caret in the
- * document and each of those roots (as `screenshot-caret.ts` does), for one
+ * document and each of those roots (with a stylesheet each adopts), for one
  * screenshot; returns how many fields it covered. A field inside a top-layer
  * element (a modal dialog, an open popover, a fullscreen element, found
  * through the composed tree, slots included) gets its box inside that
