@@ -348,6 +348,43 @@ describe('input', () => {
     expect(await log()).toEqual(['input:7', 'change:7']);
   });
 
+  it.each([
+    [' 12 ', '12', ['input:12']],
+    [' -1.5e3 ', '-1.5e3', ['input:-1.5e3']],
+    ['\t7\n', '7', ['input:7']],
+    ['   ', '', ['input:']],
+  ])('fills a number input with %j trimmed, in one edit', async (value, held, events) => {
+    await page.setContent(`<input id=n type=number value=5><script>
+      window.log = [];
+      for (const type of ['input', 'change']) n.addEventListener(type, (event) => log.push(type + ':' + event.target.value));
+    </script>`);
+    await page.act(bySelector('#n'), { kind: 'fill', value, sensitive: false });
+    expect(await page.browser.evaluate('document.getElementById("n").value')).toBe(held);
+    expect(await log()).toEqual(events);
+  });
+
+  it('refuses a number input a padded value that is no number, and leaves the field as it was', async () => {
+    await page.setContent('<input id=n type=number value=5>');
+    const [number] = await page.locate(bySelector('#n'));
+    await expect(page.engine.perform!(number!.ref, { kind: 'fill', value: ' 1 2 ', sensitive: false }, page.op())).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('Cannot type text into input[type=number]') });
+    expect(await page.browser.evaluate('document.getElementById("n").value')).toBe('5');
+  });
+
+  it.each([
+    ['date', ' 2024-01-02 ', '2024-01-02'],
+    ['time', ' 12:30 ', '12:30'],
+    ['datetime-local', ' 2024-01-02T12:30 ', '2024-01-02T12:30'],
+    ['color', ' #ff0000 ', '#ff0000'],
+    ['range', ' 7 ', '7'],
+    // Firefox has no month or week input: each is a text field there, and keeps the value as given.
+    ['month', ' 2024-01 ', onFirefox ? ' 2024-01 ' : '2024-01'],
+    ['week', ' 2024-W01 ', onFirefox ? ' 2024-W01 ' : '2024-W01'],
+  ])('sets a %s input to a padded value trimmed, which it then holds', async (type, value, held) => {
+    await page.setContent(`<input id=i type="${type}" max=10>`);
+    await page.act(bySelector('#i'), { kind: 'fill', value, sensitive: false });
+    expect(await page.browser.evaluate('[document.getElementById("i").type, document.getElementById("i").value]')).toEqual([onFirefox && (type === 'month' || type === 'week') ? 'text' : type, held]);
+  });
+
   it('counts a fill the field took and then refused as input, so a ref reused after it is checked again', async () => {
     await page.setContent('<input id=n type=number oninput="document.body.append(Object.assign(document.createElement(\'button\'), { className: \'twin\', textContent: \'twin\' }))"><button class=twin>twin</button>');
     const [twin] = await page.locate(bySelector('.twin'));
