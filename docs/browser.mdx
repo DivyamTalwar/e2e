@@ -377,11 +377,12 @@ whole run. `scope: 'attempt'` gives each attempt, retries included, a fresh
 browser that no earlier test touched, for the cost of a session start per
 attempt. In worker scope each attempt runs in a new browser context, as in a
 local run. In attempt scope it runs in the fresh browser's own context, so
-what the provider set up there, such as a sign-in, reaches the test, and
-`app.clearState()` and [sessions](/authentication) throw
-`UNSUPPORTED_CAPABILITY`. `headers`, `basicAuth`, `userAgent`, `locale`,
-and `timezoneId` work in both. A hosted session costs money while it runs,
-so keep `workers` at what the suite can fill.
+what the provider set up there, such as a sign-in, reaches the test. There,
+`app.clearState()` throws `UNSUPPORTED_CAPABILITY`, and a test that uses a
+[session](/authentication) fails collection with `COLLECTION_ERROR`.
+`headers`, `basicAuth`, `userAgent`, `locale`, and `timezoneId` work in
+both. A hosted session costs money while it runs, so keep `workers` at what
+the suite can fill.
 
 A worker that dies (a crash, `process.exit`, a kill) can't release what it
 acquired. Implement `sweep` to have the runner release those leases when

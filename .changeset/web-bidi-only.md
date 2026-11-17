@@ -8,7 +8,7 @@
 - `surfaceOf` and `PlaywrightLiveSurface` are removed, so there is no raw Playwright `Page` or `BrowserContext` to reach for.
 - `browser.locator` takes CSS and XPath, alone or in `>>` chains: no `text=`, `nth=`, or other Playwright engines. Chain `nth()` and screen queries instead.
 - `connect.reconnectEndpoint` and `BrowserLease.reconnectEndpoint` are removed, and `reconnectEndpoint` in `connect` is `INVALID_CONFIG`: a dropped connection fails the attempt, and the next attempt attaches again through `cdpEndpoint`.
-- With a `scope: 'attempt'` browser provider, `app.clearState()` and saved sessions throw `UNSUPPORTED_CAPABILITY`: the attempt runs in the fresh browser's own context.
+- With a `scope: 'attempt'` browser provider, `app.clearState()` throws `UNSUPPORTED_CAPABILITY` and a test that uses a saved session fails collection with `COLLECTION_ERROR`: the attempt runs in the fresh browser's own context.
 - `setInputFiles` on a browser provider's browser sends the files' bytes to the page, up to 50 MB in all; a directory there throws `UNSUPPORTED_CAPABILITY`, and so does a download on a provider without `downloads`.
 - On Firefox, `browser.emulateMedia({ reducedMotion })` (set `web({ reducedMotion })` instead), `route.continue({ url })`, and a drag that starts an HTML5 drag throw `UNSUPPORTED_CAPABILITY`.
 - Browsers are new pinned builds: Chrome for Testing 157.0.8103.38 (the headless shell, or full Chrome when headed) and Firefox 159.0.1. They install into `E2E_BROWSERS_PATH`, else `e2e/browsers` in the user cache, with `npx @e2e-dev/web install [chromium|firefox] [--with-deps] [--headed]`, or on the first run. `PLAYWRIGHT_BROWSERS_PATH` is no longer read.

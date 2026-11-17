@@ -91,8 +91,8 @@ web({ browser: 'firefox' }); // default: 'chromium'
   server such as [Lightpanda](/integrations/lightpanda) or
   [Moli](/integrations/moli).
 - With `scope: 'attempt'`, each attempt runs in the leased browser's own
-  context, so `app.clearState()` and saved sessions throw
-  `UNSUPPORTED_CAPABILITY`.
+  context. `app.clearState()` throws `UNSUPPORTED_CAPABILITY`, and a test
+  that uses a saved session fails collection with `COLLECTION_ERROR`.
 - [Hosted browsers](/browser#hosted-browsers) has the `BrowserProvider`
   contract and an example provider.
 
@@ -355,7 +355,7 @@ export type WebInitScript = string | { readonly path: string } | (() => unknown)
 | No WebKit | WebKit has no WebDriver BiDi endpoint. |
 | `connect` and browser providers are Chromium only | They attach over CDP. |
 | `connect.reconnectEndpoint` is removed | A dropped connection is not recovered mid-attempt. The next attempt attaches again. |
-| `app.clearState()` and saved sessions throw `UNSUPPORTED_CAPABILITY` with a `scope: 'attempt'` provider | The attempt runs in the fresh browser's own context, which they would replace. |
+| With a `scope: 'attempt'` provider, `app.clearState()` throws `UNSUPPORTED_CAPABILITY` and a saved session is a `COLLECTION_ERROR` | The attempt runs in the fresh browser's own context, which they would replace. |
 | Selectors are CSS and XPath, alone or in `>>` chains, with no `text=` or `nth=` engines | The page runs the selector itself. |
 | On Chromium, an action that opens a `noopener` tab (a `target="_blank"` link) waits until the new tab's server answers | chromium-bidi holds every message behind the new tab's creation, which waits for its first response ([crbug 372842894](https://crbug.com/372842894)). |
 | `browser.emulateMedia({ reducedMotion })` throws `UNSUPPORTED_CAPABILITY` on Firefox | Firefox changes only `prefers-color-scheme` at runtime. Set `web({ reducedMotion })` instead. |

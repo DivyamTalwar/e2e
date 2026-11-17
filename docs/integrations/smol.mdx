@@ -138,8 +138,9 @@ Set `app.url` to `http://localhost:<port>` and declare no `app.command`.
 `scope: 'attempt'`, the default, gives every attempt its own branch of the
 slot's warm machine, so one test's changes to the machine, such as an app's
 local database, never reach another. The attempt runs in the branched
-browser's own context, with what `prepare` left. `app.clearState()` and
-[sessions](/authentication) throw `UNSUPPORTED_CAPABILITY` here. Options
+browser's own context, with what `prepare` left. Here `app.clearState()`
+throws `UNSUPPORTED_CAPABILITY`, and a test that uses a
+[session](/authentication) fails collection with `COLLECTION_ERROR`. Options
 such as `headers` and `locale` work.
 
 `scope: 'worker'` keeps one machine per worker slot for the run. Each

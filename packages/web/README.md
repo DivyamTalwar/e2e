@@ -86,7 +86,8 @@ on every exit path. `scope: 'worker'` (the default) leases one browser per
 worker slot in `prepare` and releases them in `finish`; a worker whose browser
 drops leases a replacement itself. `scope: 'attempt'` leases a fresh browser
 per attempt instead, and the attempt runs in that browser's own context, so
-`app.clearState()` and saved sessions throw `UNSUPPORTED_CAPABILITY`.
+`app.clearState()` throws `UNSUPPORTED_CAPABILITY` and a test that uses a
+saved session fails collection with `COLLECTION_ERROR`.
 Downloads work when the provider implements `downloads` and throw
 `UNSUPPORTED_CAPABILITY` otherwise; `setInputFiles` on a
 provider's browser sends the files' bytes, up to 50 MB in all. A provider implies chromium and excludes
