@@ -183,16 +183,19 @@ describe('web engine lifecycle', () => {
   });
 
   it('serves consecutive attempts from one browser and survives an attempt close', async () => {
+    const sent = vi.spyOn(BidiConnection.prototype, 'send');
     const engine = web();
     try {
       await boot(engine, app);
       expect(await openAttempt(engine, app, artifactsDir, 'a1')).toBe('Home');
       expect((await engine.observe!(operation('a1'))).location).toBe(`${app.url}/`);
       await engine.endAttempt!(cleanup());
-      // The next attempt reuses the pooled browser process, not a new launch.
       expect(await openAttempt(engine, app, artifactsDir, 'a2')).toBe('Home');
       await engine.endAttempt!(cleanup());
+      // Every launch opens a session of its own, so one session is one browser for both attempts.
+      expect(sent.mock.calls.filter(([method]) => method === 'session.new')).toHaveLength(1);
     } finally {
+      sent.mockRestore();
       await engine.dispose!(cleanup());
     }
   });
