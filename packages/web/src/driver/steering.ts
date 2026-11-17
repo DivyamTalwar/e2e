@@ -1,4 +1,4 @@
-/** Navigation: open, history, reload, and the attempt's restart and reset. */
+/** Navigation: open, history, reload, and the attempt's reset. */
 
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Deadline, EngineError, raceAbort } from '@e2e-dev/core/engine';
@@ -165,17 +165,6 @@ async function landedEntry(session: BidiSession): Promise<string | undefined> {
     if (isStale(cause)) return undefined;
     throw cause;
   }
-}
-
-/**
- * Closes every tab, keeping the user context's storage, and opens a blank
- * one; the harness reopens the app. Stops once `signal` aborts, so a restart
- * given up on never opens a tab under the step after it.
- */
-export async function restart(session: BidiSession, signal: AbortSignal): Promise<void> {
-  await session.closeContext(signal);
-  signal.throwIfAborted();
-  await session.ensureContext();
 }
 
 /**

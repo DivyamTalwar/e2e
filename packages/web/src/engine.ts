@@ -23,7 +23,7 @@ import { perform, performAt, typeText } from './driver/actions.ts';
 import { screenshot } from './driver/artifacts.ts';
 import { locate, observe, readStyle } from './driver/observe.ts';
 import { captureState, restoreState } from './driver/state.ts';
-import { goto, reset, restart, traverse } from './driver/steering.ts';
+import { goto, reset, traverse } from './driver/steering.ts';
 import { BidiSurface } from './driver/surface.ts';
 import { connectSource, launchSource, leaseSource, type BrowserSource } from './driver/browser-source.ts';
 import type { WebFixtures } from './fixtures.ts';
@@ -116,7 +116,7 @@ export function createWeb(options: WebOptions, attachTo?: BrowserSource): Engine
       switchTab: (index, operation) => surface.guard(operation, 'switch tab', (session) => session.tabs.showAt(index), { traced: true }),
       closeTab: (index, operation) => surface.guard(operation, 'close tab', (session) => session.tabs.closeAt(index), { traced: true }),
       // Replaces the tab with a blank one, keeping the attempt's storage.
-      restart: (operation) => surface.guard(operation, 'restart', (session, { signal }) => restart(session, signal)),
+      restart: (operation) => surface.guard(operation, 'restart', (session, { signal }) => session.replaceTabs(signal)),
       // Starts the attempt over in a clean user context.
       reset: userContext.mode === 'fresh'
         ? (operation) => surface.guard(operation, 'state reset', (session, { signal }) => reset(session, signal))

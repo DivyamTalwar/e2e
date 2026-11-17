@@ -126,8 +126,7 @@ describe('request retirement', () => {
     const session = await attempt(fake);
     fake.emit('network.beforeRequestSent', request('inner', 'stuck'));
     await busy(session);
-    await session.closeContext(new AbortController().signal);
-    await session.ensureContext();
+    await session.replaceTabs(new AbortController().signal);
     await idle(session);
   });
 });

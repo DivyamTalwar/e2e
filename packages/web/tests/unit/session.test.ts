@@ -502,24 +502,76 @@ describe('BidiSession tabs', () => {
     const held = await session(fake);
     fake.on('browsingContext.getTree', () => new Promise((resolve) => (listed = () => resolve({ result: { contexts: [{ context: 'tab', userContext: 'mine' }] } }))));
     const givenUp = new AbortController();
-    const restarting = held.closeContext(givenUp.signal);
+    const restarting = held.replaceTabs(givenUp.signal);
     await settle();
     givenUp.abort(new Error('given up'));
     listed();
     await expect(restarting).rejects.toThrow('given up');
     expect(closedTabs(fake)).toEqual([]);
+    expect(fake.commands('browsingContext.create')).toHaveLength(1);
     expect(held.context).toBe('tab');
     expect(held.tabs.list().map((tab) => tab.context)).toEqual(['tab']);
   });
 
-  it('closes every tab in a restart whose network cannot let go of them, and leaves the failure to the next step', async () => {
+  it('opens the blank tab of a restart before it closes the old ones, so its user context is never without a tab', async () => {
+    const fake = new FakeBidi();
+    const held = await session(fake);
+    fake.on('browsingContext.getTree', { result: { contexts: [{ context: 'tab', userContext: 'mine' }, { context: 'popup', userContext: 'mine' }, { context: 'theirs', userContext: 'other' }] } });
+    await held.replaceTabs(new AbortController().signal);
+    expect(fake.sent.filter((command) => command.method === 'browsingContext.create' || command.method === 'browsingContext.close').slice(1).map((command) => command.method))
+      .toEqual(['browsingContext.create', 'browsingContext.close', 'browsingContext.close']);
+    expect(closedTabs(fake)).toEqual(['tab', 'popup']);
+    expect(held.context).toBe('tab-2');
+    expect(held.tabs.list().map((tab) => tab.context)).toEqual(['tab-2']);
+  });
+
+  it('closes the old tabs of a restart whose blank tab cannot open', async () => {
+    const fake = new FakeBidi();
+    const held = await session(fake);
+    fake.on('browsingContext.getTree', { result: { contexts: [{ context: 'tab', userContext: 'mine' }] } });
+    fake.on('browsingContext.setViewport', { error: 'unknown error', message: 'no viewport' });
+    await expect(held.replaceTabs(new AbortController().signal)).rejects.toThrow('no viewport');
+    expect(closedTabs(fake)).toEqual(['tab-2', 'tab']);
+    expect(held.context).toBeUndefined();
+    expect(held.tabs.list()).toEqual([]);
+  });
+
+  it('closes the old tabs of a restart given up on while their recording ended, and opens no tab', async () => {
+    const fake = new FakeBidi();
+    const held = await session(fake);
+    fake.on('browsingContext.getTree', { result: { contexts: [{ context: 'tab', userContext: 'mine' }] } });
+    const givenUp = new AbortController();
+    vi.spyOn(held.video, 'contextClosing').mockImplementation(async () => givenUp.abort(new Error('given up')));
+    await expect(held.replaceTabs(givenUp.signal)).rejects.toThrow('given up');
+    expect(closedTabs(fake)).toEqual(['tab']);
+    expect(fake.commands('browsingContext.create')).toHaveLength(1);
+    expect(held.context).toBeUndefined();
+  });
+
+  it('closes the old tabs of a restart whose network cannot let go of them, and leaves the failure to the next step', async () => {
     const fake = new FakeBidi();
     const shared = await sharedSession(fake);
-    fake.on('network.removeIntercept', { error: 'unknown error', message: 'no removal' });
-    await shared.closeContext(new AbortController().signal);
+    fake.on('network.removeIntercept', (params) => (params['intercept'] === 'intercept-2' ? { error: 'unknown error', message: 'no removal' } : { result: {} }));
+    await shared.replaceTabs(new AbortController().signal);
     expect(closedTabs(fake)).toEqual(['tab']);
+    expect(shared.context).toBe('tab-2');
     await settle();
     expect(() => shared.latch.throwPending()).toThrow('no removal');
+  });
+
+  it('shows the tab an attached browser had open again after a restart, and closes only the others', async () => {
+    const fake = new FakeBidi()
+      .on('network.addDataCollector', { result: { collector: 'c' } })
+      .on('browsingContext.getTree', { result: { contexts: [{ context: 'theirs', userContext: 'default' }, { context: 'mine', userContext: 'default' }] } })
+      .on('browsingContext.create', { result: { context: 'mine' } });
+    const attached = unopened(fake, 'chromium', 'adopt-tab');
+    await attached.openUserContext(new AbortController().signal);
+    await attached.newTab();
+    await attached.replaceTabs(new AbortController().signal);
+    expect(closedTabs(fake)).toEqual(['mine']);
+    expect(fake.commands('browsingContext.create')).toHaveLength(1);
+    expect(attached.context).toBe('theirs');
+    expect(attached.tabs.list().map((tab) => tab.context)).toEqual(['theirs']);
   });
 });
 

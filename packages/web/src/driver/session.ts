@@ -228,7 +228,7 @@ export class BidiSession {
    * Forgets every tab of the attempt at once, with the refs, frames, and
    * input state of the shown one (`TabHost.forget`), then ends the
    * recording while its tab can still flush it. The tabs are about to
-   * close: nothing may fail between this and their close.
+   * close: a failure between this and their close must not keep them open.
    */
   private async forgetTabs(): Promise<void> {
     this.tabs.clear();
@@ -355,18 +355,31 @@ export class BidiSession {
   }
 
   /**
-   * Closes the tab and every tab the app opened, keeping the user context's
-   * storage, as a restart closes every page. One whose `signal` aborted
-   * before the open tabs were read closes none and leaves the attempt's
-   * tabs as they were; after that every one is forgotten and closed.
+   * Replaces every tab of the user context, the ones the app opened too,
+   * with the attempt's first tab, opened again, keeping the user context's
+   * storage, as a restart closes every page; the harness reopens the app.
+   * The new tab opens before the old ones close, so the user context is
+   * never without a tab, and a browser that exits with its last window
+   * keeps running. One whose `signal` aborted before the open tabs were
+   * read closes none and leaves the attempt's tabs as they were. After
+   * that every one is forgotten and closed, even when the new tab cannot
+   * open or the restart is given up on, which then opens none under the
+   * step after it. A first tab that was open before (one still opening
+   * when the restart began, the tab the attempt adopts) stays open.
    */
-  async closeContext(signal: AbortSignal): Promise<void> {
+  async replaceTabs(signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
     const { contexts } = await this.connection.send('browsingContext.getTree', { maxDepth: 0 });
     signal.throwIfAborted();
-    const tabs = contexts.filter((info) => info.userContext === this.userContext.id).map((info) => info.context);
+    const old = contexts.filter((info) => info.userContext === this.userContext.id).map((info) => info.context);
     await this.forgetTabs();
-    await Promise.all(tabs.map((context) => unlessStale(this.connection.send('browsingContext.close', { context }), undefined)));
+    let first: string | undefined;
+    try {
+      signal.throwIfAborted();
+      first = (await this.firstTab()).context;
+    } finally {
+      await Promise.all(old.filter((context) => context !== first).map((context) => unlessStale(this.connection.send('browsingContext.close', { context }), undefined)));
+    }
   }
 
   /** Calls a page function the test compiled (`compileEvaluation`) with `arg` and returns its whole result; the test's code may change the page, as input would. */
