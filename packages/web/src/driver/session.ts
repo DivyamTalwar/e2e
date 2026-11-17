@@ -91,8 +91,6 @@ export class BidiSession {
   readonly artifacts: ArtifactPaths;
   /** The viewport `browser.setViewport` set for the rest of the attempt; the configured one until then. */
   private viewport: ViewportSize | null;
-  /** The tab the attempt shows, which only its tabs publish (`TabHost.publish`). */
-  private shown: string | undefined;
   /** The attempt's first tab while it opens, which concurrent first uses share. */
   private creating: Promise<AttemptTab> | undefined;
   /** The tab the attempt found open and adopted (`existingTab`), which it never closes. */
@@ -135,14 +133,14 @@ export class BidiSession {
       ? new BidiVideo(browser.connection, browser.traits, attempt.artifactsDir, settings.screencast, settings.env, { shown: () => this.context, viewport: () => this.viewportSize() })
       : new ProviderVideo(attempt.recorder, attempt.artifactsDir, this.lifetime);
     this.tabs = new AttemptTabs({
-      shown: () => this.context,
       prepare: async (context, front) => {
         if (this.viewport !== null) await this.connection.send('browsingContext.setViewport', { context, viewport: this.viewport });
         if (front) await this.connection.send('browsingContext.activate', { context });
       },
-      publish: (context) => {
-        this.retireContext();
-        this.shown = context;
+      forget: () => {
+        this.refs.clear();
+        this.frames.clear();
+        this.input.reset();
       },
       record: async (context, closed) => {
         if (closed) await this.video.contextClosed();
@@ -166,7 +164,7 @@ export class BidiSession {
 
   /** The tab the attempt shows, which every read and action is on. */
   get context(): string | undefined {
-    return this.shown;
+    return this.tabs.active()?.context;
   }
 
   /** Whether `context` belongs to this attempt's user context. */
@@ -225,13 +223,13 @@ export class BidiSession {
   }
 
   /**
-   * Forgets every tab of the attempt, the shown one with them, at once,
-   * then ends the recording while its tab can still flush it. The tabs
-   * are about to close: nothing may fail between this and their close.
+   * Forgets every tab of the attempt at once, with the refs, frames, and
+   * input state of the shown one (`TabHost.forget`), then ends the
+   * recording while its tab can still flush it. The tabs are about to
+   * close: nothing may fail between this and their close.
    */
   private async forgetTabs(): Promise<void> {
     this.tabs.clear();
-    this.retireContext();
     await this.video.contextClosing();
   }
 
@@ -376,18 +374,6 @@ export class BidiSession {
   evaluate(declaration: string, arg: PageArgument | undefined): Promise<PageValue> {
     this.input.mutated();
     return this.page.call(declaration, arg === undefined ? [] : [arg], { awaitPromise: true, maxObjectDepth: null });
-  }
-
-  /**
-   * Forgets the shown tab, which closed, is closing, or is no longer shown:
-   * its refs, frames, and input state, so the next use opens a fresh one
-   * unless another tab is shown.
-   */
-  private retireContext(): void {
-    this.shown = undefined;
-    this.refs.clear();
-    this.frames.clear();
-    this.input.reset();
   }
 
   /** The viewport in CSS pixels: the attempt's, else the window's. */

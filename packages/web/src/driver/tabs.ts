@@ -1,8 +1,9 @@
 /**
  * The attempt's top-level tabs, in the order they opened: its own tab, the
  * tabs a test opened (`browser.newTab`), and the tabs the app opened from
- * one of them. The shown tab is the one the session's `context` names;
- * observation, actions, input, and every page-scoped wait follow it.
+ * one of them. They keep which one is shown, the tab the session's
+ * `context` names; observation, actions, input, and every page-scoped wait
+ * follow it.
  *
  * A tab the app opens (`window.open`, a `target="_blank"` link) joins once
  * a document loads in it, and stays in the background unless
@@ -29,12 +30,10 @@ export interface AttemptTab {
 
 /** What the tabs ask of the session that shows them. */
 export interface TabHost {
-  /** The context shown now. */
-  shown(): string | undefined;
   /** Sets up `context` to be shown: the attempt's viewport, and with `front` the browser's focus. */
   prepare(context: string, front: boolean): Promise<void>;
-  /** Makes `context` the shown one at once, or none; every ref and frame of the one shown before is forgotten. */
-  publish(context: string | undefined): void;
+  /** Another tab is shown, or none: every ref and frame of the one shown before is forgotten, with its input state. */
+  forget(): void;
   /** Moves the recording to `context`, ending the one before; `closed` when that one closed on its own. */
   record(context: string | undefined, closed: boolean): Promise<void>;
   /** Asks the browser to close `context`. */
@@ -56,6 +55,8 @@ type PopupWaiter = (tab: AttemptTab, shown: Promise<void>) => void;
 /** The attempt's tabs and the changes between them, in the order they happen. */
 export class AttemptTabs {
   private open: AttemptTab[] = [];
+  /** The open tab shown now, if any. */
+  private showing: AttemptTab | undefined;
   private readonly unjoined = new Map<string, Unjoined>();
   /** How many times a tab was shown, for `AttemptTab.shownAt`. */
   private shown = 0;
@@ -82,7 +83,7 @@ export class AttemptTabs {
 
   /** The tab shown now, if any. */
   active(): AttemptTab | undefined {
-    return this.find(this.host.shown());
+    return this.showing;
   }
 
   /** Where `tab` stands among the open tabs, for a snapshot read from it; undefined while it is the only one, or once it closed. */
@@ -109,7 +110,7 @@ export class AttemptTabs {
     const tab: AttemptTab = { context, opener: undefined, shownAt: 0, closed: false };
     this.open.push(tab);
     try {
-      await this.inTurn(() => this.reveal(tab, this.host.shown() !== undefined), true);
+      await this.inTurn(() => this.reveal(tab, this.showing !== undefined), true);
     } catch (cause) {
       this.destroyed(context);
       throw cause;
@@ -170,24 +171,24 @@ export class AttemptTabs {
     this.open.splice(this.open.indexOf(tab), 1);
     this.closes.get(tab)?.();
     this.closes.delete(tab);
-    if (this.host.shown() !== context) return true;
+    if (this.showing !== tab) return true;
     const next = this.returnTo(tab);
-    this.host.publish(next?.context);
-    if (next !== undefined) next.shownAt = ++this.shown;
+    this.publish(next);
     void this.inTurn(async () => {
-      if (next !== undefined && this.host.shown() === next.context) await this.host.prepare(next.context, true);
-      await this.host.record(next !== undefined && this.host.shown() === next.context ? next.context : undefined, true);
+      if (next !== undefined && this.showing === next) await this.host.prepare(next.context, true);
+      await this.host.record(next !== undefined && this.showing === next ? next.context : undefined, true);
     });
     return true;
   }
 
-  /** Forgets every tab, as a restart or a new user context closes them all. */
+  /** Forgets every tab, the shown one with them, as a restart or a new user context closes them all. */
   clear(): void {
     for (const tab of this.open) tab.closed = true;
     this.open = [];
     this.unjoined.clear();
     for (const resolve of this.closes.values()) resolve();
     this.closes.clear();
+    this.publish(undefined);
   }
 
   /** Shows one open tab: every read and action from now on is on it. `ACTION_FAILED` once it closed. */
@@ -298,12 +299,18 @@ export class AttemptTabs {
 
   /** Shows `tab` once it is set up, at the `front` of the browser or where it is, then moves the recording to it; a tab that closed meanwhile is left alone. */
   private async reveal(tab: AttemptTab, front: boolean): Promise<void> {
-    if (this.host.shown() === tab.context) return;
+    if (this.showing === tab) return;
     await this.host.prepare(tab.context, front);
     if (tab.closed) return;
-    this.host.publish(tab.context);
-    tab.shownAt = ++this.shown;
+    this.publish(tab);
     await this.host.record(tab.context, false);
+  }
+
+  /** Makes `tab` the shown one at once, or none; the host forgets what it kept of the one shown before. */
+  private publish(tab: AttemptTab | undefined): void {
+    this.showing = tab;
+    this.host.forget();
+    if (tab !== undefined) tab.shownAt = ++this.shown;
   }
 
   /** The tab shown when `closed` closes: its nearest open opener, else the open tab shown most recently. */

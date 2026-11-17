@@ -22,7 +22,9 @@ async function attempt(owners: ContextTree, userContext: string) {
   const lines: string[] = [];
   const visited: string[] = [];
   const session = {
-    context: undefined as string | undefined,
+    get context(): string | undefined {
+      return session.tabs.active()?.context;
+    },
     tabs: undefined as unknown as AttemptTabs,
     navigations: { inFlight: false },
     lifetime: new AbortController().signal,
@@ -34,9 +36,8 @@ async function attempt(owners: ContextTree, userContext: string) {
     owns: (context: string | null | undefined) => context != null && owners.owner(context) === userContext,
   };
   session.tabs = new AttemptTabs({
-    shown: () => session.context,
     prepare: async () => undefined,
-    publish: (context) => { session.context = context; },
+    forget: () => undefined,
     record: async () => undefined,
     close: async () => undefined,
   });

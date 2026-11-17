@@ -7,15 +7,14 @@
 import { describe, expect, it } from 'vitest';
 import { AttemptTabs } from '../../src/driver/tabs.ts';
 
-/** Tabs over a host that records what it was asked to show, record, and close, with the attempt's own tab `own` shown. */
+/** Tabs over a host that records what it was asked to forget, record, and close, with the attempt's own tab `own` shown. */
 async function tabsOn() {
-  let shown: string | undefined;
+  let forgotten = 0;
   const recorded: { context: string | undefined; closed: boolean }[] = [];
   const closed: string[] = [];
   const tabs: AttemptTabs = new AttemptTabs({
-    shown: () => shown,
     prepare: async () => undefined,
-    publish: (context) => { shown = context; },
+    forget: () => void (forgotten += 1),
     record: async (context, wasClosed) => void recorded.push({ context, closed: wasClosed }),
     close: async (context) => {
       closed.push(context);
@@ -23,7 +22,7 @@ async function tabsOn() {
     },
   });
   await tabs.own('own');
-  return { tabs, shown: () => shown, recorded, closed };
+  return { tabs, shown: () => tabs.active()?.context, forgotten: () => forgotten, recorded, closed };
 }
 
 describe('AttemptTabs', () => {
@@ -80,5 +79,18 @@ describe('AttemptTabs', () => {
     expect((await popup.opened).context).toBe('slow');
     expect(shown()).toBe('slow');
     popup.cancel();
+  });
+
+  it('shows no tab once it forgot them all, and has the host forget each time the shown tab changes', async () => {
+    const { tabs, shown, forgotten } = await tabsOn();
+    tabs.appOpened('popup', 'own');
+    const popup = tabs.loaded('popup', 'http://app.test/popup')!;
+    expect(forgotten()).toBe(1);
+    await tabs.show(popup);
+    expect(forgotten()).toBe(2);
+    tabs.clear();
+    expect([shown(), tabs.list(), popup.closed, forgotten()]).toEqual([undefined, [], true, 3]);
+    await expect(tabs.own('next')).resolves.toMatchObject({ context: 'next', shownAt: 3 });
+    expect(shown()).toBe('next');
   });
 });
