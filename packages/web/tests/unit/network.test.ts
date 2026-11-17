@@ -620,6 +620,28 @@ describe('AttemptNetwork', () => {
       expect(received).toEqual([]);
     });
 
+    describe('of a held navigation that posts a form', () => {
+      const fake = (): FakeBidi => new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'a=1' } } });
+      const submission = (site: string): Record<string, unknown> => {
+        const posted = request('post', `${site}/form`);
+        return { ...posted, navigation: 'nav-1', request: { ...(posted['request'] as object), method: 'POST', bodySize: 3 } };
+      };
+
+      it('refuses on a browser that reports no body for it, with that reason, without asking for the body', async () => {
+        const browser = fake();
+        const { outcome } = await fetched(browser, { browser: 'chromium' }, submission);
+        expect(outcome.failure).toMatchObject({ code: 'ACTION_FAILED', message: 'route.fetch: this browser reports no body for a navigation it holds, such as a form submission, so the request cannot be replayed' });
+        expect(browser.commands('network.getData')).toEqual([]);
+        expect(received).toEqual([]);
+      });
+
+      it('sends the form on a browser that reports its body', async () => {
+        const { outcome } = await fetched(fake(), { browser: 'firefox' }, submission);
+        expect(outcome).toMatchObject({ status: 200, body: 'upstream' });
+        expect(received).toEqual([expect.objectContaining({ url: '/form', method: 'POST', body: 'a=1' })]);
+      });
+    });
+
     it('ends a fetch still waiting for its response when the attempt closes', async () => {
       const fake = new FakeBidi();
       const { net, open, lifetime } = network(fake, { site: origin });

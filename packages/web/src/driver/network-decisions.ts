@@ -111,8 +111,18 @@ export interface DecisionScope {
   storeCookies(cookies: readonly Storage.PartialCookie[], signal: AbortSignal): Promise<void>;
 }
 
-/** A held request's body as the collector kept it: its bytes, `none` for a request without one, `lost` for one the browser kept none of. */
-type HeldBody = Buffer | 'none' | 'lost';
+/**
+ * A held request's body as the browser gives it: its bytes, `none` for a
+ * request without one, `lost` for one the collector kept none of, and
+ * `unreported` for a held navigation's on a browser that never answers for it.
+ */
+type HeldBody = Buffer | 'none' | 'lost' | 'unreported';
+
+/** Why a route's fetch has no body to replay a request with, for each way `heldBody` found none. */
+const NO_BODY: Readonly<Record<'lost' | 'unreported', string>> = {
+  lost: 'the browser kept none of the request body (too large or streamed)',
+  unreported: 'this browser reports no body for a navigation it holds, such as a form submission',
+};
 
 /** What deciding held requests needs of the attempt. */
 export interface DecisionOptions {
@@ -296,14 +306,15 @@ export class RequestDecisions {
 
   /**
    * The request's body as the collector kept it. One it did not keep (too
-   * large, a stream) is lost, and so is a held navigation's on Chromium,
-   * which never answers for the body of a paused form submission
+   * large, a stream) is lost. A held navigation's is unreported, and never
+   * asked for, on a browser that does not answer for it (`navigationBodies`):
+   * Chromium, for the body of a paused form submission
    * (https://github.com/puppeteer/puppeteer/pull/15607).
    */
   private async heldBody(request: Network.RequestData, navigation: boolean): Promise<HeldBody> {
     if (!hasBody(request)) return 'none';
-    const body = navigation && !this.options.traits.navigationBodies ? undefined : await this.scope.requestBody(request.request);
-    return body ?? 'lost';
+    if (navigation && !this.options.traits.navigationBodies) return 'unreported';
+    return (await this.scope.requestBody(request.request)) ?? 'lost';
   }
 
   /**
@@ -313,11 +324,12 @@ export class RequestDecisions {
    * stores the cookies the response sets in the user context, as
    * Playwright's `route.fetch` does. A Basic challenge is answered with the
    * credentials a challenge to the browser from that origin gets, once. A
-   * body the browser did not keep refuses the fetch rather than send none.
+   * body the browser did not keep, or does not report, refuses the fetch
+   * with that reason (`NO_BODY`) rather than send none.
    */
   private async fetch(request: InterceptedRequest, cookies: readonly Network.Cookie[], body: HeldBody, budget: Pick<OperationContext, 'signal' | 'timeoutMs'>): Promise<FetchedResponse> {
-    if (body === 'lost') {
-      throw new TestError('ACTION_FAILED', 'route.fetch: the browser kept none of the request body (too large or streamed), so the request cannot be replayed');
+    if (body === 'lost' || body === 'unreported') {
+      throw new TestError('ACTION_FAILED', `route.fetch: ${NO_BODY[body]}, so the request cannot be replayed`);
     }
     const signal = AbortSignal.any([budget.signal, AbortSignal.timeout(budget.timeoutMs), this.options.lifetime]);
     const { protectedApp } = this.options;
