@@ -211,8 +211,13 @@ export const createSemanticReader = (
     return text === '' ? null : text;
   };
 
-  /** True for a text node that lays out to a box a person can see. */
-  const isVisibleText = (node: Node): boolean => {
+  /**
+   * True for a text node its parent, a `display: contents` element of
+   * `style`, shows: one that lays out to a box a person can see and paints
+   * in the parent's `visibility`, which a range's box does not reflect.
+   */
+  const showsText = (node: Node, style: CSSStyleDeclaration): boolean => {
+    if (style.visibility !== 'visible') return false;
     const range = node.ownerDocument!.createRange();
     range.selectNode(node);
     const rect = range.getBoundingClientRect();
@@ -259,10 +264,9 @@ export const createSemanticReader = (
    * (`hidesSubtree`, a role query) while the node still paints, as a spinner
    * marked decorative does. `display: contents` generates no box of its own
    * while every child still paints (Shopify's one-page checkout form is one),
-   * so such an element is shown when some child element or text is, and
-   * hidden when nothing under it is. Its text paints in its own `visibility`,
-   * which a range's box does not reflect, so text under a hidden one is
-   * hidden, where Playwright calls it visible.
+   * so such an element is shown when some child element or text is
+   * (`showsText`), and hidden when nothing under it is: text under a hidden
+   * one is hidden, where Playwright calls it visible.
    */
   const isHidden = (el: Element, style = styleOf(el)): boolean => {
     if (style === undefined) return true;
@@ -270,7 +274,7 @@ export const createSemanticReader = (
     if (style.display === 'contents') {
       for (let child = el.firstChild; child !== null; child = child.nextSibling) {
         if (child instanceof Element && !isHidden(child)) return false;
-        if (child.nodeType === Node.TEXT_NODE && style.visibility === 'visible' && isVisibleText(child)) return false;
+        if (child.nodeType === Node.TEXT_NODE && showsText(child, style)) return false;
       }
       return true;
     }
@@ -936,5 +940,6 @@ export const createSemanticReader = (
     memoized,
     styleOf,
     parentOrHostOf: dom.parentOrHostOf,
+    showsText,
   };
 };

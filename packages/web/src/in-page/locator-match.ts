@@ -15,13 +15,14 @@ import type { createSemanticReader } from './read-semantics.ts';
  * beside them the ones Playwright's engines read differently from the
  * tree: an element's text as the text engine joins it (shadow roots
  * included), whether the role engine counts it hidden
- * (`isElementHiddenForAria`), its ARIA states with `mixed` and absent kept
- * apart from false (`getAriaChecked`, `getAriaPressed`, `getAriaExpanded`,
- * `getAriaSelected`), and its level (`getAriaLevel`: a heading tag's before
- * `aria-level`, none without either). Each read is computed when first
- * asked and kept for the rest of the locate (the reader's `memoized`), so a
- * query pays only for what it compares. In a hidden frame (`frameHidden`)
- * every element is hidden.
+ * (`isElementHiddenForAria`, with the text of a `display: contents` element
+ * shown by the reader's own rule, `showsText`), its ARIA states with `mixed`
+ * and absent kept apart from false (`getAriaChecked`, `getAriaPressed`,
+ * `getAriaExpanded`, `getAriaSelected`), and its level (`getAriaLevel`: a
+ * heading tag's before `aria-level`, none without either). Each read is
+ * computed when first asked and kept for the rest of the locate (the
+ * reader's `memoized`), so a query pays only for what it compares. In a
+ * hidden frame (`frameHidden`) every element is hidden.
  */
 export const createLocatorMatch = (
   reader: ReturnType<typeof createSemanticReader>,
@@ -29,7 +30,7 @@ export const createLocatorMatch = (
   matchesText: TextMatching['matchesText'],
   frameHidden: boolean,
 ) => {
-  const { memoized, styleOf, parentOrHostOf } = reader;
+  const { memoized, styleOf, parentOrHostOf, showsText } = reader;
   const joinedTextOf = memoized((root: Element | ShadowRoot): string => {
     let full = '';
     const skipped = root.nodeType === 1 && (['SCRIPT', 'NOSCRIPT', 'STYLE'].indexOf(root.nodeName) !== -1 || (document.head !== null && document.head.contains(root)));
@@ -61,7 +62,7 @@ export const createLocatorMatch = (
     if (style.display === 'contents' && !slot) {
       for (let child = el.firstChild; child !== null; child = child.nextSibling) {
         if (child.nodeType === 1 && !hiddenForAria(child as Element)) return false;
-        if (child.nodeType === 3 && (child.nodeValue ?? '').trim() !== '') return false;
+        if (child.nodeType === 3 && showsText(child, style)) return false;
       }
       return true;
     }

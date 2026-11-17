@@ -9,7 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { SemanticNode } from '@e2e-dev/core/engine';
-import { flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { byRole, flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 let page: WebSession;
 
@@ -93,6 +93,25 @@ describe('visibility beyond a range box', () => {
   it('hides text under a display: contents element whose visibility is hidden', async () => {
     await page.setContent('<div id="contents-hidden-text" style="display:contents;visibility:hidden">Invisible text</div>');
     expect(await hiddenOf('#contents-hidden-text')).toBe(true);
+  });
+});
+
+describe('a role query on a display: contents element', () => {
+  it.each([
+    ['text that lays out a box', '<span id="target" role="button" style="display:contents">Save</span>', 1],
+    ['text under a display: none ancestor', '<div style="display:none"><span id="target" role="button" style="display:contents">Save</span></div><p>x</p>', 0],
+    ['text in its own visibility: hidden', '<span id="target" role="button" style="display:contents;visibility:hidden">Save</span><p>x</p>', 0],
+  ])('matches the element only while its hidden state reads false: %s', async (_case, html, count) => {
+    await page.setContent(html);
+    expect((await page.locate(byRole('button'))).length).toBe(count);
+    expect(await hiddenOf('#target')).toBe(count === 0);
+  });
+
+  it('taps the one Save that shows beside one under a display: none ancestor', async () => {
+    await page.setContent(`<div style="display:none"><span role="button" style="display:contents">Save</span></div>
+      <button onclick="document.title = 'saved'">Save</button>`);
+    await page.act(byRole('button', 'Save'), { kind: 'tap' });
+    expect(await page.browser.evaluate(() => document.title)).toBe('saved');
   });
 });
 
