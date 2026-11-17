@@ -88,6 +88,10 @@ export class NetworkBinding implements DecisionScope {
   private readonly requests = new Map<string, RequestRecord>();
   private lastSettled = Date.now();
   private readonly installed = new Map<InterceptPhase, InstalledIntercept>();
+  /** Whether the whole browser bypasses its HTTP cache for the binding, on a browser no other client drives. */
+  private bypassesCache = false;
+  /** The tabs that bypass the HTTP cache for the binding, on a browser other clients drive too. */
+  private readonly uncached = new Set<string>();
   private subscription: string | undefined;
   private requestCollector: string | undefined;
   private collector: Promise<string> | undefined;
@@ -121,11 +125,13 @@ export class NetworkBinding implements DecisionScope {
    * blank-served tab, and basic-auth challenges for credentials or a browser
    * that would prompt; the request events are needed for either, and for the
    * idle count once the attempt is `tracking`; request bodies are collected
-   * for routes to read. The subscription and its listeners, the request and
-   * response collectors, and the intercepts are each checked on their own,
-   * so a step that failed before is installed by the next call, one already
-   * in place is kept, and an intercept or request collector nothing needs
-   * any more is removed.
+   * for routes to read, and the HTTP cache is bypassed while there is a
+   * route, which sees only what asks the network. The subscription and its
+   * listeners, the request and response collectors, the cache bypass, and
+   * the intercepts are each checked on their own, so a step that failed
+   * before is installed by the next call, one already in place is kept, and
+   * an intercept, request collector, or cache bypass nothing needs any more
+   * is removed.
    */
   async reconcile(tracking: boolean): Promise<void> {
     if (this.closed) return;
@@ -154,6 +160,7 @@ export class NetworkBinding implements DecisionScope {
       this.requestCollector = undefined;
     }
     await this.collectResponses();
+    await this.ensureCacheBypass(this.routes.length > 0);
     await this.ensureIntercept('beforeRequestSent', hold);
     await this.ensureIntercept('authRequired', auth);
   }
@@ -256,6 +263,40 @@ export class NetworkBinding implements DecisionScope {
     const { intercept } = await this.connection.send('network.addIntercept', { phases: [phase], ...(contexts === undefined ? {} : { contexts }) });
     this.intercepts.add(intercept);
     return { id: intercept, covers: contexts?.join('\n') ?? '' };
+  }
+
+  /**
+   * Keeps the browser's HTTP cache bypassed while `wanted`, so every request
+   * asks the network, where an intercept holds it. On a browser no other
+   * client drives the whole browser bypasses it, so a tab the app opens asks
+   * the network from its first request; otherwise the open tabs do, each
+   * set on its own, and other clients keep their cache. A tab that closed
+   * needs none set, and one that closes under the call is done.
+   */
+  private async ensureCacheBypass(wanted: boolean): Promise<void> {
+    const connection = this.connection;
+    if (this.options.exclusive) {
+      if (this.bypassesCache === wanted) return;
+      await connection.send('network.setCacheBehavior', { cacheBehavior: wanted ? 'bypass' : 'default' });
+      this.bypassesCache = wanted;
+      return;
+    }
+    const open = (tab: string): boolean => this.options.contexts.owner(tab) !== undefined;
+    for (const tab of wanted ? this.tops : []) {
+      if (this.uncached.has(tab) || !open(tab)) continue;
+      try {
+        await connection.send('network.setCacheBehavior', { cacheBehavior: 'bypass', contexts: [tab] });
+      } catch (cause) {
+        if (open(tab)) throw cause;
+        continue;
+      }
+      this.uncached.add(tab);
+    }
+    for (const tab of this.uncached) {
+      if (wanted && this.tops.has(tab)) continue;
+      if (open(tab)) await alreadyGone(connection.send('network.setCacheBehavior', { cacheBehavior: 'default', contexts: [tab] }), connection);
+      this.uncached.delete(tab);
+    }
   }
 
   /** The context's response collector, added once however many waits ask at the same time. */
@@ -487,7 +528,7 @@ export class NetworkBinding implements DecisionScope {
     this.requests.clear();
   }
 
-  /** The removals of everything installed for the context: every intercept ever added, the collectors, and the subscription. */
+  /** The removals of everything installed for the context: every intercept ever added, the collectors, the subscription, and the cache bypass, for the browser or for each tab that has it. */
   removals(): (() => Promise<unknown>)[] {
     const connection = this.connection;
     const collector = this.collector;
@@ -498,10 +539,14 @@ export class NetworkBinding implements DecisionScope {
       ...(collector === undefined ? [] : [() => collector.then((id) => connection.send('network.removeDataCollector', { collector: id }))]),
       ...(requestCollector === undefined ? [] : [() => connection.send('network.removeDataCollector', { collector: requestCollector })]),
       ...(subscription === undefined ? [] : [() => connection.send('session.unsubscribe', { subscriptions: [subscription] })]),
+      ...(this.bypassesCache ? [() => connection.send('network.setCacheBehavior', { cacheBehavior: 'default' })] : []),
+      ...[...this.uncached].map((tab) => () => connection.send('network.setCacheBehavior', { cacheBehavior: 'default', contexts: [tab] })),
     ];
     this.collector = this.requestCollector = this.subscription = undefined;
     this.intercepts.clear();
     this.installed.clear();
+    this.bypassesCache = false;
+    this.uncached.clear();
     return removals;
   }
 }
@@ -546,8 +591,8 @@ function namesLocation(response: Network.ResponseData): boolean {
   return response.headers.some((header) => header.name.toLowerCase() === 'location');
 }
 
-/** Errors that mean what a removal removes is already gone: the browser dropped it, or the browser itself is gone. */
-const GONE = new Set(['no such intercept', 'no such network collector', 'no such network data', 'invalid argument']);
+/** Errors that mean what a removal removes is already gone: the browser dropped it, its tab closed, or the browser itself is gone. */
+const GONE = new Set(['no such intercept', 'no such network collector', 'no such network data', 'no such frame', 'invalid argument']);
 
 /** Waits for a removal, taking a resource the browser no longer has (or a browser that is gone) as removed. */
 export async function alreadyGone(removal: Promise<unknown> | undefined, connection: BidiConnection): Promise<void> {
