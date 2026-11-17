@@ -244,6 +244,54 @@ it('keeps an animation cancelled for a capture that overlaps the one that cancel
   await expectBlinkRuns();
 });
 
+it('leaves stopped a CSS animation the page dropped during the capture, and plays again what the page still has', async () => {
+  await session.setContent(`<!doctype html>
+    <style>
+      body { margin: 0; background: #fff; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes fade { to { opacity: 0.5; } }
+      div { width: 20px; height: 20px; }
+      .spin { animation: spin 1s linear infinite; }
+      #kept { animation: spin 1s linear infinite, fade 2s linear infinite; }
+      #kept::before { content: ''; display: block; animation: fade 2s linear infinite; }
+    </style>
+    <div id="unclassed" class="spin"></div><div id="removed" class="spin"></div><div id="scripted"></div><div id="kept"></div>
+    <script>document.getElementById('scripted').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 1000, iterations: Infinity });</script>`);
+  /** What animates in the document: each animation's name, or `script` for one a script made, its state, and its target. Runs in the page. */
+  const animating = (): string[] => document.getAnimations().map((animation) => {
+    const effect = animation.effect instanceof KeyframeEffect ? animation.effect : null;
+    return `${animation instanceof CSSAnimation ? animation.animationName : 'script'} ${animation.playState} on ${String(effect?.target?.id)}${effect?.pseudoElement ?? ''}`;
+  });
+  const kept = ['spin running on kept', 'fade running on kept', 'fade running on kept::before'];
+  expect(await session.browser.evaluate(animating)).toEqual(['spin running on unclassed', 'spin running on removed', ...kept, 'script running on scripted']);
+  const during: string[][] = [];
+  aroundCapture({
+    before: async () => {
+      during.push(await session.browser.evaluate(animating));
+      await session.browser.evaluate(() => {
+        document.getElementById('unclassed')!.classList.remove('spin');
+        const taken = ['removed', 'scripted'].map((id) => document.getElementById(id)!);
+        Reflect.set(window, 'taken', taken);
+        for (const element of taken) element.remove();
+        return null;
+      });
+    },
+  });
+
+  await capture();
+  vi.restoreAllMocks();
+
+  expect(during).toEqual([[]]);
+  expect(await session.browser.evaluate(animating)).toEqual(kept);
+  // Put back, the element gets the one animation its style gives it, and the script animation never stopped being the page's.
+  await session.browser.evaluate(() => {
+    const taken: Element[] = Reflect.get(window, 'taken');
+    document.body.append(...taken);
+    return null;
+  });
+  expect(await session.browser.evaluate(animating)).toEqual([...kept, 'spin running on removed', 'script running on scripted']);
+});
+
 it('covers a secure field an infinite animation moves where the field rests with the animation cancelled', async () => {
   await session.setContent(`<!doctype html>
     <style>

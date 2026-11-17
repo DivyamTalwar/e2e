@@ -122,7 +122,14 @@ export const maskSecureFields = withDom((dom, selector: string, token: string): 
  * Last, once every field was read where it rested, it plays again each
  * animation `maskSecureFields` cancelled, unless a capture that overlaps
  * this one still holds the document: that one takes them over and plays
- * them when it lets go.
+ * them when it lets go. A CSS animation the page dropped meanwhile stays
+ * cancelled: its target no longer computes its name (a class removed, the
+ * element out of the document), so the browser let go of it, and played
+ * again it would run as a script animation no style could stop. A script
+ * animation the page cancelled itself during the capture reads the same as
+ * one the mask cancelled, and plays again; so does a CSS animation the
+ * browser dropped from a target that still computes its name (one hidden
+ * with `display: none`, or whose animation the page started over).
  */
 export const unmaskSecureFields = withDom((dom, token: string): boolean => {
   const masks: Map<string, Mask> | undefined = Reflect.get(globalThis, Symbol.for('e2e.bidi.mask'));
@@ -158,7 +165,11 @@ export const unmaskSecureFields = withDom((dom, token: string): boolean => {
     overlapping.cancelled.push(...mask.cancelled);
     return held;
   }
+  const dropped = (animation: Animation): boolean =>
+    animation instanceof CSSAnimation && animation.effect instanceof KeyframeEffect && animation.effect.target !== null
+    && !getComputedStyle(animation.effect.target, animation.effect.pseudoElement).animationName.split(', ').includes(CSS.escape(animation.animationName));
   for (const animation of mask.cancelled) {
+    if (dropped(animation)) continue;
     try {
       animation.play();
     } catch {
