@@ -41,7 +41,7 @@ export function checkState(element: Element): Outcome<{ checked: boolean; radio:
  * Fills an element as Playwright's `fill` does, with no key events: a text
  * field or editing host is focused, its content selected, and the value
  * inserted as one `insertText` edit (a delete for an empty value), so the app
- * sees the trusted `beforeinput` and `input` an edit fires. A date, color,
+ * sees the trusted `input` an edit fires. A date, color,
  * range, or similar input takes the value directly, with `input` and
  * `change`. A number input takes the value trimmed, as it sanitizes its own,
  * and is refused one that is no number or that it does not keep. Nothing
