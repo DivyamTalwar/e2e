@@ -121,7 +121,10 @@ How the engine's own screencast records an attempt that records video.
 web({ screencast: { size: { width: 800, height: 450 }, quality: 60 } });
 ```
 
-- `size` takes whole pixels, each side at least 1. `quality` is an integer.
+- `size` takes whole pixels, each side at least 1. On Firefox the frame keeps
+  the viewport's shape, so it fits inside `size`.
+- `quality` is an integer, `90` when unset. It applies on Chromium only:
+  Firefox ignores it.
 - Which attempts record is the config's [`video`](/reference/config#video)
   mode.
 
@@ -130,7 +133,7 @@ web({ screencast: { size: { width: 800, height: 450 }, quality: 60 } });
 export interface WebScreencastOptions {
   /** Frame size in pixels; default the viewport's, or the window's under `viewport: null`. A smaller size makes a smaller file. */
   readonly size?: ViewportSize;
-  /** JPEG quality of each captured frame, 0 through 100; the browser's default when unset. */
+  /** JPEG quality of each captured frame, 0 through 100; 90 when unset. Chromium only: Firefox ignores it. */
   readonly quality?: number;
 }
 ```
@@ -321,6 +324,7 @@ export interface WebMedia {
 | --- | --- |
 | `INVALID_CONFIG` | A feature or value outside `WebMedia`, in `web()`. |
 | `INVALID_ARGUMENT` | A feature or value outside `WebMedia`, in `emulateMedia`. |
+| `UNSUPPORTED_CAPABILITY` | `emulateMedia` with `reducedMotion`, on Firefox. Set `web({ reducedMotion })` instead. |
 
 #### Init scripts
 
@@ -354,6 +358,7 @@ export type WebInitScript = string | { readonly path: string } | (() => unknown)
 | `app.clearState()` and saved sessions throw `UNSUPPORTED_CAPABILITY` with a `scope: 'attempt'` provider | The attempt runs in the fresh browser's own context, which they would replace. |
 | Selectors are CSS and XPath, alone or in `>>` chains, with no `text=` or `nth=` engines | The page runs the selector itself. |
 | On Chromium, an action that opens a `noopener` tab (a `target="_blank"` link) waits until the new tab's server answers | chromium-bidi holds every message behind the new tab's creation, which waits for its first response ([crbug 372842894](https://crbug.com/372842894)). |
+| `browser.emulateMedia({ reducedMotion })` throws `UNSUPPORTED_CAPABILITY` on Firefox | Firefox changes only `prefers-color-scheme` at runtime. Set `web({ reducedMotion })` instead. |
 | On Firefox, a drag that starts an HTML5 drag (a `draggable` element) throws `UNSUPPORTED_CAPABILITY` | [Firefox bug 1515879](https://bugzilla.mozilla.org/show_bug.cgi?id=1515879): Firefox drops it nowhere. Pointer drags work. |
 | `route.continue({ url })` throws `UNSUPPORTED_CAPABILITY` on Firefox | [Firefox bug 2014825](https://bugzilla.mozilla.org/show_bug.cgi?id=2014825): the page's load of a rewritten URL fails. Use `route.fulfill`. |
 | On Firefox, `waitForResponse` never resolves for a request that `route.fulfill` answers with a redirect | Firefox reports no response for it. Wait for the URL the redirect leads to. |

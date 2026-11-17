@@ -163,12 +163,14 @@ For one test, call `browser.emulateMedia`. Call it before the page opens to
 load the page with those values:
 
 ```ts
-await browser.emulateMedia({ reducedMotion: 'reduce' });
+await browser.emulateMedia({ colorScheme: 'dark' });
 await app.open('/');
 ```
 
 A value holds for the rest of the test, through `app.restart()` and
-`app.clearState()`. See [media emulation](/reference/web#media-emulation).
+`app.clearState()`. On Firefox, `emulateMedia` changes `colorScheme` only:
+set `reducedMotion` in `web()`. See
+[media emulation](/reference/web#media-emulation).
 
 ## Cookies
 

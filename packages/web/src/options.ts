@@ -56,7 +56,7 @@ export interface WebBasicAuth {
 export interface WebScreencastOptions {
   /** Frame size in pixels; default the viewport's, or the window's under `viewport: null`. A smaller size makes a smaller file. */
   readonly size?: ViewportSize;
-  /** JPEG quality of each captured frame, 0 through 100; the browser's default when unset. */
+  /** JPEG quality of each captured frame, 0 through 100; 90 when unset. Chromium only: Firefox ignores it. */
   readonly quality?: number;
 }
 
