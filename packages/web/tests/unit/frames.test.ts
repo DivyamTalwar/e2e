@@ -12,7 +12,7 @@ import { project, type Projection } from '../../src/driver/projection.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
-import type { FrameBox } from '../../src/in-page/readers.ts';
+import type { FrameBox } from '../../src/in-page/create-readers.ts';
 import { FakeBidi } from '../helpers/bidi-fake.ts';
 import { ElementRef } from '../../src/driver/script.ts';
 

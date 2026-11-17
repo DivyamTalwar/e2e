@@ -27,7 +27,7 @@ import { cancelled, isStale, releaseQuietly, unlessStale } from '../errors.ts';
 import { contentContext, hasScriptContext, inViewport, pageParts, placeInFrame, resolveFrames, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
 import { computedStyle, domReady } from '../in-page/document.ts';
 import { maskSecureFields, unmaskSecureFields } from '../in-page/mask.ts';
-import type { FrameBox } from '../in-page/readers.ts';
+import type { FrameBox } from '../in-page/create-readers.ts';
 import type { PagePart } from '../in-page/select-chain.ts';
 import type { BidiSession } from './session.ts';
 import type { ElementRef } from './script.ts';

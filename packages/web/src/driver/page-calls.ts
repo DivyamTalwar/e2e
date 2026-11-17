@@ -9,7 +9,8 @@
 
 import { TestError } from '@e2e-dev/core/engine';
 import { ScriptError } from '../errors.ts';
-import { readerCall, readerInstallCall, READERS_MISSING, type ReaderName, type Readers } from '../in-page/readers.ts';
+import type { ReaderName, Readers } from '../in-page/create-readers.ts';
+import { readerCall, readerInstallCall, READERS_MISSING } from '../in-page/readers.ts';
 import type { BidiConnection } from './connection.ts';
 import { callFunction, type CallOptions, type ElementRef, type PageArgument, type PageValue, type TypedPageFunction, type Wire } from './script.ts';
 

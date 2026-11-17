@@ -13,7 +13,7 @@ import { ChromiumCdp } from './cdp.ts';
 import type { BrowserTraits } from '../browsers.ts';
 import { compose, IDENTITY, invert, rectToQuad, scaleThenTranslate, type Point, type Projection } from './projection.ts';
 import { chainParts, cssChains } from './selector-tokens.ts';
-import type { FrameBox, ReadOptions, TurnedFrame } from '../in-page/readers.ts';
+import type { FrameBox, ReadOptions, TurnedFrame } from '../in-page/create-readers.ts';
 import type { PagePart } from '../in-page/select-chain.ts';
 import type { BidiConnection } from './connection.ts';
 import { callFunction, WindowRef, type ElementRef } from './script.ts';
