@@ -223,7 +223,9 @@ async function settle<T extends object>(
  * overlay raised as the pointer arrived is suppressed in the page before any
  * listener of the app sees it, the operation counts it as never dispatched,
  * and the click is tried again until the deadline. Input no event of the
- * element's document saw may have reached another document, so it is
+ * element's document saw may have reached another document (a frame over
+ * the element, an overlay in a parent frame) or what the browser shows in
+ * front of the page (another tab, the list of an open select), so it is
  * reported as may have committed, never replayed. A page that went away
  * under the click counts as reached.
  */
@@ -238,7 +240,11 @@ async function click(session: BidiSession, target: NodeTarget, deadline: Deadlin
       suppressed: (seen) => seen.kind === 'not-yet',
     });
     if (verdict.kind === 'unseen') {
-      throw new EngineError('ACTION_MAY_HAVE_COMMITTED', 'the click reached no event in the element\'s document, so another document (an overlay in a parent frame) may have taken it', { retryable: false });
+      throw new EngineError(
+        'ACTION_MAY_HAVE_COMMITTED',
+        'the click reached no event in the element\'s document, so something else may have taken it: a frame or another document\'s overlay over the element, or what the browser shows in front of the page (another tab, the list of an open select)',
+        { retryable: false },
+      );
     }
     return verdict;
   });

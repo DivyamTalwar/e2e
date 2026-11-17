@@ -6,7 +6,8 @@
  * pointer target outside the viewport is refused as never sent, a tap
  * lands in what shows of a node in a shadow root, a tap cancelled while it
  * aims leaves no click watch behind, a click the app dispatched itself is
- * left to the app while the driver's own arrives trusted, a fill fires its
+ * left to the app while the driver's own arrives trusted, a click no event
+ * of the element's document saw may have committed, a fill fires its
  * events with the `Event` the page started with, a ref reused after input,
  * the hover of a swallowed click included, checks its locator again, and a
  * fill still running in the page at its deadline may have committed.
@@ -246,6 +247,28 @@ describe('input', () => {
     const [covered] = await page.locate(bySelector('#b'));
     await expect(page.engine.perform!(covered!.ref, { kind: 'tap' }, page.op(2_000))).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('<div#cover> intercepts pointer events') });
     await expect(page.engine.perform!(twin!.ref, { kind: 'tap' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', message: expect.stringContaining('now matches 2 elements') });
+  });
+
+  it('reports a click no event of the element\'s document saw as possibly committed, naming what can take one from a top-level element and from one in a frame', async () => {
+    const elsewhere = { code: 'ACTION_MAY_HAVE_COMMITTED', message: expect.stringContaining('a frame or another document\'s overlay over the element, or what the browser shows in front of the page') };
+    // The pointer arriving on the button moves a frame over it, which takes the press.
+    await page.setContent(`<button id=b style="position:absolute;left:300px;top:300px;width:100px;height:40px">b</button>
+      <iframe id=cover style="position:absolute;left:-500px;top:280px;width:140px;height:80px;border:0" srcdoc='${attribute('<script>addEventListener("click", () => { parent.taken = true; });</script>')}'></iframe>
+      <script>b.addEventListener('mousemove', () => { cover.style.left = '280px'; }, { once: true });</script>`);
+    await page.waitForFrames();
+    await page.browser.mouse.move(600, 600);
+    const [top] = await page.locate(bySelector('#b'));
+    await expect(page.engine.perform!(top!.ref, { kind: 'tap' }, page.op(2_000))).rejects.toMatchObject(elsewhere);
+    expect(await page.browser.evaluate('window.taken === true')).toBe(true);
+    // The pointer arriving on the button in the frame raises an overlay over the frame, in its parent.
+    const inner = '<button id=b style="width:100px;height:40px" onmousemove="parent.document.getElementById(\'cover\').style.display = \'block\'">b</button>';
+    await page.setContent(`<iframe id=f style="position:absolute;left:300px;top:300px;width:200px;height:100px;border:0" srcdoc='${attribute(inner)}'></iframe>
+      <div id=cover onclick="window.taken = true" style="position:absolute;left:300px;top:300px;width:200px;height:100px;display:none"></div>`);
+    await page.waitForFrames();
+    await page.browser.mouse.move(600, 600);
+    const [framed] = await page.locate({ kind: 'frame', selector: '#f', source: bySelector('#b') });
+    await expect(page.engine.perform!(framed!.ref, { kind: 'tap' }, page.op(2_000))).rejects.toMatchObject(elsewhere);
+    expect(await page.browser.evaluate('window.taken === true')).toBe(true);
   });
 
   it('fires the events of a fill with the Event constructor the page had before it replaced it', async () => {
