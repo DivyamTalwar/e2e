@@ -59,8 +59,10 @@ export interface CallOptions {
  * Calls `fn` in the context's main world (or the sandbox `options` names)
  * with `args` and resolves with its return value. A page exception rejects
  * as a `ScriptError` the caller classifies. A function passed a node runs
- * only in that node's document (`inOwnDocument`): for a node of another one
- * the call fails as the browser's own refusal of a node, `no such node`.
+ * only in that node's document: for a node of another one, which the check
+ * the function runs behind found (`inOwnDocument`) or the browser could not
+ * hand to the call (`UNPASSED_NODE`), the call fails as the browser's own
+ * refusal of a node, `no such node`.
  */
 export async function callFunction(
   connection: BidiConnection,
@@ -71,6 +73,7 @@ export async function callFunction(
 ): Promise<PageValue> {
   const source = typeof fn === 'string' ? fn : fn.toString();
   const nodes = nodePaths(args);
+  const foreign = (): BidiError => new BidiError('script.callFunction', 'no such node', 'the node is of a document its browsing context no longer shows');
   const result = await connection.send('script.callFunction', {
     functionDeclaration: nodes.length === 0 ? source : inOwnDocument(source, nodes),
     target: options.sandbox === undefined ? { context } : { context, sandbox: options.sandbox },
@@ -78,15 +81,27 @@ export async function callFunction(
     awaitPromise: options.awaitPromise ?? false,
     resultOwnership: 'none',
     serializationOptions: { maxDomDepth: 0, maxObjectDepth: options.maxObjectDepth === undefined ? 2 : options.maxObjectDepth, includeShadowTree: 'none' },
+  }).catch((cause: unknown) => {
+    throw nodes.length > 0 && cause instanceof BidiError && UNPASSED_NODE.test(cause.detail) ? foreign() : cause;
   });
   if (result.type === 'exception') throw new ScriptError(result.exceptionDetails.text);
   const value = fromRemoteValue(result.result);
-  if (nodes.length > 0 && value === FOREIGN_NODE) throw new BidiError('script.callFunction', 'no such node', 'the node is of a document its browsing context no longer shows');
+  if (nodes.length > 0 && value === FOREIGN_NODE) throw foreign();
   return value;
 }
 
 /** What a call answers in place of its function's result when a node it was passed is of another document than the one it ran in. */
 const FOREIGN_NODE = 'e2e:node-of-another-document';
+
+/**
+ * Firefox's words for a call it could not hand a node to. A shared id still
+ * names the node of a document a navigation replaced with one of another
+ * origin of the same site, which one process holds both of, and Firefox
+ * fails the call while it copies that node into the arguments of a document
+ * that may not hold it, before the function runs. A call's arguments are
+ * JSON and nodes, so no other argument is a cross-origin object.
+ */
+const UNPASSED_NODE = /Not allowed to define cross-origin object as property/;
 
 /** The keys that lead from `value`, a call's arguments or a value among them at `path`, to each node it holds. */
 function nodePaths(value: PageArgument, path: readonly string[] = []): string[][] {
@@ -101,7 +116,7 @@ function nodePaths(value: PageArgument, path: readonly string[] = []): string[][
  * and answers `FOREIGN_NODE` otherwise. A shared id names a node for as long
  * as the node lives, which can be longer than its document shows: Firefox
  * refuses one only once its browsing context changed, so after a navigation
- * within the site, or of a frame, it still passes the node of the document
+ * within the origin, or of a frame, it still passes the node of the document
  * that went away, connected and unseen, where Chromium refuses it. The
  * function would read that document, or focus nothing in it.
  */

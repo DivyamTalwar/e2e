@@ -14,7 +14,8 @@
  * press, a fill, or a select of an element the page took out of the
  * document is stale and changes nothing, a press or a focus on a node of a
  * document a navigation replaced, or of a frame that is gone, is stale
- * too, so a locator's press lands in the document that replaced it, a
+ * too, so a locator's press lands in the document that replaced it, a node
+ * of a document of another origin of the same site is stale as well, a
  * node the browser refused after the read of it is stale on Chromium, which
  * refuses it before anything runs, and possibly committed on Firefox, a
  * select or a fill that polls is stale once a navigation replaced its
@@ -26,7 +27,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LocatorExpression } from '@e2e-dev/core/engine';
 import { callOf } from '../helpers/page-call.ts';
-import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { bySelector, onFirefox, startPageServer, startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
 import { ROOT_NODE_ID } from '../../src/driver/observe.ts';
 import { callFunction } from '../../src/driver/script.ts';
@@ -442,6 +443,26 @@ describe('input', () => {
     await expect(page.engine.perform!(field, { kind: 'fill', value: 'x', sensitive: false }, page.op())).rejects.toMatchObject(stale);
     await expect(page.engine.perform!(go, { kind: 'tap' }, page.op())).rejects.toMatchObject(stale);
     expect(await page.browser.evaluate('document.getElementById("kept").value')).toBe('');
+  });
+
+  it('fails a press, a focus, a fill, and a tap on an observed node of a document of another origin of the same site as stale, and sends its key to nothing', async () => {
+    const otherPort = await startPageServer();
+    try {
+      await page.setContent('<input aria-label=field><button>go</button>');
+      const nodes = await page.nodes();
+      const field = nodes.find((node) => node.name === 'field')!.ref;
+      const go = nodes.find((node) => node.name === 'go')!.ref;
+      await page.open(otherPort.serve('/other-port', '<input id=kept>'));
+      await page.browser.evaluate('document.getElementById("kept").focus()');
+      const stale = { code: 'NODE_STALE', retryable: true };
+      await expect(page.engine.perform!(field, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject(stale);
+      await expect(page.engine.perform!(field, { kind: 'focus' }, page.op())).rejects.toMatchObject(stale);
+      await expect(page.engine.perform!(field, { kind: 'fill', value: 'x', sensitive: false }, page.op())).rejects.toMatchObject(stale);
+      await expect(page.engine.perform!(go, { kind: 'tap' }, page.op())).rejects.toMatchObject(stale);
+      expect(await page.browser.evaluate('[location.origin, document.getElementById("kept").value]')).toEqual([otherPort.origin, '']);
+    } finally {
+      await otherPort.close();
+    }
   });
 
   it('presses a located field in the document a navigation replaced its own with since the locate', async () => {

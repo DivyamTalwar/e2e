@@ -1,7 +1,8 @@
 /**
  * Page functions across the BiDi wire: results as JSON, nodes and windows as
  * references, anything else kept as unreadable, and a function passed a node
- * run only in that node's document.
+ * run only in that node's document, a node Firefox could not hand to the
+ * call being one of another.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -54,6 +55,15 @@ describe('callFunction', () => {
       await expect(callFunction(fake.connection, 'tab', count, args)).rejects.toMatchObject({ name: 'BidiError', error: 'no such node' });
     }
     expect(shown.ran).toBe(1);
+  });
+
+  it('fails a call Firefox could not hand a node to, one of another origin of the same site, as the browser refuses a node', async () => {
+    const unpassed = { error: 'unknown error', message: 'Error: Not allowed to define cross-origin object as property on [Object] or [Array] XrayWrapper' };
+    const fake = new FakeBidi().on('script.callFunction', unpassed);
+    for (const args of [[new ElementRef('gone')], [{ among: [1, new ElementRef('gone')] }]]) {
+      await expect(callFunction(fake.connection, 'tab', '() => null', args)).rejects.toMatchObject({ name: 'BidiError', error: 'no such node' });
+    }
+    await expect(callFunction(fake.connection, 'tab', '() => null', [1])).rejects.toMatchObject({ name: 'BidiError', error: 'unknown error' });
   });
 
   it('reads nodes and windows as references, and keeps an own __proto__ key', async () => {
