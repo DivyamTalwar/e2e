@@ -71,13 +71,12 @@ function declaredRevision(packageDir: string, name: string): string | undefined 
  * The browser cache this process's Playwright reads, by its rules:
  * `PLAYWRIGHT_BROWSERS_PATH` (or its npm config spellings), `0` for the
  * package's own `.local-browsers`, else `ms-playwright` in the OS cache
- * directory; relative to `INIT_CWD` or the working directory. Undefined on a
+ * directory; relative to `INIT_CWD` (or its npm config spellings) or the
+ * working directory. Undefined on a
  * platform Playwright has no default for.
  */
 function playwrightBrowsersPath(packageDir: string): string | undefined {
-  const env = process.env;
-  const configured =
-    env['PLAYWRIGHT_BROWSERS_PATH'] ?? env['npm_config_playwright_browsers_path'] ?? env['npm_package_config_playwright_browsers_path'];
+  const configured = playwrightEnv('PLAYWRIGHT_BROWSERS_PATH');
   let browsersPath: string | undefined;
   if (configured === '0') browsersPath = path.join(packageDir, '.local-browsers');
   else if (configured !== undefined && configured !== '') browsersPath = configured;
@@ -85,7 +84,13 @@ function playwrightBrowsersPath(packageDir: string): string | undefined {
     const cache = osCacheDirectory();
     browsersPath = cache === undefined ? undefined : path.join(cache, 'ms-playwright');
   }
-  return browsersPath === undefined ? undefined : path.resolve(env['INIT_CWD'] || process.cwd(), browsersPath);
+  return browsersPath === undefined ? undefined : path.resolve(playwrightEnv('INIT_CWD') || process.cwd(), browsersPath);
+}
+
+/** An environment setting the way Playwright reads it: the variable, else its npm config spellings. */
+function playwrightEnv(name: string): string | undefined {
+  const lower = name.toLowerCase();
+  return process.env[name] ?? process.env[`npm_config_${lower}`] ?? process.env[`npm_package_config_${lower}`];
 }
 
 /** The per-user cache directory Playwright puts `ms-playwright` in, or undefined on another platform. */

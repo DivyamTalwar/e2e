@@ -311,6 +311,17 @@ console.log(JSON.stringify({ value: String(value), loadedPlaywright }));
       });
     });
 
+    it('resolves a relative cache path against INIT_CWD spelled as npm config, as Playwright does', () => {
+      // Playwright reads INIT_CWD through its npm config spellings too, so the
+      // shell it would launch is under that directory, not the working one.
+      const relative = path.join('nested', 'browsers');
+      const project = path.join(cache, 'project');
+      layIn(path.join(project, relative), 'shell');
+      const env: NodeJS.ProcessEnv = { ...process.env, PLAYWRIGHT_BROWSERS_PATH: relative, npm_config_init_cwd: project };
+      delete env['INIT_CWD'];
+      expect(probe(false, env)).toEqual({ installed: true, loadedPlaywright: false });
+    });
+
     it('finds the shell in the per-user cache when no path is configured', () => {
       const home = path.join(cache, 'home');
       const userCache =
