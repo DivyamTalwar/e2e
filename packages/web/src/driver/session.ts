@@ -13,7 +13,7 @@ import { BidiInput } from './input.ts';
 import { ArtifactPaths } from './artifact-paths.ts';
 import type { ContextTree } from './context-tree.ts';
 import { AttemptDownloads, type RemoteDownloads } from './downloads.ts';
-import { BidiError, ErrorLatch, invalidState, releaseQuietly, unlessStale } from '../errors.ts';
+import { ErrorLatch, invalidState, releaseQuietly, unlessStale } from '../errors.ts';
 import { FrameRegistry, scriptedContexts } from './frames.ts';
 import type { BidiBrowser } from './launch.ts';
 import { AttemptNetwork } from './network.ts';
@@ -21,7 +21,7 @@ import { OwnNavigations } from './own-navigations.ts';
 import { PageCalls } from './page-calls.ts';
 import { BidiRefs } from './refs.ts';
 import { AttemptTabs, type AttemptTab } from './tabs.ts';
-import { TabWindows } from './tab-windows.ts';
+import { acrossNavigations, tabClosed, TabWindows } from './tab-windows.ts';
 import { AttemptUserContext, type UserContextSettings } from './user-context.ts';
 import { viewportSize } from '../in-page/document.ts';
 import { BidiVideo } from './video.ts';
@@ -333,14 +333,7 @@ export class BidiSession {
 
   /** Whether `tab` has closed, asking the browser when no event has told it yet. */
   async tabGone(tab: AttemptTab): Promise<boolean> {
-    if (tab.closed) return true;
-    try {
-      await this.connection.send('browsingContext.getTree', { root: tab.context, maxDepth: 0 });
-      return false;
-    } catch (cause) {
-      if (cause instanceof BidiError && cause.error === 'no such frame') return true;
-      throw cause;
-    }
+    return tab.closed || (await tabClosed(this.connection, tab.context));
   }
 
   /** The first top-level tab already open in `userContext`, if any. */
@@ -366,11 +359,13 @@ export class BidiSession {
    * headless one does. Where the tab's window would cut the viewport short
    * (`BrowserTraits.windowClipsViewport`) the window grows to hold it first,
    * and a viewport no window can hold fails `UNSUPPORTED_CAPABILITY` with
-   * the tab as it was.
+   * the tab as it was. The viewport is the tab's, whatever document it
+   * shows, so a tab that navigates while it is sized gets it all the same
+   * (`acrossNavigations`).
    */
   private async sizeTab(context: string, viewport: ViewportSize): Promise<void> {
     if (this.browser.traits.windowClipsViewport) await this.windows.hold(context, viewport);
-    await this.connection.send('browsingContext.setViewport', { context, viewport, devicePixelRatio: 1 });
+    await acrossNavigations(this.connection, context, () => this.connection.send('browsingContext.setViewport', { context, viewport, devicePixelRatio: 1 }));
   }
 
   /**

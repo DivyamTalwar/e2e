@@ -8,11 +8,15 @@
  * 1280 by 720 viewport. A window is as large as the page that fills it plus
  * its chrome, so it grows to the viewport plus that chrome before the tab
  * is sized, and a viewport no window can hold is refused.
+ *
+ * A tab is sized whatever its page does meanwhile: a command that reads or
+ * sets something of the tab, not of the document it shows, is sent again
+ * when a navigation replaced that document under it (`acrossNavigations`).
  */
 
 import type { Browser, BrowsingContext } from 'webdriver-bidi-protocol';
 import { EngineError, type ViewportSize } from '@e2e-dev/core/engine';
-import { BidiError, releaseQuietly } from '../errors.ts';
+import { BidiError, isStale, releaseQuietly } from '../errors.ts';
 import type { BidiConnection } from './connection.ts';
 import { callFunction, type Wire } from './script.ts';
 
@@ -23,6 +27,31 @@ async function openTab(connection: BidiConnection, context: string): Promise<Bro
   } catch (cause) {
     if (cause instanceof BidiError && cause.error === 'no such frame') return undefined;
     throw cause;
+  }
+}
+
+/** Whether tab `context` has closed, as the browser's own tree tells. */
+export async function tabClosed(connection: BidiConnection, context: string): Promise<boolean> {
+  return (await openTab(connection, context)) === undefined;
+}
+
+/**
+ * Sends `command`, which reads or sets something every document of tab
+ * `context` shares (its window's chrome, its viewport), again each time a
+ * navigation replaced the document under it. Firefox runs part of such a
+ * command in the tab's document and fails it `no such frame` when that
+ * document goes away first, the answer it has for a closed tab too. The
+ * browser's tree tells the two apart: a tab still open shows its next
+ * document, which answers the same, so the command goes to that one; for a
+ * closed tab its failure stands.
+ */
+export async function acrossNavigations<T>(connection: BidiConnection, context: string, command: () => Promise<T>): Promise<T> {
+  for (;;) {
+    try {
+      return await command();
+    } catch (cause) {
+      if (!isStale(cause) || (await tabClosed(connection, context))) throw cause;
+    }
   }
 }
 
@@ -108,9 +137,15 @@ export class TabWindows {
     return clientWindows.find((window) => window.clientWindow === tab.clientWindow);
   }
 
-  /** Reads the chrome of `clientWindow` from tab `context`, which fills it, and keeps it. */
+  /**
+   * Reads the chrome of `clientWindow` from tab `context`, which fills it,
+   * and keeps it. The read runs in the tab's document and every document of
+   * the tab answers it the same, so a tab that navigates under it (a popup
+   * that redirects as it opens) is read in its next one.
+   */
   private async readChrome(context: string, clientWindow: string): Promise<ViewportSize> {
-    const chrome = (await callFunction(this.connection, context, windowChrome, [], { sandbox: WINDOW_SANDBOX })) as Wire<ReturnType<typeof windowChrome>>;
+    const read = (): Promise<unknown> => callFunction(this.connection, context, windowChrome, [], { sandbox: WINDOW_SANDBOX });
+    const chrome = (await acrossNavigations(this.connection, context, read)) as Wire<ReturnType<typeof windowChrome>>;
     this.chrome.set(clientWindow, chrome);
     return chrome;
   }

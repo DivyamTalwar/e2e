@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FakeBidi, type Reply } from '../helpers/bidi-fake.ts';
-import { TabWindows } from '../../src/driver/tab-windows.ts';
+import { BidiError } from '../../src/errors.ts';
+import { acrossNavigations, TabWindows } from '../../src/driver/tab-windows.ts';
 
 /** One window of the fake browser: its outer size, and the chrome a tab that fills it reads. */
 interface FakeWindow {
@@ -127,5 +128,62 @@ describe('TabWindows', () => {
     const fake = browser({ tab: 'w' }, { w: { width: 500, height: 600, chrome: { width: 0, height: 85 } } });
     fake.on('browser.setClientWindowState', { error: 'unknown error', message: 'the window manager refused' });
     await expect(new TabWindows(fake.connection).hold('tab', { width: 1280, height: 720 })).rejects.toMatchObject({ error: 'unknown error', detail: 'the window manager refused' });
+  });
+
+  it('reads the chrome in the tab\'s next document when a navigation replaced the one it was read in', async () => {
+    const chrome = { width: 2, height: 41 };
+    const fake = browser({ tab: 'w' }, { w: { width: 500, height: 600, chrome } });
+    let replaced = 2;
+    fake.on('script.callFunction', () => (replaced-- > 0
+      ? { error: 'no such frame', message: 'DiscardedBrowsingContextError: Actor \'MessageHandlerFrame\' destroyed before query \'MessageHandlerFrameParent:sendCommand\' was resolved' }
+      : chromeRead(chrome)));
+    await new TabWindows(fake.connection).hold('tab', { width: 1280, height: 720 });
+    expect(fake.commands('script.callFunction')).toHaveLength(3);
+    expect(grown(fake)).toEqual([{ clientWindow: 'w', state: 'normal', width: 1282, height: 761 }]);
+  });
+});
+
+describe('acrossNavigations', () => {
+  /** A browser with tab `tab` open until `closed` is set. */
+  function oneTab(): { fake: FakeBidi; close(): void } {
+    let closed = false;
+    const fake = new FakeBidi().on('browsingContext.getTree', () => (closed ? { error: 'no such frame', message: 'Browsing Context with id tab not found' } : { result: { contexts: [{ context: 'tab' }] } }));
+    return { fake, close: () => void (closed = true) };
+  }
+
+  /** A command that fails with each of `failures` in turn, then answers `done`. */
+  function failing(failures: unknown[]): { command: () => Promise<string>; sent(): number } {
+    let sent = 0;
+    return {
+      command: async () => {
+        sent += 1;
+        if (failures.length > 0) throw failures.shift();
+        return 'done';
+      },
+      sent: () => sent,
+    };
+  }
+
+  const replaced = (): BidiError => new BidiError('browsingContext.setViewport', 'no such frame', 'DiscardedBrowsingContextError');
+
+  it('sends a command again each time a navigation replaced the document under it, while the tab is open', async () => {
+    const { fake } = oneTab();
+    const { command, sent } = failing([replaced(), replaced()]);
+    await expect(acrossNavigations(fake.connection, 'tab', command)).resolves.toBe('done');
+    expect(sent()).toBe(3);
+    expect(fake.commands('browsingContext.getTree').map((sentCommand) => sentCommand.params)).toEqual([{ root: 'tab', maxDepth: 0 }, { root: 'tab', maxDepth: 0 }]);
+  });
+
+  it('keeps the failure of a command whose tab closed, and of one that failed for another reason, and sends neither again', async () => {
+    const { fake, close } = oneTab();
+    const refused = new BidiError('browsingContext.setViewport', 'unknown error', 'no viewport');
+    const other = failing([refused]);
+    await expect(acrossNavigations(fake.connection, 'tab', other.command)).rejects.toBe(refused);
+    expect(fake.commands('browsingContext.getTree')).toEqual([]);
+    close();
+    const gone = replaced();
+    const closed = failing([gone]);
+    await expect(acrossNavigations(fake.connection, 'tab', closed.command)).rejects.toBe(gone);
+    expect([other.sent(), closed.sent()]).toEqual([1, 1]);
   });
 });
