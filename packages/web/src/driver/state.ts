@@ -163,14 +163,21 @@ export async function captureState(session: BidiSession): Promise<EngineState> {
   return { format: STATE_FORMAT, version: 1, data };
 }
 
-/** Replaces the user context with a clean one holding the snapshot: cookies through `storage.setCookie`, each origin's storage from its blank document. */
+/**
+ * Replaces the user context with a clean one holding the snapshot: cookies
+ * through `storage.setCookie`, all sent together and every one answered
+ * before the first that failed, in their order, fails the restore; then each
+ * origin's storage from its blank document.
+ */
 export async function restoreState(session: BidiSession, state: EngineState, signal: AbortSignal): Promise<void> {
   if (state.format !== STATE_FORMAT || state.version !== 1 || !isStorageState(state.data)) {
     throw new EngineError('INVALID_STATE', `unsupported state format ${state.format}@${String(state.version)}`, { retryable: false });
   }
   const { cookies, origins } = state.data;
   await session.replaceUserContext(signal);
-  for (const { size: _size, ...cookie } of cookies) await storeCookie(session.connection, session.userContext.id, cookie);
+  const stored = await Promise.allSettled(cookies.map(({ size: _size, ...cookie }) => storeCookie(session.connection, session.userContext.id, cookie)));
+  const failed = stored.find((result) => result.status === 'rejected');
+  if (failed !== undefined) throw failed.reason;
   const byOrigin = new Map(origins.map((origin) => [origin.origin, origin]));
   await atEachOrigin(session, [...byOrigin.keys()], async (origin, context) => {
     await session.page.run(writeOriginStorage, [byOrigin.get(origin)!], context);

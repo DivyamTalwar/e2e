@@ -303,7 +303,9 @@ const RECAPTURE_MS = 50;
  * has a script context once the masks come off makes the capture stale too.
  * A document that left under its masks took them off itself as it went
  * (`maskSecureFields`), since the unmask here reaches the one that replaced
- * it.
+ * it. The documents are masked together and unmasked together; when one
+ * cannot be masked, every other is answered and has its mask taken off
+ * before that failure, the first in document order, fails the capture.
  */
 async function maskedCapture(session: BidiSession, viewport: ViewportSize): Promise<{ pixels: ObservationPixels; maskedRegionCount: number }> {
   const context = session.requireContext();
@@ -321,21 +323,26 @@ async function maskedCapture(session: BidiSession, viewport: ViewportSize): Prom
     session.connection.on('browsingContext.navigationCommitted', onNavigation),
   ];
   try {
-    let count = 0;
     const scripted = await scriptedContexts(session.connection, documents);
     const bare = documents.filter((each) => !scripted.includes(each));
-    for (const each of scripted) {
-      count += await session.page.run(maskSecureFields, [SECURE_FIELD_SELECTOR, token], each);
-      masked.push(each);
-    }
+    const masks = await Promise.allSettled(scripted.map((each) => session.page.run(maskSecureFields, [SECURE_FIELD_SELECTOR, token], each)));
+    let count = 0;
+    masks.forEach((mask, index) => {
+      if (mask.status !== 'fulfilled') return;
+      count += mask.value;
+      masked.push(scripted[index]!);
+    });
+    const failed = masks.find((mask) => mask.status === 'rejected');
+    if (failed !== undefined) throw failed.reason;
     // Firefox fails a capture whose document a navigation already under way replaced mid-snapshot
     // ("Unable to capture screenshot"), so a failed capture is stale when a masked document was replaced.
     const captured = await captureUnlessNavigated(session, context, documents).then((value) => value, (cause: unknown) => ({ failed: cause }));
     held = (await Promise.all(masked.map((each) => session.page.run(unmaskSecureFields, [token], each)))).every(Boolean);
     masked.length = 0;
-    const after = await session.documentContexts(context);
-    const loaded = await scriptedContexts(session.connection, bare);
-    if (!held || navigated || loaded.length > 0 || after.length !== documents.length || after.some((each, index) => each !== documents[index])) {
+    const [after, loaded] = await Promise.allSettled([session.documentContexts(context), scriptedContexts(session.connection, bare)]);
+    if (after.status === 'rejected') throw after.reason;
+    if (loaded.status === 'rejected') throw loaded.reason;
+    if (!held || navigated || loaded.value.length > 0 || after.value.length !== documents.length || after.value.some((each, index) => each !== documents[index])) {
       throw new EngineError('NODE_STALE', 'the page changed while its screenshot was masked', { retryable: true, cause: 'failed' in captured ? captured.failed : undefined });
     }
     if ('failed' in captured) throw captured.failed;
