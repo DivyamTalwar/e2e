@@ -11,10 +11,10 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TestError, type EngineFixtureContext, type EngineHandle, type EngineSnapshot, type OperationContext, type SemanticNode } from '@e2e-dev/core/engine';
+import { TestError, type EngineFixtureContext, type EngineHandle, type EngineSnapshot, type OperationContext } from '@e2e-dev/core/engine';
 import type { Browser } from '../../src/index.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { cleanup, initInfo, onFirefox, operation as attemptOperation, testWeb } from '../helpers/web-session.ts';
+import { byRole, cleanup, flatten, initInfo, onFirefox, operation as attemptOperation, testWeb } from '../helpers/web-session.ts';
 
 const PAGES: Readonly<Record<string, string>> = {
   '/opener': `<!doctype html><title>Opener</title><h1>Opener</h1>
@@ -36,22 +36,11 @@ const PAGES: Readonly<Record<string, string>> = {
   '/slow': '<!doctype html><title>Slow</title><h1>Slow</h1>',
 };
 
-const HEADING = { kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'heading', exact: true } } } as const;
+const HEADING = byRole('heading');
 
 /** An operation of the file's one attempt, on `timeoutMs` when a test gives one. */
 function operation(timeoutMs?: number): OperationContext {
   return attemptOperation('t1', { timeoutMs });
-}
-
-/** Every node of a snapshot, depth first. */
-function nodesOf(snapshot: EngineSnapshot): SemanticNode[] {
-  const nodes: SemanticNode[] = [];
-  const walk = (node: SemanticNode): void => {
-    nodes.push(node);
-    for (const child of node.children ?? []) walk(child);
-  };
-  walk(snapshot.root);
-  return nodes;
 }
 
 describe('tabs', () => {
@@ -123,7 +112,7 @@ describe('tabs', () => {
 
   /** Taps the node the current screen names `name`. */
   async function tap(engine: EngineHandle, name: string): Promise<void> {
-    const node = nodesOf(await engine.observe!(operation())).find((candidate) => candidate.name === name);
+    const node = flatten((await engine.observe!(operation())).root).find((candidate) => candidate.name === name);
     if (node === undefined) throw new Error(`no node named ${name} on the screen`);
     await engine.perform!(node.ref, { kind: 'tap' }, operation());
   }
@@ -274,7 +263,7 @@ describe('tabs', () => {
       await tap(engine, 'Write tab');
       expect((await withTabs(engine, 3)).tabs).toEqual({ count: 3, active: 0 });
       await engine.session!.switchTab!(2, operation());
-      await expect.poll(async () => nodesOf(await engine.observe!(operation())).some((node) => node.text === 'Code TAB-88421'), { timeout: 10_000 }).toBe(true);
+      await expect.poll(async () => flatten((await engine.observe!(operation())).root).some((node) => node.text === 'Code TAB-88421'), { timeout: 10_000 }).toBe(true);
       expect((await engine.observe!(operation())).tabs).toEqual({ count: 3, active: 2 });
     });
   });

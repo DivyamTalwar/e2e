@@ -16,7 +16,7 @@ import { attachBrowser, web } from '../../../src/index.ts';
 import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
-import { cleanup, initInfo, operation } from '../../helpers/web-session.ts';
+import { byRole, cleanup, initInfo, operation } from '../../helpers/web-session.ts';
 import { browserExecutable } from '../../../src/install/provision.ts';
 
 /** The pinned full Chrome's executable, which the suite needs installed. */
@@ -63,7 +63,7 @@ describe('attaching to the pinned full Chrome over CDP', () => {
     try {
       await engine.startAttempt!({ attemptId: 'a1', artifactsDir, signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace });
       await engine.session!.open!(`${app.url}/`, operation('a1'));
-      const headings = await engine.locate!({ kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'heading', exact: true } } }, operation('a1'));
+      const headings = await engine.locate!(byRole('heading'), operation('a1'));
       expect(headings[0]?.name).toBe('Home');
       expect((await engine.observe!(operation('a1'))).location).toBe(`${app.url}/`);
       await engine.endAttempt!(cleanup());

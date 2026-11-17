@@ -18,7 +18,7 @@ import type { EngineHandle, Secret } from '@e2e-dev/core/engine';
 import type { Browser } from '../../src/index.ts';
 import { PROTECTED_CREDENTIAL, startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { browserFixture, cleanup, initInfo, operation, testWeb as web } from '../helpers/web-session.ts';
+import { browserFixture, byRole, cleanup, initInfo, operation, testWeb as web } from '../helpers/web-session.ts';
 
 async function boot(
   engine: EngineHandle,
@@ -45,7 +45,7 @@ async function shutdown(engine: EngineHandle): Promise<void> {
 async function headingAt(engine: EngineHandle, attemptId: string, url: string): Promise<string> {
   await engine.session!.open!(url, operation(attemptId));
   const nodes = await engine.locate!(
-    { kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'heading', exact: true } } },
+    byRole('heading'),
     operation(attemptId),
   );
   return nodes[0]?.name ?? '';

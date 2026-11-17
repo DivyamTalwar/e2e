@@ -13,10 +13,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Locator } from 'e2e';
-import type { EngineFixtureContext, EngineHandle, LocatorExpression, NodeRef, OperationContext } from '@e2e-dev/core/engine';
+import type { EngineFixtureContext, EngineHandle, NodeRef, OperationContext } from '@e2e-dev/core/engine';
 import type { BrowserExpectation } from '../../src/index.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { cleanup, initInfo, onFirefox, operation as attemptOperation, testWeb } from '../helpers/web-session.ts';
+import { byRole, cleanup, initInfo, onFirefox, operation as attemptOperation, testWeb } from '../helpers/web-session.ts';
 
 const BUDGET_MS = 1_000;
 /** The action timeout a read left to the harness's default budget takes. */
@@ -37,17 +37,6 @@ const COVERED_PAGE = `<!doctype html><title>Covered</title>
 /** An operation of the attempt on the budget under test. */
 function operation(): OperationContext {
   return attemptOperation('hung', { timeoutMs: BUDGET_MS });
-}
-
-function button(name: string): LocatorExpression {
-  return {
-    kind: 'query',
-    query: {
-      kind: 'role',
-      value: { kind: 'string', value: 'button', exact: true },
-      name: { kind: 'string', value: name, exact: true },
-    },
-  };
 }
 
 /**
@@ -110,7 +99,7 @@ describe('operations on a hung page', () => {
   async function freeze(): Promise<void> {
     await engine.session!.open!(`${origin}/`, operation());
     await engine.observe!(operation());
-    const [target] = await engine.locate!(button('Freeze'), operation());
+    const [target] = await engine.locate!(byRole('button', 'Freeze'), operation());
     const tap = await bounded(() => engine.perform!(target!.ref as NodeRef, { kind: 'tap' }, operation()));
     expect(tap.error).toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED' });
   }
@@ -148,7 +137,7 @@ describe('operations on a hung page', () => {
     const card = {
       count: async () => 1,
       getAttribute: async () => {
-        await engine.locate!(button('Next'), { ...operation(), timeoutMs: ACTION_TIMEOUT_MS });
+        await engine.locate!(byRole('button', 'Next'), { ...operation(), timeoutMs: ACTION_TIMEOUT_MS });
         return 'card';
       },
     } as unknown as Locator;
@@ -181,7 +170,7 @@ describe('operations on a hung page', () => {
   it('times out a locate and a point tap on a page whose renderer is stuck in a script', async () => {
     await start();
     await freeze();
-    const locate = await bounded(() => engine.locate!(button('Next'), operation()));
+    const locate = await bounded(() => engine.locate!(byRole('button', 'Next'), operation()));
     expect(locate.error).toMatchObject({ code: 'OPERATION_TIMEOUT' });
     const tap = await bounded(() => engine.performAt!({ x: 10, y: 10 }, { kind: 'tap' }, operation()));
     // Firefox sends a pointer only once the page rendered a frame, which a stuck renderer never does: no input went out.
@@ -191,7 +180,7 @@ describe('operations on a hung page', () => {
   it('keeps the reason the driver gives for a tap that cannot land, ahead of the deadline', async () => {
     await start();
     await engine.session!.open!(`${origin}/covered`, operation());
-    const [target] = await engine.locate!(button('Pay'), operation());
+    const [target] = await engine.locate!(byRole('button', 'Pay'), operation());
     const tap = await bounded(() => engine.perform!(target!.ref as NodeRef, { kind: 'tap' }, operation()));
     expect(tap.error).toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('intercepts pointer events') });
   });

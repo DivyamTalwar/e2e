@@ -15,7 +15,7 @@ import { web } from '../../../src/index.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
-import { cleanup, initInfo, operation } from '../../helpers/web-session.ts';
+import { byRole, cleanup, initInfo, operation } from '../../helpers/web-session.ts';
 
 describe('web engine over CDP', () => {
   let app: FixtureApp;
@@ -53,7 +53,7 @@ describe('web engine over CDP', () => {
       await engine.startAttempt!({ attemptId: 'a1', artifactsDir, signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace });
       await engine.session!.open!(`${app.url}/`, operation('a1'));
       const headings = await engine.locate!(
-        { kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'heading', exact: true } } },
+        byRole('heading'),
         operation('a1'),
       );
       // Proof the attempt ran over the attached remote, not a local launch.
@@ -100,7 +100,7 @@ describe('web engine over CDP', () => {
       expect(resolved).toBe(2);
       await engine.session!.open!(`${app.url}/`, operation('r2'));
       const headings = await engine.locate!(
-        { kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'heading', exact: true } } },
+        byRole('heading'),
         operation('r2'),
       );
       expect(headings[0]?.name).toBe('Home');

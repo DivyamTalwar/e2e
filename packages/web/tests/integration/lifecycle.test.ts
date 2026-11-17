@@ -20,7 +20,7 @@ import type { Browser } from '../../src/index.ts';
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { decodePng } from '../helpers/png.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { browserFixture, byRole, cleanup, initInfo, operation, startPageServer, testWeb as web, type PageServer } from '../helpers/web-session.ts';
+import { browserFixture, byRole, cleanup, flatten, initInfo, operation, startPageServer, testWeb as web, type PageServer } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
 
 /** The segments as files: a local recording never links, so a link here is a failure. */
@@ -33,12 +33,6 @@ function videoFiles(segments: readonly VideoSegment[]): VideoFile[] {
 
 function attempt(attemptId: string, artifactsDir: string) {
   return { attemptId, artifactsDir, signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace };
-}
-
-/** Depth-first walk of one observation tree. */
-function* walk(node: SemanticNode): Generator<SemanticNode> {
-  yield node;
-  for (const child of node.children ?? []) yield* walk(child);
 }
 
 /** The pages a test writes inline, served beside the fixture app. */
@@ -150,7 +144,7 @@ async function openAttempt(
   await engine.startAttempt!({ attemptId, artifactsDir, signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace });
   await engine.session!.open!(`${app.url}/`, operation(attemptId));
   const nodes = await engine.locate!(
-    { kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'heading', exact: true } } },
+    byRole('heading'),
     operation(attemptId),
   );
   return nodes[0]?.name ?? '';
@@ -280,7 +274,7 @@ describe('web engine lifecycle', () => {
         await engine.session!.open!(`${app.url}/pointer`, op());
 
         const snapshot = await engine.observe!(op());
-        const nodes = [...walk(snapshot.root)];
+        const nodes = flatten(snapshot.root);
         const heading = nodes.find((node) => node.role === 'heading');
         expect(heading).toMatchObject({ name: 'Pointer', level: 2 });
         expect(nodes.find((node) => node.name === 'Mute')?.states).toMatchObject({ pressed: false });
@@ -342,7 +336,7 @@ describe('web engine lifecycle', () => {
         await engine.session!.open!(`${app.url}/`, operation('attributes1'));
 
         const snapshot = await engine.observe!(operation('attributes1'));
-        const treeNodes = [...walk(snapshot.root)];
+        const treeNodes = flatten(snapshot.root);
         expect(treeNodes.some((node) => node.attributes?.class === 'card active')).toBe(false);
         expect(treeNodes.some((node) => node.attributes?.readonly !== undefined)).toBe(false);
         expect(treeNodes.some((node) => node.attributes?.['data-extra'] !== undefined)).toBe(false);
@@ -651,21 +645,21 @@ describe('web engine lifecycle', () => {
       await inAttempt('o1', async () => {
         await engine.session!.open!(`${app.url}/form`, operation('o1'));
         const first = await engine.observe!(operation('o1'));
-        const textbox = [...walk(first.root)].find((node) => node.role === 'textbox');
+        const textbox = flatten(first.root).find((node) => node.role === 'textbox');
         expect(textbox).toBeDefined();
         await engine.perform!(textbox!.ref, { kind: 'fill', value: 'fresh', sensitive: false }, operation('o1'));
 
         // The id is stamped on the element: a second look names the same
         // textbox by the same id, and the earlier ref still acts on it.
         const second = await engine.observe!(operation('o1'));
-        const again = [...walk(second.root)].find((node) => node.role === 'textbox');
+        const again = flatten(second.root).find((node) => node.role === 'textbox');
         expect(again!.ref.id).toBe(textbox!.ref.id);
         await engine.perform!(textbox!.ref, { kind: 'fill', value: 'late', sensitive: false }, operation('o1'));
 
         // A new document has none of the old elements: the id is gone with it.
         await engine.session!.open!(`${app.url}/`, operation('o1'));
         const third = await engine.observe!(operation('o1'));
-        expect([...walk(third.root)].some((node) => node.ref.id === textbox!.ref.id)).toBe(false);
+        expect(flatten(third.root).some((node) => node.ref.id === textbox!.ref.id)).toBe(false);
         await expect(
           engine.perform!(textbox!.ref, { kind: 'fill', value: 'gone', sensitive: false }, operation('o1')),
         ).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
@@ -713,7 +707,7 @@ describe('web engine lifecycle', () => {
         expect(first.root.ref.id).toBe('root');
         expect(first.root.name).toBe('Fixture Form');
         // The element ids under the root are stamped in the page; the root's is the engine's.
-        expect([...walk(first.root)].slice(1).every((node) => /^n\d+$/.test(node.ref.id))).toBe(true);
+        expect(flatten(first.root).slice(1).every((node) => /^n\d+$/.test(node.ref.id))).toBe(true);
 
         // A new document stamps new numbers; the root keeps its id.
         await engine.session!.open!(`${app.url}/`, operation('r1'));
@@ -750,7 +744,7 @@ describe('web engine lifecycle', () => {
       await inAttempt('dc1', async () => {
         await engine.session!.open!(`${app.url}/contents`, operation('dc1'));
         const snapshot = await engine.observe!(operation('dc1'));
-        const fields = [...walk(snapshot.root)].filter((node) => node.role === 'textbox').map((node) => node.name);
+        const fields = flatten(snapshot.root).filter((node) => node.role === 'textbox').map((node) => node.name);
         expect(fields).toEqual(['Email', 'First name']);
       });
     });
@@ -761,7 +755,7 @@ describe('web engine lifecycle', () => {
         await inAttempt('cm1', async () => {
           await engine.session!.open!(`${app.url}/closed-login`, operation('cm1'));
           const snapshot = await engine.observe!(operation('cm1'));
-          const nodes = [...walk(snapshot.root)];
+          const nodes = flatten(snapshot.root);
           const user = nodes.find((node) => node.role === 'textbox' && node.name === 'User');
           const password = nodes.find((node) => node.states?.secure === true);
           expect(user?.rect).toBeDefined();
@@ -950,7 +944,7 @@ describe('web engine lifecycle', () => {
       await pageOf(engine).setContent(
         '<button data-qa="go">Go</button><button data-testid="stop">Stop</button>',
       );
-      const observed = [...walk((await engine.observe!(operation('tid1'))).root)];
+      const observed = flatten((await engine.observe!(operation('tid1'))).root);
       const go = observed.find((node) => node.name === 'Go');
       const stop = observed.find((node) => node.name === 'Stop');
       expect(go?.testId).toBe('go');
@@ -967,7 +961,7 @@ describe('web engine lifecycle', () => {
   it('records a video per page at the viewport size: a restart and a state reset each continue in a new segment', async () => {
     const engine = web();
     const videoDir = mkdtempSync(path.join(tmpdir(), 'e2e-video-'));
-    const nodesOf = (snapshot: { root: SemanticNode }) => [...walk(snapshot.root)];
+    const nodesOf = (snapshot: { root: SemanticNode }) => flatten(snapshot.root);
     try {
       await withAttempt(engine, app, videoDir, 'v1', async () => {
         await engine.session!.open!(`${app.url}/form`, operation('v1'));

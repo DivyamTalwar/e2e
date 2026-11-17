@@ -13,14 +13,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { EngineHandle, LocatorExpression, TextPattern } from '@e2e-dev/core/engine';
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { cleanup, initInfo, operation, testWeb } from '../helpers/web-session.ts';
+import { byRole, cleanup, initInfo, operation, testWeb } from '../helpers/web-session.ts';
 
 function byLabel(value: string, exact: boolean, visible?: boolean): LocatorExpression {
   const pattern: TextPattern = { kind: 'string', value, exact };
   return { kind: 'query', query: { kind: 'label', value: pattern, ...(visible === undefined ? {} : { visible }) } };
 }
 
-const rows: LocatorExpression = { kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'listitem', exact: true } } };
+const rows = byRole('listitem');
 
 function rowsWith(has: LocatorExpression): LocatorExpression {
   return { kind: 'filter', source: rows, has };

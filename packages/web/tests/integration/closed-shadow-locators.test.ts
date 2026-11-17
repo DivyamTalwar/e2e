@@ -13,13 +13,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type {
   EngineHandle,
   LocatorExpression,
-  SemanticNode,
   SemanticQuery,
   TextPattern,
 } from '@e2e-dev/core/engine';
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { byRole, byTestId, cleanup, initInfo, operation, testWeb } from '../helpers/web-session.ts';
+import { byRole, byTestId, cleanup, flatten, initInfo, operation, testWeb } from '../helpers/web-session.ts';
 
 function exact(value: string): TextPattern {
   return { kind: 'string', value, exact: true };
@@ -35,12 +34,6 @@ function query(semantic: SemanticQuery, scope?: LocatorExpression): LocatorExpre
 
 function byText(value: TextPattern, visible?: boolean): LocatorExpression {
   return query({ kind: 'text', value, ...(visible === undefined ? {} : { visible }) });
-}
-
-/** Depth-first walk of one observation tree. */
-function* walk(node: SemanticNode): Generator<SemanticNode> {
-  yield node;
-  for (const child of node.children ?? []) yield* walk(child);
 }
 
 async function boot(engine: EngineHandle, app: FixtureApp): Promise<void> {
@@ -70,7 +63,7 @@ describe('locators inside closed shadow roots', () => {
   });
 
   it('resolves every query kind to the node the observed tree names', async () => {
-    const observed = [...walk((await engine.observe!(op)).root)];
+    const observed = flatten((await engine.observe!(op)).root);
     const observedSubmit = observed.find((node) => node.role === 'button' && node.name === 'Submit');
     expect(observedSubmit?.testId).toBe('submit');
 
@@ -170,7 +163,7 @@ describe('locators inside closed shadow roots', () => {
   });
 
   it('matches a label an aria-labelledby id names in the control\'s own tree, in a closed root and an open one below it', async () => {
-    const observed = [...walk((await engine.observe!(op)).root)];
+    const observed = flatten((await engine.observe!(op)).root);
     expect(observed.find((node) => node.testId === 'pin')).toMatchObject({ role: 'textbox', name: 'PIN' });
     expect(observed.find((node) => node.testId === 'tone')).toMatchObject({ role: 'textbox', name: 'Tone' });
 
@@ -196,7 +189,7 @@ describe('locators inside closed shadow roots', () => {
     await engine.perform!(tone!.ref, { kind: 'tap' }, op);
     expect(await focusedOf('tone')).toBe(true);
     expect(await focusedOf('pin')).toBeUndefined();
-    const focused = [...walk((await engine.observe!(op)).root)].filter((node) => node.states?.['focused'] === true);
+    const focused = flatten((await engine.observe!(op)).root).filter((node) => node.states?.['focused'] === true);
     expect(focused.map((node) => node.testId)).toEqual(['tone']);
   });
 
@@ -239,7 +232,7 @@ describe('match order across one closed root', () => {
 
   it('lists light-DOM matches first and the closed root after, where the observed tree lists them in place', async () => {
     // The host comes before the light-DOM button, so the reader reads Alpha first.
-    const observed = [...walk((await engine.observe!(op)).root)].filter((node) => node.role === 'button');
+    const observed = flatten((await engine.observe!(op)).root).filter((node) => node.role === 'button');
     expect(observed.map((node) => node.name)).toEqual(['Alpha', 'Beta']);
     // A locator searches the light DOM as one root and the closed root as the next.
     const located = await engine.locate!(byRole('button'), op);
