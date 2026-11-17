@@ -11,9 +11,16 @@
  * elsewhere (a download, a `204`, a `mailto:` link) never gets a document,
  * so it never joins. When the shown tab closes, the tab that opened it is
  * shown next, else the open tab shown most recently.
+ *
+ * A tab that cannot be shown fails whoever asked for it: the step that
+ * opened or showed it, or the `browser.waitForPopup` waiting for it. When
+ * no step asked, as for the tab shown once the shown one closed, the host
+ * is told, and the next step fails with the cause. A tab that closed while
+ * it was shown is no failure.
  */
 
 import { EngineError, TestError, type EngineTabs } from '@e2e-dev/core/engine';
+import { message } from '../errors.ts';
 import { afterTrigger, type OperationBudget } from './budget.ts';
 
 /** One tab of the attempt. The same tab is the same object for the whole attempt. */
@@ -32,12 +39,16 @@ export interface AttemptTab {
 export interface TabHost {
   /** Sets up `context` to be shown: the attempt's viewport, and with `front` the browser's focus. */
   prepare(context: string, front: boolean): Promise<void>;
+  /** Whether `context` has closed, asked of the browser: its answer to a command can come before the event that tells of the close. */
+  gone(context: string): Promise<boolean>;
   /** Another tab is shown, or none: every ref and frame of the one shown before is forgotten. */
   forget(): void;
   /** Moves the recording to `context`, ending the one before; `closed` when that one closed on its own. */
   record(context: string | undefined, closed: boolean): Promise<void>;
   /** Asks the browser to close `context`. */
   close(context: string): Promise<void>;
+  /** A tab change no step waits for failed: the next step fails with `error`. */
+  failed(error: Error): void;
 }
 
 /** A tab the app opened that has no document yet. */
@@ -49,7 +60,7 @@ interface Unjoined {
   loading: string | undefined;
 }
 
-/** A `browser.waitForPopup` waiting for the next tab the app opens, told the tab and the change that shows it. */
+/** A `browser.waitForPopup` waiting for the next tab the app opens, told the tab and the change that shows it, which rejects when the tab cannot be shown. */
 type PopupWaiter = (tab: AttemptTab, shown: Promise<void>) => void;
 
 /** The attempt's tabs and the changes between them, in the order they happen. */
@@ -110,7 +121,7 @@ export class AttemptTabs {
     const tab: AttemptTab = { context, opener: undefined, shownAt: 0, closed: false };
     this.open.push(tab);
     try {
-      await this.inTurn(() => this.reveal(tab, this.showing !== undefined), true);
+      await this.inTurn(() => this.reveal(tab, this.showing !== undefined));
     } catch (cause) {
       this.destroyed(context);
       throw cause;
@@ -143,7 +154,9 @@ export class AttemptTabs {
    * with its first document: one it navigated to, or the blank one when
    * nothing else started in it, as a tab the app writes itself. The blank
    * document a failed navigation leaves behind is none. Returns the tab when
-   * this joined it.
+   * this joined it. A `browser.waitForPopup` waiting for it has it shown, and
+   * is told when that fails; a tab that closed while it was shown is none
+   * (`unlessClosed`).
    */
   loaded(context: string, url: string): AttemptTab | undefined {
     const pending = this.unjoined.get(context);
@@ -152,7 +165,7 @@ export class AttemptTabs {
     const tab: AttemptTab = { context, opener: pending.opener, shownAt: 0, closed: false };
     this.open.push(tab);
     if (this.waiters.size > 0) {
-      const shown = this.inTurn(() => this.reveal(tab, true));
+      const shown = this.inTurn(() => this.unlessClosed(tab, () => this.reveal(tab, true)));
       for (const waiter of this.waiters) waiter(tab, shown);
     }
     return tab;
@@ -161,7 +174,11 @@ export class AttemptTabs {
   /**
    * A top-level context closed. When it was the shown tab, its nearest open
    * opener is shown next, else the open tab shown most recently, at once;
-   * the recording follows in turn.
+   * its setup and the recording follow in turn. No step waits for those, so
+   * a failure of either is the host's to report (`TabHost.failed`): the tab
+   * is shown, and may lack the attempt's viewport or the browser's focus.
+   * The recording moves whatever the setup did. A tab that closed in turn
+   * while it was set up is no failure (`unlessClosed`).
    */
   destroyed(context: string): void {
     this.unjoined.delete(context);
@@ -175,8 +192,13 @@ export class AttemptTabs {
     const next = this.returnTo(tab);
     this.publish(next);
     void this.inTurn(async () => {
-      if (next !== undefined && this.showing === next) await this.host.prepare(next.context, true);
-      await this.host.record(next !== undefined && this.showing === next ? next.context : undefined, true);
+      try {
+        if (next !== undefined && this.showing === next) await this.unlessClosed(next, () => this.host.prepare(next.context, true));
+      } finally {
+        await this.host.record(next !== undefined && this.showing === next ? next.context : undefined, true);
+      }
+    }).catch((cause: unknown) => {
+      this.host.failed(new EngineError('ENGINE_FAILURE', `showing the tab behind a tab that closed failed: ${message(cause)}`, { retryable: false, cause }));
     });
   }
 
@@ -200,7 +222,7 @@ export class AttemptTabs {
     await this.inTurn(async () => {
       open();
       await this.reveal(tab, true);
-    }, true);
+    });
   }
 
   /** Shows the open tab at `index` in opening order, as the agent's `switchTab` counts them. */
@@ -230,7 +252,7 @@ export class AttemptTabs {
         throw cause;
       }
       await gone;
-    }, true);
+    });
     await this.settled();
   }
 
@@ -241,9 +263,11 @@ export class AttemptTabs {
 
   /**
    * Waits for the next tab the app opens: `opened` resolves with it once it
-   * is shown, or with it closed when it closed first. `loading` names the
-   * page a tab the app opened is still loading, for a wait that times out.
-   * `cancel` stops waiting.
+   * is shown, or with it closed when it closed first, and rejects with what
+   * kept it from being shown. It can settle before anything awaits it (the
+   * trigger of `waitForPopup` still running), so a rejection nothing awaits
+   * yet is handled here. `loading` names the page a tab the app opened is
+   * still loading, for a wait that times out. `cancel` stops waiting.
    */
   nextPopup(): { readonly opened: Promise<AttemptTab>; loading(): string | undefined; cancel(): void } {
     let waiter!: PopupWaiter;
@@ -254,6 +278,7 @@ export class AttemptTabs {
       };
     });
     this.waiters.add(waiter);
+    opened.catch(() => undefined);
     return {
       opened,
       loading: () => [...this.unjoined.values()].findLast((pending) => pending.loading !== undefined)?.loading,
@@ -265,7 +290,8 @@ export class AttemptTabs {
 
   /**
    * Runs `trigger` and waits for the next tab the app opens, resolving once
-   * it is shown (`browser.waitForPopup`, over `afterTrigger`). A wait that
+   * it is shown (`browser.waitForPopup`, over `afterTrigger`). A tab that
+   * opened and could not be shown fails the wait with the cause. A wait that
    * runs out names the page a tab was still loading, else whether the
    * trigger had resolved.
    */
@@ -305,6 +331,23 @@ export class AttemptTabs {
     await this.host.record(tab.context, false);
   }
 
+  /**
+   * Runs `change`, which sets `tab` up or shows it, for a caller that takes
+   * a tab closing under it for no failure: the app closed it, as it may any
+   * tab. The browser can fail a command of a closed tab before its event
+   * tells of the close, so the host is asked (`TabHost.gone`), and a tab it
+   * finds gone leaves the tabs here. Any other failure is thrown, as is the
+   * change's own when the host cannot tell.
+   */
+  private async unlessClosed(tab: AttemptTab, change: () => Promise<void>): Promise<void> {
+    try {
+      await change();
+    } catch (cause) {
+      if (!tab.closed && !(await this.host.gone(tab.context).catch(() => false))) throw cause;
+      this.destroyed(tab.context);
+    }
+  }
+
   /** Makes `tab` the shown one at once, or none; the host forgets what it kept of the one shown before. */
   private publish(tab: AttemptTab | undefined): void {
     this.showing = tab;
@@ -321,13 +364,12 @@ export class AttemptTabs {
   }
 
   /**
-   * Queues one tab change behind the earlier ones. The queue never rejects;
-   * `rethrow` hands this change's own failure to its caller, and a change
-   * nobody awaits fails quietly, as a tab the app opened cannot fail a step.
+   * Queues one tab change behind the earlier ones and returns it. The queue
+   * never rejects: the change's own failure is its caller's to take.
    */
-  private inTurn(work: () => Promise<void>, rethrow = false): Promise<void> {
+  private inTurn(work: () => Promise<void>): Promise<void> {
     const run = this.work.then(work);
     this.work = run.catch(() => undefined);
-    return rethrow ? run : run.catch(() => undefined);
+    return run;
   }
 }

@@ -40,9 +40,11 @@ async function attempt(owners: ContextTree, userContext: string) {
   };
   session.tabs = new AttemptTabs({
     prepare: async () => undefined,
+    gone: async () => false,
     forget: () => undefined,
     record: async () => undefined,
     close: async () => undefined,
+    failed: (error) => latch.latch(error),
   });
   await session.tabs.own('tab');
   return { session: session as unknown as BidiSession, state: session, log, added, latch, lines, visited, forgotten };

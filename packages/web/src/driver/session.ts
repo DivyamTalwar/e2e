@@ -141,6 +141,7 @@ export class BidiSession {
         if (this.viewport !== null) await this.sizeTab(context, this.viewport);
         if (front) await this.connection.send('browsingContext.activate', { context });
       },
+      gone: (context) => tabClosed(this.connection, context),
       forget: () => {
         this.refs.clear();
         this.frames.clear();
@@ -152,6 +153,7 @@ export class BidiSession {
       close: async (context) => {
         await this.connection.send('browsingContext.close', { context });
       },
+      failed: (error) => this.latch.latch(error),
     });
   }
 
