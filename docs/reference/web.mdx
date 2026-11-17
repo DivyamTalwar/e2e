@@ -994,7 +994,9 @@ await browser.keyboard.type('hello');
 
 - `type(text)` types plain text only, never a `Secret`. A character no key
   types, such as an emoji or an accented letter, is inserted into the focused
-  field, and the call fails when the focused element cannot take it.
+  field. The call fails when what holds focus takes keys but not text, such
+  as a custom widget. With a button, a link, or nothing focused, the
+  character is left out, as a key press there types nothing.
 - Prefer `locator.press` and `locator.fill` when a target exists.
 - [`Browser`](#browser-interface) describes each method.
 

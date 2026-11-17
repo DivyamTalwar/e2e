@@ -9,7 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { attachBrowser } from '../../../src/index.ts';
-import { closeRemoteChrome, installedChrome, launchRemoteChrome, type RemoteChrome, type RemoteChromeOptions } from '../../helpers/cdp-host.ts';
+import { ATTACH_HOSTS, closeRemoteChrome, installedChrome, launchRemoteChrome, type RemoteChrome, type RemoteChromeOptions } from '../../helpers/cdp-host.ts';
 import { openTab, openTabs, showOnly, showTab } from '../../helpers/cdp-tabs.ts';
 import { startPageServer, type PageServer } from '../../helpers/web-session.ts';
 import { gate } from '../../helpers/gate.ts';
@@ -28,13 +28,7 @@ const APP = `<!doctype html><title>App</title>
   for (const type of ['input', 'change']) document.addEventListener(type, (event) => edits.push(type + ':' + event.target.value));
 </script>`;
 
-/** The hosts an attach is tried on: the pinned headless shell, and the pinned full Chrome with its browser UI and prerendered pages. */
-const HOSTS: readonly (readonly [string, () => RemoteChromeOptions])[] = [
-  ['the headless shell', () => ({})],
-  ['the pinned full Chrome', () => ({ fullChrome: installedChrome() })],
-];
-
-describe.each(HOSTS)('attachBrowser on a tab %s already shows', (_host, options) => {
+describe.each(ATTACH_HOSTS)('attachBrowser on a tab %s already shows', (_host, options) => {
   let server: PageServer;
   let chrome: RemoteChrome;
   let endpoint: string;

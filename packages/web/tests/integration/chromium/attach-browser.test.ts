@@ -12,7 +12,7 @@ import { attachBrowser } from '../../../src/index.ts';
 import { launchRemoteChrome, recordGoodbyes, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { startPageServer, type PageServer } from '../../helpers/web-session.ts';
-import { openTab, openTabs } from '../../helpers/cdp-tabs.ts';
+import { openTabs, showOnly } from '../../helpers/cdp-tabs.ts';
 
 describe('attachBrowser', () => {
   let app: FixtureApp;
@@ -130,20 +130,8 @@ describe('attachBrowser', () => {
     }
   });
 
-  /**
-   * Has Chrome show `html` in its only tab with no driver attached, so no
-   * preload of an attach ever ran in the document, and returns its URL.
-   */
-  async function showUnattached(pathname: string, html: string): Promise<string> {
-    const before = await openTabs(endpoint);
-    const opened = await openTab(endpoint, server, pathname, html);
-    for (const tab of before) await fetch(`${endpoint}/json/close/${tab.id}`);
-    await expect.poll(() => openTabs(endpoint)).toEqual([opened]);
-    return opened.url;
-  }
-
   it('taps the page it finds open, which no attach loaded, with no navigation first', async () => {
-    const found = await showUnattached('/found', `<button id=b>Tap me</button><script>
+    const { url: found } = await showOnly(endpoint, server, '/found', `<button id=b>Tap me</button><script>
       window.log = [];
       for (const type of ['mousedown', 'mouseup', 'click']) b.addEventListener(type, () => log.push(type));
     </script>`);
@@ -154,7 +142,7 @@ describe('attachBrowser', () => {
   });
 
   it('edits and reads the page it finds open without what a preload would have kept there', async () => {
-    await showUnattached('/found-unkept', `<input type=range max=10 aria-label=Level><div id=host></div>
+    await showOnly(endpoint, server, '/found-unkept', `<input type=range max=10 aria-label=Level><div id=host></div>
       <script>
         window.log = [];
         for (const type of ['input', 'change']) document.querySelector('input').addEventListener(type, (event) => log.push(type + ':' + event.target.value));

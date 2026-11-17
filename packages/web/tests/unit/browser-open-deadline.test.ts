@@ -9,13 +9,14 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { EngineAttemptContext, EngineInitInfo } from '@e2e-dev/core/engine';
+import type { EngineAttemptContext } from '@e2e-dev/core/engine';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
 import { BROWSER_OPEN_TIMEOUT_MS } from '../../src/driver/browser-source.ts';
 import { connectBidiOverCdp, type BidiBrowser } from '../../src/driver/launch.ts';
 import { web } from '../../src/index.ts';
 import type { BrowserLease, BrowserProvider, BrowserRequest } from '../../src/provider.ts';
 import { FakeBidi, type Reply } from '../helpers/bidi-fake.ts';
+import { initInfo, prepareInfo } from '../helpers/provider-fake.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
 
 vi.mock('../../src/driver/launch.ts', async (importOriginal) => ({ ...(await importOriginal<object>()), connectBidiOverCdp: vi.fn() }));
@@ -29,7 +30,6 @@ afterEach(() => {
 /** What an opening the deadline ended fails with. */
 const DEADLINE = { code: 'OPERATION_TIMEOUT', message: `the browser did not open within ${BROWSER_OPEN_TIMEOUT_MS}ms` };
 
-const info = (env: Record<string, string> = {}): EngineInitInfo => ({ runId: 'run-1', targetName: 'web', projectRoot: '/project', app: {}, env, headed: false, workerSlot: 0, signal: new AbortController().signal, log: () => undefined });
 const attempt = (id: string): EngineAttemptContext => ({ attemptId: id, artifactsDir: '/tmp/e2e-open-deadline-artifacts', signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace });
 
 /** An attached browser on a scripted peer, which answers the event subscription with what `subscribe` returns. */
@@ -52,11 +52,11 @@ async function workerWithoutBrowser(replacement: (request: BrowserRequest) => Pr
     acquire: (request) => (leased++ === 0 ? Promise.resolve({ id: 'lease-0', cdpEndpoint: 'wss://0.example' }) : replacement(request)),
     release: async (lease) => void released.push(lease.id),
   };
-  const prepared = await web({ browser: provider }).prepare!({ runId: 'run-1', targetName: 'web', projectRoot: '/project', app: {}, slots: 1, env: {}, signal: new AbortController().signal, headed: false, log: () => undefined });
+  const prepared = await web({ browser: provider }).prepare!(prepareInfo(1, undefined, {}));
   const first = fakeBrowser();
   connectCdp.mockResolvedValueOnce(first.browser);
   const engine = web({ browser: provider });
-  await engine.init!(info({ ...(prepared?.env as Record<string, string>) }));
+  await engine.init!(initInfo(0, { ...(prepared?.env as Record<string, string>) }));
   first.peer.drop();
   return { engine, released };
 }
@@ -66,7 +66,7 @@ describe('a browser that does not open within its deadline fails as that deadlin
     vi.useFakeTimers();
     let land: (endpoint: string) => void = () => undefined;
     const engine = web({ connect: { cdpEndpoint: () => new Promise<string>((resolve) => (land = resolve)) } });
-    const failed = expect(engine.init!(info())).rejects.toMatchObject(DEADLINE);
+    const failed = expect(engine.init!(initInfo(0))).rejects.toMatchObject(DEADLINE);
     await vi.advanceTimersByTimeAsync(BROWSER_OPEN_TIMEOUT_MS);
     land('ws://127.0.0.1:9');
     await failed;
@@ -76,7 +76,7 @@ describe('a browser that does not open within its deadline fails as that deadlin
   it('while its endpoint still resolves, when the resolver stops at the abort', async () => {
     vi.useFakeTimers();
     const engine = web({ connect: { cdpEndpoint: (signal) => new Promise<string>((_, reject) => signal.addEventListener('abort', () => reject(new Error('resolver abandoned')))) } });
-    const failed = expect(engine.init!(info())).rejects.toMatchObject(DEADLINE);
+    const failed = expect(engine.init!(initInfo(0))).rejects.toMatchObject(DEADLINE);
     await vi.advanceTimersByTimeAsync(BROWSER_OPEN_TIMEOUT_MS);
     await failed;
   });
@@ -88,7 +88,7 @@ describe('a browser that does not open within its deadline fails as that deadlin
     // The attach takes a second, so the subscription's own timeout ends after the deadline.
     connectCdp.mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve(browser), 1_000)));
     const engine = web({ connect: { cdpEndpoint: () => 'ws://127.0.0.1:9' } });
-    const failed = expect(engine.init!(info())).rejects.toMatchObject(DEADLINE);
+    const failed = expect(engine.init!(initInfo(0))).rejects.toMatchObject(DEADLINE);
     await vi.advanceTimersByTimeAsync(BROWSER_OPEN_TIMEOUT_MS);
     subscribed();
     await failed;

@@ -8,7 +8,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { closeRemoteChrome, installedChrome, launchRemoteChrome, type RemoteChrome, type RemoteChromeOptions } from '../../helpers/cdp-host.ts';
+import { ATTACH_HOSTS, closeRemoteChrome, installedChrome, launchRemoteChrome, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { openTab, openTabs, showOnly } from '../../helpers/cdp-tabs.ts';
 import { byRole, startPageServer, startWebSession, type PageServer, type WebSession } from '../../helpers/web-session.ts';
 
@@ -21,12 +21,7 @@ const APP = `<!doctype html><title>App</title>
   press.addEventListener('click', () => { clicks += 1; count.textContent = 'clicked ' + clicks; });
 </script>`;
 
-const HOSTS: readonly (readonly [string, () => RemoteChromeOptions])[] = [
-  ['the headless shell', () => ({})],
-  ['the pinned full Chrome', () => ({ fullChrome: installedChrome() })],
-];
-
-describe.each(HOSTS)("web({ connect: { context: 'existing' } }) on %s", (_host, options) => {
+describe.each(ATTACH_HOSTS)("web({ connect: { context: 'existing' } }) on %s", (_host, options) => {
   let pages: PageServer;
   let chrome: RemoteChrome;
   let endpoint: string;
@@ -119,9 +114,7 @@ describe("web({ connect: { context: 'existing' } }) beside tabs the browser alre
   }, 60_000);
 
   afterAll(async () => {
-    await session?.close();
-    await pages?.close();
-    if (chrome !== undefined) await closeRemoteChrome(chrome);
+    await tearDownRemote({ ends: [() => session?.close()], chrome, closes: [() => pages?.close()] });
   });
 
   it('restarts in the window it drives and leaves the background tab open', async () => {

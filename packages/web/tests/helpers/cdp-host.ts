@@ -153,3 +153,9 @@ export async function launchRemoteChrome(options: RemoteChromeOptions = {}): Pro
     throw cause;
   }
 }
+
+/** The hosts an attach is tried on: the pinned headless shell, and the pinned full Chrome with its browser UI and prerendered pages. */
+export const ATTACH_HOSTS: readonly (readonly [string, () => RemoteChromeOptions])[] = [
+  ['the headless shell', () => ({})],
+  ['the pinned full Chrome', () => ({ fullChrome: installedChrome() })],
+];

@@ -77,8 +77,11 @@ describe('route.fetch and the request body', () => {
   });
 
   afterAll(async () => {
-    await session.close();
-    rmSync(uploads, { recursive: true, force: true });
+    try {
+      await session.close();
+    } finally {
+      rmSync(uploads, { recursive: true, force: true });
+    }
   });
 
   /** What a route on `/record` saw of each request: its `postData`, and the failure of its `route.fetch()` if it had one. */

@@ -7,7 +7,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Browser } from '../../../src/fixture/types.ts';
-import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { launchRemoteChrome, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startWebSession, type WebSession } from '../../helpers/web-session.ts';
 
 /** A reply or an event of Chrome's, as its DevTools connection sends it. */
@@ -83,8 +83,7 @@ describe('routes and the HTTP cache on an attached browser', () => {
   });
 
   afterAll(async () => {
-    await session?.close();
-    if (chrome !== undefined) await closeRemoteChrome(chrome);
+    await tearDownRemote({ ends: [() => session?.close()], chrome });
   });
 
   it('hands a route the cached script of its own tabs, and leaves another client\'s cache on', async () => {
