@@ -106,12 +106,13 @@ function viewportOf(page: ReturnType<typeof pageOf>): Promise<{ width: number; h
 }
 
 /**
- * Lets the page paint into the recording before a segment closes: two
- * animation frames, then a moment for the screencast to deliver them.
+ * Resolves once the page repainted: at its second animation frame from now.
+ * Firefox's recording is the page's repaints, so it holds no frame of a page
+ * that has not painted yet; Chromium's segment ends on a screenshot of the
+ * page as it stands.
  */
-async function settlePaint(page: ReturnType<typeof pageOf>): Promise<void> {
+async function repainted(page: ReturnType<typeof pageOf>): Promise<void> {
   await page.browser.evaluate('() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))))');
-  await new Promise((resolve) => setTimeout(resolve, 500));
 }
 
 async function withAttempt(
@@ -994,16 +995,16 @@ describe('web engine lifecycle', () => {
         const textbox = observed.find((node) => node.role === 'textbox' && node.name === 'First');
         await engine.perform!(textbox!.ref, { kind: 'fill', value: 'recorded', sensitive: false }, operation('v1'));
         await engine.artifacts!.screenshot('shot', operation('v1'));
-        await settlePaint(page);
+        await repainted(page);
         // A restart closes the page and opens another, blank until the harness
         // reopens the app: the recording continues in a second segment.
         await engine.session!.restart!(operation('v1'));
         await engine.session!.open!(`${app.url}/form`, operation('v1'));
-        await settlePaint(page);
+        await repainted(page);
         // A state reset recreates the context; the recording continues in a third.
         await engine.session!.reset!(operation('v1'));
         await engine.session!.open!(`${app.url}/`, operation('v1'));
-        await settlePaint(page);
+        await repainted(page);
         const segments = videoFiles(await engine.artifacts!.stopVideo!(operation('v1')));
         expect(segments.map((segment) => segment.path)).toEqual([
           'video/video.webm',
@@ -1045,7 +1046,7 @@ describe('web engine lifecycle', () => {
         for (const url of [`${app.url}/form`, `${app.url}/`]) {
           await engine.artifacts!.startVideo!(operation('v3'));
           await engine.session!.open!(url, operation('v3'));
-          await settlePaint(viewer);
+          await repainted(viewer);
           segments.push(...videoFiles(await engine.artifacts!.stopVideo!(operation('v3'))));
         }
         expect(segments.map((segment) => segment.path)).toEqual(['video/video.webm', 'video/video-part2.webm']);

@@ -23,18 +23,23 @@ function operation(): OperationContext {
 
 const signal = () => new AbortController().signal;
 
-/** Records every change of each file input on the page: the files' names, types, and text, and the events that fired. */
+/**
+ * Records every change of each file input on the page: the files' names,
+ * types, and text, and the events that fired. A change is recorded once its
+ * files are read, and `reading` holds every read begun.
+ */
 const PAGE = `<input type="file" id="many" multiple>
 <input type="file" id="one">
 <input type="file" id="hidden" style="display:none">
 <button id="pick" onclick="document.getElementById('hidden').click()">Pick</button>
 <script>
   window.seen = [];
+  window.reading = [];
   for (const input of document.querySelectorAll('input[type=file]')) {
     input.addEventListener('input', (event) => window.seen.push({ id: input.id, event: event.type, composed: event.composed }));
-    input.addEventListener('change', async () => {
-      const files = await Promise.all([...input.files].map(async (file) => ({ name: file.name, type: file.type, text: await file.text() })));
-      window.seen.push({ id: input.id, event: 'change', files });
+    input.addEventListener('change', () => {
+      const files = Promise.all([...input.files].map(async (file) => ({ name: file.name, type: file.type, text: await file.text() })));
+      window.reading.push(files.then((read) => window.seen.push({ id: input.id, event: 'change', files: read })));
     });
   }
 </script>`;
@@ -99,9 +104,11 @@ describe('uploads to a provider\'s browser', () => {
     return engine.perform!(node!.ref, { kind: 'setInputFiles', paths }, operation()).then(() => undefined, (error: unknown) => error);
   }
 
+  /** What the page recorded, once it read the files of every change fired so far. */
   const seen = () => browserFixture(engine, { baseUrl: app.url }).evaluate(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    return (window as unknown as { seen: JsonValue[] }).seen;
+    const recorded = window as unknown as { seen: JsonValue[]; reading: Promise<unknown>[] };
+    await Promise.all(recorded.reading);
+    return recorded.seen;
   });
 
   it('sends the files\' bytes, names, and types, and fires input and change as a pick does', async () => {
