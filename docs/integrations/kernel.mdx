@@ -50,8 +50,9 @@ export default {
 Set `KERNEL_API_KEY` in the environment that `e2e run` starts in, such as a
 CI secret. `workers` sets how many browsers run at the same time.
 
-Without the key, or on a Kernel error, the lease fails with that message,
-and the run ends before any test.
+Without the key, or on a Kernel error, the lease fails with that message.
+In worker scope the run ends before any test. In attempt scope the attempt
+fails.
 
 ## Fill the screen
 

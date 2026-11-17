@@ -410,8 +410,8 @@ browser lives until the service ends it.
 
 Implement `downloads`, and `browser.waitForDownload` works as it does
 locally. A hosted browser saves a download to its own disk, where the runner
-can't open it. With `downloads`, it saves each attempt's files in a folder
-under `dir`, and the engine passes each finished file's path to `read`.
+can't open it. With `downloads`, it saves downloads in `dir`, and the engine
+passes each finished file's path to `read`.
 `read` fetches the bytes through the service's file API.
 [Kernel](/integrations/kernel#downloads),
 [smol machines](/integrations/smol), and [E2B](/integrations/e2b) serve
@@ -488,12 +488,8 @@ characters from every name:
 - `<button><i class="fa fa-sign-in"> Login</i></button>` is
   `button "Login"`, and `getByRole('button', 'Login')` finds it.
 - A glyph between two words reads as a space.
-- A control with only an icon reads as its `title`, when it has one. The
-  browser still names it by the glyph, so `getByRole` by that title finds
-  nothing. Give it an `aria-label`, or use
-  `browser.locator('[title="Sign out"]')`.
-- A `RegExp` name matches the browser's name, glyph included, so don't
-  anchor it: `/Login/`.
+- A control with only an icon reads as its `title`, when it has one, and
+  `getByRole` finds it by that name.
 
 ## Inert content
 

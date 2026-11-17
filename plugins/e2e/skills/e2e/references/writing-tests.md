@@ -226,9 +226,8 @@ Roles: `button`, `link`, `textbox`, `searchbox`, `combobox`, `listbox`,
 `alertdialog`, `main`, `navigation`, `banner`, `contentinfo`, `complementary`,
 `region`. The union is closed (anything else is a type error); `img` aliases
 `image`; a role the platform lacks (`tooltip` on a phone) matches nothing.
-On the web a `contenteditable` host is a `textbox` for the agent and takes
-`fill`; from a test use `getByLabel`, `getByTestId`, or `role="textbox"` on
-the host.
+On the web a `contenteditable` host is a `textbox`: `getByRole('textbox')`
+finds it and it takes `fill`.
 
 Text matching is exact after whitespace normalization (whole string,
 case-sensitive) for a `getByRole` name, `getByLabel`, `getByPlaceholder`, and

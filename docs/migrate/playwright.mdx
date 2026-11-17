@@ -47,6 +47,7 @@ A Playwright key such as `testDir`, `baseURL`, `use`, `webServer`, or
 | `use.baseURL`, `webServer` | `app: { url, command }` on the target, see [Starting your app](/web#starting-your-app) |
 | `webServer.reuseExistingServer` | `app.command: { reuseExisting: true }`; CI ignores it |
 | `projects` | `targets`, one engine instance each |
+| A `webkit` project, `devices['Desktop Safari']` | Keep those tests in Playwright. e2e runs `chromium` and `firefox` |
 | `testDir`, `testMatch`, `testIgnore` | `tests`, globs from the project root; a leading `!` excludes |
 | `retries`, `workers`, `timeout` | the same names, with [other defaults](#defaults-that-differ); `workers` is an integer |
 | `expect.timeout`, `use.actionTimeout`, `globalTimeout` | `assertionTimeout`, `actionTimeout`, `maxDuration`; the `maxDuration` clock starts with the tests, not app startup |
