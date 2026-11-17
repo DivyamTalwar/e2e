@@ -18,14 +18,11 @@ import { web as webEngine, type BrowserProvider, type BrowserProviderScope } fro
 import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
-import { browserFixture, bySelector } from '../../helpers/web-session.ts';
+import { browserFixture, bySelector, cleanup, initInfo, operation as attemptOperation } from '../../helpers/web-session.ts';
 
+/** An operation of the file's one attempt, on a 15 s budget. */
 function operation(): OperationContext {
-  return { timeoutMs: 15_000, signal: new AbortController().signal, runId: 'run-downloads', attemptId: 'a1', origin: 'test' };
-}
-
-function cleanup() {
-  return { timeoutMs: 10_000, signal: new AbortController().signal };
+  return attemptOperation('a1', { timeoutMs: 15_000, runId: 'run-downloads' });
 }
 
 const signal = () => new AbortController().signal;
@@ -67,9 +64,9 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
   });
 
   afterEach(async () => {
-    await engine?.endAttempt!(cleanup());
-    await engine?.dispose!(cleanup());
-    await engine?.finish!({ runId: 'run-downloads', targetName: 'web', env: {}, log: () => undefined, ...cleanup() });
+    await engine?.endAttempt!(cleanup(10_000));
+    await engine?.dispose!(cleanup(10_000));
+    await engine?.finish!({ runId: 'run-downloads', targetName: 'web', env: {}, log: () => undefined, ...cleanup(10_000) });
     if (chrome !== undefined) await closeRemoteChrome(chrome);
     if (artifactsDir !== undefined) rmSync(artifactsDir, { recursive: true, force: true });
     if (remoteDisk !== undefined) rmSync(remoteDisk, { recursive: true, force: true });
@@ -95,11 +92,7 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
     };
     engine = webEngine({ browser: provider });
     const prepared = await engine.prepare!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, slots: 1, env: {}, signal: signal(), headed: false, log: () => undefined });
-    await engine.init!({
-      runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(),
-      app: { site: new URL(app.url).hostname }, env: { ...prepared?.env }, headed: false,
-      workerSlot: 0, signal: signal(), log: () => undefined,
-    });
+    await engine.init!(initInfo({ runId: 'run-downloads', app: { site: new URL(app.url).hostname }, env: { ...prepared?.env } }));
     await engine.startAttempt!({ attemptId: 'a1', artifactsDir, signal: signal(), resolveSecret: noSecrets, ...ignoreTrace });
     await engine.session!.open!(`${app.url}/login`, operation());
     await addDownloadLinks(engine, app.url, count, 'report body');
@@ -175,7 +168,7 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
     };
     engine = webEngine({ browser: provider });
     const prepared = await engine.prepare!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, slots: 1, env: {}, signal: signal(), headed: false, log: () => undefined });
-    await engine.init!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, env: { ...prepared?.env }, headed: false, workerSlot: 0, signal: signal(), log: () => undefined });
+    await engine.init!(initInfo({ runId: 'run-downloads', app: { site: new URL(app.url).hostname }, env: { ...prepared?.env } }));
     await engine.startAttempt!({ attemptId: 'a1', artifactsDir, signal: signal(), resolveSecret: noSecrets, ...ignoreTrace });
     await engine.session!.open!(app.url, operation());
     const browser = browserFixture(engine, { baseUrl: app.url, operation: () => operation() });
@@ -210,7 +203,7 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
     };
     engine = webEngine({ browser: provider });
     const prepared = await engine.prepare!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, slots: 1, env: {}, signal: signal(), headed: false, log: () => undefined });
-    await engine.init!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, env: { ...prepared?.env }, headed: false, workerSlot: 0, signal: signal(), log: () => undefined });
+    await engine.init!(initInfo({ runId: 'run-downloads', app: { site: new URL(app.url).hostname }, env: { ...prepared?.env } }));
     await engine.startAttempt!({ attemptId: 'a1', artifactsDir, signal: signal(), resolveSecret: noSecrets, ...ignoreTrace });
     await engine.session!.open!(app.url, operation());
     await addDownloadLinks(engine, app.url, 1, 'stalled provider body', 'report.txt');

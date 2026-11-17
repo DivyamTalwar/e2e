@@ -9,7 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { SemanticNode } from '@e2e-dev/core/engine';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 let page: WebSession;
 
@@ -123,12 +123,6 @@ describe('the bounding box', () => {
     expect(reader === null ? null : { width: reader.width, height: reader.height }).toEqual(size);
   });
 });
-
-function flatten(node: SemanticNode, out: SemanticNode[] = []): SemanticNode[] {
-  out.push(node);
-  for (const child of node.children ?? []) flatten(child, out);
-  return out;
-}
 
 /** One observation of the page, frames included. */
 async function captureTree(): Promise<SemanticNode[]> {

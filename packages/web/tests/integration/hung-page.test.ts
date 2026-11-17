@@ -16,7 +16,7 @@ import type { Locator } from 'e2e';
 import type { EngineFixtureContext, EngineHandle, LocatorExpression, NodeRef, OperationContext } from '@e2e-dev/core/engine';
 import type { BrowserExpectation } from '../../src/index.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { onFirefox, testWeb } from '../helpers/web-session.ts';
+import { cleanup, initInfo, onFirefox, operation as attemptOperation, testWeb } from '../helpers/web-session.ts';
 
 const BUDGET_MS = 1_000;
 /** The action timeout a read left to the harness's default budget takes. */
@@ -34,8 +34,9 @@ const COVERED_PAGE = `<!doctype html><title>Covered</title>
 <button>Pay</button>
 <div id="overlay" style="position: fixed; inset: 0; background: rgba(0, 0, 0, 0.3)"></div>`;
 
+/** An operation of the attempt on the budget under test. */
 function operation(): OperationContext {
-  return { signal: new AbortController().signal, timeoutMs: BUDGET_MS, runId: 'run-hung', attemptId: 'hung', origin: 'test' };
+  return attemptOperation('hung', { timeoutMs: BUDGET_MS });
 }
 
 function button(name: string): LocatorExpression {
@@ -94,25 +95,14 @@ describe('operations on a hung page', () => {
   });
 
   afterEach(async () => {
-    const cleanup = { signal: new AbortController().signal, timeoutMs: 10_000 };
-    await engine.endAttempt!(cleanup);
-    await engine.dispose!(cleanup);
+    await engine.endAttempt!(cleanup(10_000));
+    await engine.dispose!(cleanup(10_000));
   });
 
   /** Boots a fresh engine and attempt. */
   async function start(): Promise<void> {
     engine = testWeb();
-    await engine.init!({
-      runId: 'run-hung',
-      targetName: 'web',
-      projectRoot: process.cwd(),
-      app: { site: '127.0.0.1' },
-      env: {},
-      headed: false,
-      workerSlot: 0,
-      log: () => undefined,
-      signal: new AbortController().signal,
-    });
+    await engine.init!(initInfo({ app: { site: '127.0.0.1' } }));
     await engine.startAttempt!({ attemptId: 'hung', artifactsDir, signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace });
   }
 

@@ -10,18 +10,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { EngineCleanupContext, EngineHandle, LocatorExpression, OperationContext, TextPattern } from '@e2e-dev/core/engine';
+import type { EngineHandle, LocatorExpression, TextPattern } from '@e2e-dev/core/engine';
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { testWeb } from '../helpers/web-session.ts';
-
-function cleanup(): EngineCleanupContext {
-  return { signal: new AbortController().signal, timeoutMs: 30_000 };
-}
-
-function operation(attemptId: string): OperationContext {
-  return { signal: new AbortController().signal, timeoutMs: 30_000, runId: 'run-rows', attemptId, origin: 'test' };
-}
+import { cleanup, initInfo, operation, testWeb } from '../helpers/web-session.ts';
 
 function byLabel(value: string, exact: boolean, visible?: boolean): LocatorExpression {
   const pattern: TextPattern = { kind: 'string', value, exact };
@@ -43,17 +35,7 @@ function removeButtonOf(scope: LocatorExpression): LocatorExpression {
 }
 
 async function boot(engine: EngineHandle, app: FixtureApp): Promise<void> {
-  await engine.init!({
-    runId: 'run-rows',
-    targetName: 'web',
-    projectRoot: process.cwd(),
-    app: { site: new URL(app.url).hostname },
-    env: {},
-    headed: false,
-    workerSlot: 0,
-    log: () => undefined,
-    signal: new AbortController().signal,
-  });
+  await engine.init!(initInfo({ app: { site: new URL(app.url).hostname } }));
 }
 
 describe('an exact label query composed as a has filter', () => {

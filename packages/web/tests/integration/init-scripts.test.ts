@@ -10,10 +10,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { secrets } from 'e2e';
-import type { EngineCleanupContext, EngineHandle } from '@e2e-dev/core/engine';
+import type { EngineHandle } from '@e2e-dev/core/engine';
 import type { Browser } from '../../src/fixture/types.ts';
 import { web, type WebOptions } from '../../src/index.ts';
-import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { bySelector, cleanup, initInfo, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 declare global {
   interface Window {
@@ -31,7 +31,6 @@ const PAGES: Record<string, string> = {
 };
 
 const signal = new AbortController().signal;
-const cleanup = (): EngineCleanupContext => ({ signal, timeoutMs: 30_000 });
 
 describe('init scripts', () => {
   const projectRoot = mkdtempSync(path.join(tmpdir(), 'e2e-init-scripts-'));
@@ -170,8 +169,7 @@ describe('init scripts', () => {
     const surface: EngineHandle = web({ initScripts: [{ path: 'nope.js' }] });
     await expect(surface.prepare!({ runId: 'init-scripts', targetName: 'web', projectRoot, app: {}, slots: 1, env: {},
       signal, headed: false, log: () => undefined })).rejects.toMatchObject({ code: 'INVALID_CONFIG', message: expect.stringMatching(/nope\.js \(ENOENT\)/) });
-    await expect(surface.init!({ runId: 'init-scripts', targetName: 'web', projectRoot, app: {}, env: {}, headed: false,
-      workerSlot: 0, signal, log: () => undefined })).rejects.toMatchObject({
+    await expect(surface.init!(initInfo({ runId: 'init-scripts', projectRoot }))).rejects.toMatchObject({
       code: 'INVALID_CONFIG',
       message: expect.stringMatching(/web\(\{ initScripts \}\)\[0\] path cannot be read: .*nope\.js \(ENOENT\)/),
     });

@@ -12,17 +12,15 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type {
   VideoFile,
   VideoSegment,
-  EngineCleanupContext,
   EngineHandle,
   LocatorExpression,
-  OperationContext,
   SemanticNode,
 } from '@e2e-dev/core/engine';
 import type { Browser } from '../../src/index.ts';
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { decodePng } from '../helpers/png.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { browserFixture, startPageServer, testWeb as web, type PageServer } from '../helpers/web-session.ts';
+import { browserFixture, byRole, cleanup, initInfo, operation, startPageServer, testWeb as web, type PageServer } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
 
 /** The segments as files: a local recording never links, so a link here is a failure. */
@@ -33,20 +31,8 @@ function videoFiles(segments: readonly VideoSegment[]): VideoFile[] {
   });
 }
 
-function cleanup(signal = new AbortController().signal): EngineCleanupContext {
-  return { signal, timeoutMs: 30_000 };
-}
-
-function operation(attemptId: string, signal = new AbortController().signal): OperationContext {
-  return { signal, timeoutMs: 30_000, runId: 'run-pool', attemptId, origin: 'test' };
-}
-
 function attempt(attemptId: string, artifactsDir: string) {
   return { attemptId, artifactsDir, signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace };
-}
-
-function byRole(role: string): LocatorExpression {
-  return { kind: 'query', query: { kind: 'role', value: { kind: 'string', value: role, exact: true } } };
 }
 
 /** Depth-first walk of one observation tree. */
@@ -152,17 +138,7 @@ async function withAttempt(
 }
 
 async function boot(engine: EngineHandle, app: FixtureApp): Promise<void> {
-  await engine.init!({
-    runId: 'run-pool',
-    targetName: 'web',
-    projectRoot: process.cwd(),
-    app: { site: new URL(app.url).hostname },
-    env: {},
-    headed: false,
-    workerSlot: 0,
-    log: () => undefined,
-    signal: new AbortController().signal,
-  });
+  await engine.init!(initInfo({ app: { site: new URL(app.url).hostname } }));
 }
 
 async function openAttempt(
@@ -895,7 +871,7 @@ describe('web engine lifecycle', () => {
     await withAttempt(engine, app, artifactsDir, 'h1', async () => {
       const controller = new AbortController();
       const started = Date.now();
-      const pending = engine.session!.open!(`${app.url}/slow`, operation('h1', controller.signal));
+      const pending = engine.session!.open!(`${app.url}/slow`, operation('h1', { signal: controller.signal }));
       setTimeout(() => controller.abort(), 100);
       await expect(pending).rejects.toMatchObject({ code: 'CANCELLED' });
       expect(Date.now() - started).toBeLessThan(3_000);

@@ -2,7 +2,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { SemanticNode } from '@e2e-dev/core/engine';
-import { byRole, byTestId, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { byRole, byTestId, flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 let page: WebSession;
 
@@ -17,12 +17,6 @@ afterAll(async () => {
 /** One observation of the page. */
 async function capture(): Promise<{ tree: SemanticNode }> {
   return { tree: (await page.observe()).root };
-}
-
-function flatten(node: SemanticNode, out: SemanticNode[] = []): SemanticNode[] {
-  out.push(node);
-  for (const child of node.children ?? []) flatten(child, out);
-  return out;
 }
 
 /** The test ids of the nodes the engine's role query resolves, in order. */

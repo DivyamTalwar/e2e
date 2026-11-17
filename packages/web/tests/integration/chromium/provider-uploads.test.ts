@@ -14,14 +14,11 @@ import { web as webEngine, type BrowserProvider } from '../../../src/index.ts';
 import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
-import { browserFixture, bySelector } from '../../helpers/web-session.ts';
+import { browserFixture, bySelector, cleanup, initInfo, operation as attemptOperation } from '../../helpers/web-session.ts';
 
+/** An operation of the file's one attempt, on a 15 s budget. */
 function operation(): OperationContext {
-  return { timeoutMs: 15_000, signal: new AbortController().signal, runId: 'run-uploads', attemptId: 'a1', origin: 'test' };
-}
-
-function cleanup() {
-  return { timeoutMs: 10_000, signal: new AbortController().signal };
+  return attemptOperation('a1', { timeoutMs: 15_000, runId: 'run-uploads' });
 }
 
 const signal = () => new AbortController().signal;
@@ -66,23 +63,19 @@ describe('uploads to a provider\'s browser', () => {
     };
     engine = webEngine({ browser: provider });
     const prepared = await engine.prepare!({ runId: 'run-uploads', targetName: 'web', projectRoot: dir, app: { site: new URL(app.url).hostname }, slots: 1, env: {}, signal: signal(), headed: false, log: () => undefined });
-    await engine.init!({
-      runId: 'run-uploads', targetName: 'web', projectRoot: dir,
-      app: { site: new URL(app.url).hostname }, env: { ...prepared?.env }, headed: false,
-      workerSlot: 0, signal: signal(), log: () => undefined,
-    });
+    await engine.init!(initInfo({ runId: 'run-uploads', projectRoot: dir, app: { site: new URL(app.url).hostname }, env: { ...prepared?.env } }));
   });
 
   afterAll(async () => {
-    await engine?.dispose!(cleanup());
-    await engine?.finish!({ runId: 'run-uploads', targetName: 'web', env: {}, log: () => undefined, ...cleanup() });
+    await engine?.dispose!(cleanup(10_000));
+    await engine?.finish!({ runId: 'run-uploads', targetName: 'web', env: {}, log: () => undefined, ...cleanup(10_000) });
     await closeRemoteChrome(chrome);
     await app.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
   afterEach(async () => {
-    await engine.endAttempt!(cleanup());
+    await engine.endAttempt!(cleanup(10_000));
   });
 
   /** Starts an attempt on the recording page. */

@@ -11,10 +11,10 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TestError, type EngineCleanupContext, type EngineFixtureContext, type EngineHandle, type EngineSnapshot, type OperationContext, type SemanticNode } from '@e2e-dev/core/engine';
+import { TestError, type EngineFixtureContext, type EngineHandle, type EngineSnapshot, type OperationContext, type SemanticNode } from '@e2e-dev/core/engine';
 import type { Browser } from '../../src/index.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { onFirefox, testWeb } from '../helpers/web-session.ts';
+import { cleanup, initInfo, onFirefox, operation as attemptOperation, testWeb } from '../helpers/web-session.ts';
 
 const PAGES: Readonly<Record<string, string>> = {
   '/opener': `<!doctype html><title>Opener</title><h1>Opener</h1>
@@ -38,12 +38,9 @@ const PAGES: Readonly<Record<string, string>> = {
 
 const HEADING = { kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'heading', exact: true } } } as const;
 
-function cleanup(): EngineCleanupContext {
-  return { signal: new AbortController().signal, timeoutMs: 30_000 };
-}
-
-function operation(timeoutMs = 30_000): OperationContext {
-  return { signal: new AbortController().signal, timeoutMs, runId: 'run-tabs', attemptId: 't1', origin: 'test' };
+/** An operation of the file's one attempt, on `timeoutMs` when a test gives one. */
+function operation(timeoutMs?: number): OperationContext {
+  return attemptOperation('t1', { timeoutMs });
 }
 
 /** Every node of a snapshot, depth first. */
@@ -105,11 +102,7 @@ describe('tabs', () => {
   /** Runs `body` on one engine in a running attempt opened at `/opener`, with the `browser` fixture. */
   async function withAttempt(body: (engine: EngineHandle, browser: Browser) => Promise<void>): Promise<void> {
     const engine = testWeb();
-    await engine.init!({
-      runId: 'run-tabs', targetName: 'web', projectRoot: process.cwd(),
-      app: { site: '127.0.0.1' }, env: {}, headed: false,
-      workerSlot: 0, log: () => undefined, signal: new AbortController().signal,
-    });
+    await engine.init!(initInfo({ app: { site: '127.0.0.1' } }));
     await engine.startAttempt!({ attemptId: 't1', artifactsDir, signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace });
     try {
       const browser = engine.fixtures!['browser']!({

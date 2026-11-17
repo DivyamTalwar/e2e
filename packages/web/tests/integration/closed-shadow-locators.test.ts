@@ -11,25 +11,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type {
-  EngineCleanupContext,
   EngineHandle,
   LocatorExpression,
-  OperationContext,
   SemanticNode,
   SemanticQuery,
   TextPattern,
 } from '@e2e-dev/core/engine';
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { testWeb } from '../helpers/web-session.ts';
-
-function cleanup(): EngineCleanupContext {
-  return { signal: new AbortController().signal, timeoutMs: 30_000 };
-}
-
-function operation(attemptId: string): OperationContext {
-  return { signal: new AbortController().signal, timeoutMs: 30_000, runId: 'run-closed', attemptId, origin: 'test' };
-}
+import { byRole, byTestId, cleanup, initInfo, operation, testWeb } from '../helpers/web-session.ts';
 
 function exact(value: string): TextPattern {
   return { kind: 'string', value, exact: true };
@@ -43,21 +33,8 @@ function query(semantic: SemanticQuery, scope?: LocatorExpression): LocatorExpre
   return { kind: 'query', query: semantic, ...(scope === undefined ? {} : { scope }) };
 }
 
-function byRole(role: string, name?: string, visible?: boolean): LocatorExpression {
-  return query({
-    kind: 'role',
-    value: exact(role),
-    ...(name === undefined ? {} : { name: exact(name) }),
-    ...(visible === undefined ? {} : { visible }),
-  });
-}
-
 function byText(value: TextPattern, visible?: boolean): LocatorExpression {
   return query({ kind: 'text', value, ...(visible === undefined ? {} : { visible }) });
-}
-
-function byTestId(value: string): LocatorExpression {
-  return query({ kind: 'testId', value: exact(value) });
 }
 
 /** Depth-first walk of one observation tree. */
@@ -67,17 +44,7 @@ function* walk(node: SemanticNode): Generator<SemanticNode> {
 }
 
 async function boot(engine: EngineHandle, app: FixtureApp): Promise<void> {
-  await engine.init!({
-    runId: 'run-closed',
-    targetName: 'web',
-    projectRoot: process.cwd(),
-    app: { site: new URL(app.url).hostname },
-    env: {},
-    headed: false,
-    workerSlot: 0,
-    log: () => undefined,
-    signal: new AbortController().signal,
-  });
+  await engine.init!(initInfo({ app: { site: new URL(app.url).hostname } }));
 }
 
 describe('locators inside closed shadow roots', () => {

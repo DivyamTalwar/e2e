@@ -10,19 +10,12 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { EngineCleanupContext, EngineHandle, OperationContext } from '@e2e-dev/core/engine';
+import type { EngineHandle } from '@e2e-dev/core/engine';
 import { web } from '../../../src/index.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
-
-function cleanup(): EngineCleanupContext {
-  return { signal: new AbortController().signal, timeoutMs: 30_000 };
-}
-
-function operation(attemptId: string): OperationContext {
-  return { signal: new AbortController().signal, timeoutMs: 30_000, runId: 'run-cdp', attemptId, origin: 'test' };
-}
+import { cleanup, initInfo, operation } from '../../helpers/web-session.ts';
 
 describe('web engine over CDP', () => {
   let app: FixtureApp;
@@ -53,17 +46,7 @@ describe('web engine over CDP', () => {
       },
     });
 
-    await engine.init!({
-      runId: 'run-cdp',
-      targetName: 'web',
-      projectRoot: process.cwd(),
-      app: { site: new URL(app.url).hostname },
-      env: {},
-      headed: false,
-      workerSlot: 0,
-      log: () => undefined,
-      signal: new AbortController().signal,
-    });
+    await engine.init!(initInfo({ app: { site: new URL(app.url).hostname } }));
     expect(resolved).toBe(1);
 
     try {
@@ -96,17 +79,7 @@ describe('web engine over CDP', () => {
         },
       },
     });
-    await engine.init!({
-      runId: 'run-cdp',
-      targetName: 'web',
-      projectRoot: process.cwd(),
-      app: { site: new URL(app.url).hostname },
-      env: {},
-      headed: false,
-      workerSlot: 0,
-      log: () => undefined,
-      signal: new AbortController().signal,
-    });
+    await engine.init!(initInfo({ app: { site: new URL(app.url).hostname } }));
     try {
       await engine.startAttempt!({ attemptId: 'r1', artifactsDir, signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace });
       await engine.session!.open!(`${app.url}/`, operation('r1'));
@@ -151,24 +124,15 @@ describe('web engine over CDP', () => {
         },
       },
     });
-    const info = {
-      runId: 'run-cdp',
-      targetName: 'web',
-      projectRoot: process.cwd(),
-      app: { site: new URL(app.url).hostname },
-      env: {},
-      headed: false,
-      workerSlot: 0,
-      log: () => undefined,
-    };
-    await expect(engine.init!({ ...info, signal: controller.signal })).rejects.toMatchObject({
+    const site = new URL(app.url).hostname;
+    await expect(engine.init!(initInfo({ app: { site }, signal: controller.signal }))).rejects.toMatchObject({
       code: 'CANCELLED',
     });
     expect(resolved).toBe(1);
 
     // A fresh init must provision again. Were the late browser cached, the pool
     // would hand it back without consulting the resolver.
-    await engine.init!({ ...info, signal: new AbortController().signal });
+    await engine.init!(initInfo({ app: { site } }));
     try {
       expect(resolved).toBe(2);
     } finally {

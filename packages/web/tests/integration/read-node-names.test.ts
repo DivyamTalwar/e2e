@@ -2,7 +2,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { SemanticNode } from '@e2e-dev/core/engine';
-import { byRole, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { byRole, flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 let page: WebSession;
 
@@ -21,12 +21,6 @@ const BUDGET = 3_000;
 async function capture(): Promise<{ tree: SemanticNode; truncated: boolean; nodeCount: number }> {
   const snapshot = await page.observe();
   return { tree: snapshot.root, truncated: snapshot.truncated === true, nodeCount: flatten(snapshot.root).length };
-}
-
-function flatten(node: SemanticNode, out: SemanticNode[] = []): SemanticNode[] {
-  out.push(node);
-  for (const child of node.children ?? []) flatten(child, out);
-  return out;
 }
 
 /** `count` buttons, each one node. */

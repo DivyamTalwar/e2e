@@ -11,11 +11,12 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { EngineCleanupContext, EngineHandle, OperationContext } from '@e2e-dev/core/engine';
+import type { EngineHandle } from '@e2e-dev/core/engine';
 import { attachBrowser, web } from '../../../src/index.ts';
 import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
+import { cleanup, initInfo, operation } from '../../helpers/web-session.ts';
 import { browserExecutable } from '../../../src/install/provision.ts';
 
 /** The pinned full Chrome's executable, which the suite needs installed. */
@@ -58,25 +59,13 @@ describe('attaching to the pinned full Chrome over CDP', () => {
 
   it('navigates and locates through web({ connect })', async () => {
     const engine: EngineHandle = web({ connect: { cdpEndpoint: () => chrome.endpoint } });
-    const cleanup = (): EngineCleanupContext => ({ signal: new AbortController().signal, timeoutMs: 30_000 });
-    const operation: OperationContext = { signal: new AbortController().signal, timeoutMs: 30_000, runId: 'run-full', attemptId: 'a1', origin: 'test' };
-    await engine.init!({
-      runId: 'run-full',
-      targetName: 'web',
-      projectRoot: process.cwd(),
-      app: { site: new URL(app.url).hostname },
-      env: {},
-      headed: false,
-      workerSlot: 0,
-      log: () => undefined,
-      signal: new AbortController().signal,
-    });
+    await engine.init!(initInfo({ app: { site: new URL(app.url).hostname } }));
     try {
       await engine.startAttempt!({ attemptId: 'a1', artifactsDir, signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace });
-      await engine.session!.open!(`${app.url}/`, operation);
-      const headings = await engine.locate!({ kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'heading', exact: true } } }, operation);
+      await engine.session!.open!(`${app.url}/`, operation('a1'));
+      const headings = await engine.locate!({ kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'heading', exact: true } } }, operation('a1'));
       expect(headings[0]?.name).toBe('Home');
-      expect((await engine.observe!(operation)).location).toBe(`${app.url}/`);
+      expect((await engine.observe!(operation('a1'))).location).toBe(`${app.url}/`);
       await engine.endAttempt!(cleanup());
     } finally {
       await engine.dispose!(cleanup());

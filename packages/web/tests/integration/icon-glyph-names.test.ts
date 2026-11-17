@@ -8,8 +8,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { LocatorExpression, SemanticNode } from '@e2e-dev/core/engine';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import type { LocatorExpression } from '@e2e-dev/core/engine';
+import { byRole, flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 const PAGE = `
   <style>
@@ -27,24 +27,6 @@ const PAGE = `
   <label><i class="glyph"></i> Phone <input></label>
   <h2 data-testid="don't">Don't "quote" a &gt;&gt; b</h2>
 `;
-
-/** A role query, with a string name when one is given. */
-function byRole(role: string, name?: string, exact = true): LocatorExpression {
-  return {
-    kind: 'query',
-    query: {
-      kind: 'role',
-      value: { kind: 'string', value: role, exact: true },
-      ...(name === undefined ? {} : { name: { kind: 'string', value: name, exact } }),
-    },
-  };
-}
-
-function flatten(node: SemanticNode, out: SemanticNode[] = []): SemanticNode[] {
-  out.push(node);
-  for (const child of node.children ?? []) flatten(child, out);
-  return out;
-}
 
 describe('names with CSS generated content', () => {
   let page: WebSession;

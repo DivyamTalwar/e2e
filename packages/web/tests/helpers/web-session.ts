@@ -11,8 +11,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
   EngineAttemptContext,
+  EngineCleanupContext,
   EngineFixtureContext,
   EngineHandle,
+  EngineInitInfo,
   EngineObserveOptions,
   EngineSnapshot,
   Expectable,
@@ -122,20 +124,20 @@ export interface WebSession {
 const SESSION_DEADLINE_MS = 600_000;
 
 /** Every node under `node`, depth first, `node` first. */
-function flatten(node: SemanticNode, out: SemanticNode[] = []): SemanticNode[] {
+export function flatten(node: SemanticNode, out: SemanticNode[] = []): SemanticNode[] {
   out.push(node);
   for (const child of node.children ?? []) flatten(child, out);
   return out;
 }
 
-/** A role query with an exact role and, when given, an exact name. */
-export function byRole(role: string, name?: string): LocatorExpression {
+/** A role query with an exact role and, when given, a name: an exact one unless `exact` is false. */
+export function byRole(role: string, name?: string, exact = true): LocatorExpression {
   return {
     kind: 'query',
     query: {
       kind: 'role',
       value: { kind: 'string', value: role, exact: true },
-      ...(name === undefined ? {} : { name: { kind: 'string', value: name, exact: true } }),
+      ...(name === undefined ? {} : { name: { kind: 'string', value: name, exact } }),
     },
   };
 }
@@ -226,7 +228,7 @@ export function browserFixture(engine: EngineHandle, options: FixtureOptions): B
     },
     timeouts: { test: timeoutMs, action: timeoutMs, assertion: 5_000 },
     signal: new AbortController().signal,
-    operation: options.operation ?? ((budget) => ({ signal: new AbortController().signal, timeoutMs: budget ?? timeoutMs, runId: 'run-web-session', attemptId: 'attempt', origin: 'test' })),
+    operation: options.operation ?? ((budget) => operation('attempt', { timeoutMs: budget ?? timeoutMs })),
     attachArtifact: (_kind, relative) => options.attach?.(relative),
     attachViewport: () => undefined,
     locator: unsupported('a locator'),
@@ -235,6 +237,56 @@ export function browserFixture(engine: EngineHandle, options: FixtureOptions): B
     fixture: (_name, surface) => surface,
   };
   return engine.fixtures!['browser']!(context) as Browser;
+}
+
+/** The run id of a hand-driven engine, in its init info and its operations alike, unless a test names its own. */
+const HAND_DRIVEN_RUN_ID = 'run-web-session';
+
+/**
+ * What a test hands `engine.init` when it drives the engine contract by
+ * hand: target `web`, worker slot 0, headless, no app, an empty environment,
+ * the working directory as the project root, and a signal of its own, each
+ * unless `overrides` names it.
+ */
+export function initInfo(overrides: Partial<EngineInitInfo> = {}): EngineInitInfo {
+  return {
+    runId: HAND_DRIVEN_RUN_ID,
+    targetName: 'web',
+    projectRoot: process.cwd(),
+    app: {},
+    env: {},
+    headed: false,
+    workerSlot: 0,
+    log: () => undefined,
+    signal: new AbortController().signal,
+    ...overrides,
+  };
+}
+
+/** The budget a hand-driven test gives `endAttempt`, `dispose`, and `finish`: 30 s unless given, on a signal of its own. */
+export function cleanup(timeoutMs = 30_000): EngineCleanupContext {
+  return { signal: new AbortController().signal, timeoutMs };
+}
+
+/** What one operation's context differs by from the default. */
+interface OperationOptions {
+  /** The operation's budget; defaults to 30 s. */
+  readonly timeoutMs?: number | undefined;
+  /** Cancels the operation; defaults to a signal of its own. */
+  readonly signal?: AbortSignal | undefined;
+  /** The run the operation names, for a test that names its own in `initInfo`. */
+  readonly runId?: string | undefined;
+}
+
+/** One operation's context in the hand-driven attempt `attemptId`, a test's own step. */
+export function operation(attemptId: string, options: OperationOptions = {}): OperationContext {
+  return {
+    signal: options.signal ?? new AbortController().signal,
+    timeoutMs: options.timeoutMs ?? 30_000,
+    runId: options.runId ?? HAND_DRIVEN_RUN_ID,
+    attemptId,
+    origin: 'test',
+  };
 }
 
 /** `engine` with each attempt's trace sinks teed to `sinks` as well as the runner's. */

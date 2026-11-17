@@ -14,19 +14,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { secrets } from 'e2e';
-import type { EngineCleanupContext, EngineHandle, OperationContext, Secret } from '@e2e-dev/core/engine';
+import type { EngineHandle, Secret } from '@e2e-dev/core/engine';
 import type { Browser } from '../../src/index.ts';
 import { PROTECTED_CREDENTIAL, startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../helpers/secrets.ts';
-import { browserFixture, testWeb as web } from '../helpers/web-session.ts';
-
-function cleanup(): EngineCleanupContext {
-  return { signal: new AbortController().signal, timeoutMs: 30_000 };
-}
-
-function operation(attemptId: string): OperationContext {
-  return { signal: new AbortController().signal, timeoutMs: 30_000, runId: 'run-protected', attemptId, origin: 'test' };
-}
+import { browserFixture, cleanup, initInfo, operation, testWeb as web } from '../helpers/web-session.ts';
 
 async function boot(
   engine: EngineHandle,
@@ -35,17 +27,7 @@ async function boot(
   attemptId: string,
   resolveSecret: (secret: Secret) => Promise<string> = noSecrets,
 ): Promise<void> {
-  await engine.init!({
-    runId: 'run-protected',
-    targetName: 'web',
-    projectRoot: process.cwd(),
-    app: { origin: new URL(app.url).origin, site: new URL(app.url).hostname },
-    env: {},
-    headed: false,
-    workerSlot: 0,
-    log: () => undefined,
-    signal: new AbortController().signal,
-  });
+  await engine.init!(initInfo({ app: { origin: new URL(app.url).origin, site: new URL(app.url).hostname } }));
   await engine.startAttempt!({ attemptId, artifactsDir, signal: new AbortController().signal, resolveSecret, ...ignoreTrace });
 }
 
