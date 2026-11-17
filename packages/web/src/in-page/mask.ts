@@ -1,14 +1,15 @@
-/** Page functions that cover a document's secure fields for one screenshot, and prove afterwards that the cover held. */
+/** Page functions that hold a document still and cover its secure fields for one screenshot, and prove afterwards that the cover held. */
 
 import { withDom } from './dom.ts';
 
-/** What one masking added to the document, kept under its token until `unmaskSecureFields` removes it. */
+/** What one masking changed in the document, kept under its token until `unmaskSecureFields` undoes it. */
 type Mask = {
   readonly hosts: { container: Element | null; host: HTMLElement }[];
   readonly caret: CSSStyleSheet;
   readonly sheeted: (Document | ShadowRoot)[];
   readonly boxes: { field: Element; rect: DOMRect; box: HTMLElement }[];
   readonly selector: string;
+  readonly cancelled: Animation[];
 };
 
 /**
@@ -25,9 +26,31 @@ type Mask = {
  * style is set inline as `!important`, so no page rule reaches them. `token`
  * names this masking for `unmaskSecureFields`; captures that overlap each
  * keep their own.
+ *
+ * Before any field is measured, so each is covered where it comes to rest,
+ * it stops every animation and transition the clock moves in the document
+ * and those roots: one that ends is finished, so the page gets its end
+ * events, and one that repeats forever is cancelled to the style under it,
+ * for `unmaskSecureFields` to play again. One that holds still is left as
+ * the page set it: paused, at a zero playback rate, or driven by a scroll
+ * position.
  */
 export const maskSecureFields = withDom((dom, selector: string, token: string): number => {
   const sheeted = dom.roots();
+  const cancelled: Animation[] = [];
+  for (const animation of sheeted.flatMap((root) => root.getAnimations())) {
+    if (animation.playState !== 'running' || animation.playbackRate === 0 || !(animation.timeline instanceof DocumentTimeline)) continue;
+    if (animation.effect?.getComputedTiming().endTime === Infinity) {
+      animation.cancel();
+      cancelled.push(animation);
+      continue;
+    }
+    try {
+      animation.finish();
+    } catch {
+      // finish() refuses an animation whose playback rate is turning zero, which holds still without it.
+    }
+  }
   const fields = sheeted.flatMap((root) => [...root.querySelectorAll(selector)]);
   const pin = (element: HTMLElement, styles: Record<string, string>): void => {
     element.style.setProperty('all', 'initial', 'important');
@@ -82,7 +105,7 @@ export const maskSecureFields = withDom((dom, selector: string, token: string): 
   for (const root of sheeted) root.adoptedStyleSheets = [...root.adoptedStyleSheets, caret];
   const kept: Map<string, Mask> | undefined = Reflect.get(globalThis, Symbol.for('e2e.bidi.mask'));
   const masks = kept ?? new Map<string, Mask>();
-  masks.set(token, { hosts: [...hosts].map(([container, { host }]) => ({ container, host })), caret, sheeted, boxes, selector });
+  masks.set(token, { hosts: [...hosts].map(([container, { host }]) => ({ container, host })), caret, sheeted, boxes, selector, cancelled });
   Reflect.set(globalThis, Symbol.for('e2e.bidi.mask'), masks);
   return boxes.length;
 });
@@ -95,6 +118,11 @@ export const maskSecureFields = withDom((dom, selector: string, token: string): 
  * every box drawn over the whole of its field, every covered field where its
  * box was, and no visible secure field
  * appeared that no box covers.
+ *
+ * Last, once every field was read where it rested, it plays again each
+ * animation `maskSecureFields` cancelled, unless a capture that overlaps
+ * this one still holds the document: that one takes them over and plays
+ * them when it lets go.
  */
 export const unmaskSecureFields = withDom((dom, token: string): boolean => {
   const masks: Map<string, Mask> | undefined = Reflect.get(globalThis, Symbol.for('e2e.bidi.mask'));
@@ -115,15 +143,27 @@ export const unmaskSecureFields = withDom((dom, token: string): boolean => {
   const shown = mask.hosts.every(placed) && mask.boxes.every((entry) => painted(entry.box) && covers(entry));
   for (const { host } of mask.hosts) host.remove();
   for (const root of mask.sheeted) root.adoptedStyleSheets = root.adoptedStyleSheets.filter((sheet) => sheet !== mask.caret);
-  if (!shown) return false;
-  const still = mask.boxes.every(({ field, rect }) => {
+  const still = ({ field, rect }: Mask['boxes'][number]): boolean => {
     const now = field.getBoundingClientRect();
     return now.x === rect.x && now.y === rect.y && now.width === rect.width && now.height === rect.height;
-  });
+  };
   const covered = new Set(mask.boxes.map(({ field }) => field));
   const uncovered = (field: Element): boolean => {
     const rect = field.getBoundingClientRect();
     return !covered.has(field) && rect.width > 0 && rect.height > 0;
   };
-  return still && !dom.roots().some((root) => [...root.querySelectorAll(mask.selector)].some(uncovered));
+  const held = shown && mask.boxes.every(still) && !dom.roots().some((root) => [...root.querySelectorAll(mask.selector)].some(uncovered));
+  const overlapping: Mask | undefined = masks.values().next().value;
+  if (overlapping !== undefined) {
+    overlapping.cancelled.push(...mask.cancelled);
+    return held;
+  }
+  for (const animation of mask.cancelled) {
+    try {
+      animation.play();
+    } catch {
+      // play() refuses an animation with no end that plays backwards.
+    }
+  }
+  return held;
 });

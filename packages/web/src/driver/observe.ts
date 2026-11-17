@@ -270,12 +270,13 @@ async function captureTree(session: BidiSession, context: string, framePath: rea
 }
 
 /**
- * A viewport screenshot with every secure field in every document covered
- * and the caret hidden. The capture fails open nowhere: a document that
- * cannot be masked, a frame that appeared or went away, a field that moved
- * while the screenshot was taken, or a capture the browser failed because
- * its document was replaced under it fails it as `NODE_STALE`, retried on a
- * settled page, and any other failure fails it outright.
+ * A viewport screenshot with every secure field in every document covered,
+ * the caret hidden, and animations stopped (`maskSecureFields`). The capture
+ * fails open nowhere: a document that cannot be masked, a frame that
+ * appeared or went away, a field that moved while the screenshot was taken,
+ * or a capture the browser failed because its document was replaced under
+ * it fails it as `NODE_STALE`, retried on a settled page, and any other
+ * failure fails it outright.
  */
 export async function maskedPixels(session: BidiSession, viewport: ViewportSize, signal: AbortSignal): Promise<{ pixels: ObservationPixels; maskedRegionCount: number }> {
   for (;;) {
