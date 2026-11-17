@@ -122,7 +122,7 @@ export class BidiSession {
       },
       lifetime: this.lifetime,
     });
-    this.downloads = new AttemptDownloads(browser.connection, attempt.remoteDownloads);
+    this.downloads = new AttemptDownloads(browser.connection, attempt.remoteDownloads, this.artifacts, (context) => this.onPage(context));
     this.userContext = new AttemptUserContext({
       connection: browser.connection,
       traits: browser.traits,

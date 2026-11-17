@@ -42,7 +42,7 @@ import { cookieTargets, requireCookieFilter, requireDownloadCount, requireMedia 
 import { typeInto } from '../driver/actions.ts';
 import type { OperationBudget } from '../driver/budget.ts';
 import { deleteCookies, readCookies, writeCookies } from '../driver/cookies.ts';
-import { saveDownloads, type SavedDownload } from '../driver/downloads.ts';
+import type { SavedDownload } from '../driver/downloads.ts';
 import { moveSources, pressDownSources, releaseSources, wheelSources } from '../driver/input-sources.ts';
 import { fixtureKeyStroke } from '../driver/keyboard.ts';
 import { readResponseBody, runRouteHandler, waitedResponse } from './routes.ts';
@@ -262,7 +262,7 @@ async function downloads(
   timeout: number | undefined,
   api: string,
 ): Promise<SavedDownload[]> {
-  const files = await surface.guard(context.operation(stepTimeout(timeout, api)), 'download', (session, budget) => saveDownloads(session, count, trigger, budget), { trigger: true });
+  const files = await surface.guard(context.operation(stepTimeout(timeout, api)), 'download', (session, budget) => session.downloads.save(count, trigger, budget), { trigger: true });
   for (const file of files) context.attachArtifact('download', file.path);
   return files;
 }

@@ -11,9 +11,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { EngineError, TestError } from '@e2e-dev/core/engine';
 import type { LeaseDownloads } from '../provider.ts';
+import type { ArtifactPaths } from './artifact-paths.ts';
 import { afterTrigger, type OperationBudget } from './budget.ts';
 import type { BidiConnection } from './connection.ts';
-import type { BidiSession } from './session.ts';
 
 /**
  * How the downloads of a browser on another machine reach this one: read
@@ -32,10 +32,17 @@ export interface SavedDownload {
 export class AttemptDownloads {
   readonly dir: string;
 
-  /** `remote` is how the downloads of a browser on another machine reach this one; undefined for a browser that saves them here. */
+  /**
+   * `remote` is how the downloads of a browser on another machine reach this
+   * one; undefined for a browser that saves them here. `artifacts` gives each
+   * saved download its path in the attempt's `downloads` folder, and `onPage`
+   * says whether a context is the attempt's tab or a frame in it.
+   */
   constructor(
     private readonly connection: BidiConnection,
     private readonly remote: RemoteDownloads | undefined,
+    private readonly artifacts: ArtifactPaths,
+    private readonly onPage: (context: string) => boolean,
   ) {
     this.dir = this.served?.dir ?? mkdtempSync(path.join(os.tmpdir(), 'e2e-bidi-downloads-'));
   }
@@ -54,23 +61,17 @@ export class AttemptDownloads {
   }
 
   /**
-   * Runs `trigger` and saves the first `count` downloads it starts in a
-   * context `ours` admits, in start order, each at the path `place` gives
-   * its name, once each has finished and the trigger returned
-   * (`afterTrigger`): copied from this machine, or read off the remote
-   * browser's disk through its provider. One budget bounds the trigger, the
-   * downloads, and reading each back; past it the wait stops listening and
-   * fails, whatever the trigger is still doing, naming what it still waited
-   * for. A canceled download fails the wait. Refused before the trigger
-   * runs when no download can be read back.
+   * Runs `trigger` and saves the first `count` downloads it starts in the
+   * attempt's tab into the attempt's `downloads` folder, in start order
+   * (`browser.waitForDownload`), once each has finished and the trigger
+   * returned (`afterTrigger`): copied from this machine, or read off the
+   * remote browser's disk through its provider. One budget bounds the
+   * trigger, the downloads, and reading each back; past it the wait stops
+   * listening and fails, whatever the trigger is still doing, naming what it
+   * still waited for. A canceled download fails the wait. Refused before the
+   * trigger runs when no download can be read back.
    */
-  async collect(
-    count: number,
-    trigger: () => Promise<void>,
-    budget: OperationBudget,
-    ours: (context: string) => boolean,
-    place: (suggestedFilename: string) => { readonly relative: string; readonly absolute: string },
-  ): Promise<SavedDownload[]> {
+  async save(count: number, trigger: () => Promise<void>, budget: OperationBudget): Promise<SavedDownload[]> {
     if (this.remote !== undefined && 'unserved' in this.remote) throw new EngineError('UNSUPPORTED_CAPABILITY', this.remote.unserved, { retryable: false });
     const { served } = this;
     const { timeoutMs } = budget;
@@ -84,7 +85,7 @@ export class AttemptDownloads {
       if (started.length === count && started.every((download) => ended.has(download.id))) settled();
     };
     const offBegin = this.connection.on('browsingContext.downloadWillBegin', (event) => {
-      if (!ours(event.context) || started.length === count) return;
+      if (!this.onPage(event.context) || started.length === count) return;
       started.push({ id: event.download, suggestedFilename: event.suggestedFilename });
       check();
     });
@@ -102,7 +103,7 @@ export class AttemptDownloads {
         });
         const saved: SavedDownload[] = [];
         for (const { suggestedFilename, filepath } of finished) {
-          const { relative, absolute } = place(suggestedFilename);
+          const { relative, absolute } = this.artifacts.reserve('downloads', suggestedFilename, '');
           if (served === undefined) copyFileSync(filepath, absolute);
           else {
             slowRead = `download ${suggestedFilename} did not finish: ${served.provider} read it back too slowly`;
@@ -128,13 +129,4 @@ export class AttemptDownloads {
   dispose(): void {
     if (this.served === undefined) rmSync(this.dir, { recursive: true, force: true });
   }
-}
-
-/**
- * Runs `trigger` and saves the first `count` downloads it starts in the
- * attempt's tab into the attempt's `downloads` folder, in start order
- * (`browser.waitForDownload`).
- */
-export function saveDownloads(session: BidiSession, count: number, trigger: () => Promise<void>, budget: OperationBudget): Promise<SavedDownload[]> {
-  return session.downloads.collect(count, trigger, budget, (context) => session.onPage(context), (name) => session.artifacts.reserve('downloads', name, ''));
 }
