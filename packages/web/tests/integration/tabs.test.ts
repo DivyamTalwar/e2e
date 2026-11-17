@@ -224,13 +224,15 @@ describe('tabs', () => {
     });
   });
 
+  // The wait must run out on the page, not on the trigger: its time covers the tap too, which takes Firefox about a second on a busy machine.
+  const HANG_WAIT_MS = 5_000;
   for (const trigger of ['Open hang window', 'Open hang']) {
     it(`waitForPopup names the page a tab could not load when its time runs out, and the opener still answers (${trigger})`, async () => {
       await withAttempt(async (engine, browser) => {
         if (trigger === 'Open hang' && !onFirefox) return stalledOnChromium(engine, browser);
-        await expect(browser.waitForPopup(() => tap(engine, trigger), { timeout: 1_000 })).rejects.toMatchObject({
+        await expect(browser.waitForPopup(() => tap(engine, trigger), { timeout: HANG_WAIT_MS })).rejects.toMatchObject({
           code: 'ACTION_FAILED',
-          message: `the tab the app opened did not load ${url}/hang within 1000ms`,
+          message: `the tab the app opened did not load ${url}/hang within ${String(HANG_WAIT_MS)}ms`,
         });
         expect(await browser.title()).toBe('Opener');
         for (const response of hanging) response.destroy();
