@@ -4,11 +4,11 @@
  * a swipe leaves the mouse on what it scrolled, a drag carries pressure,
  * lasts as long as asked, and reaches a target in a rotated frame, a
  * pointer target outside the viewport is refused as never sent, a tap
- * cancelled while it aims leaves no click watch behind, a click the app
- * dispatched itself is left to the app while the driver's own arrives
- * trusted, a fill fires its events with the `Event` the page started
- * with, and a ref reused after input, the hover of a swallowed click
- * included, checks its locator again.
+ * lands in what shows of a node in a shadow root, a tap cancelled while it
+ * aims leaves no click watch behind, a click the app dispatched itself is
+ * left to the app while the driver's own arrives trusted, a fill fires its
+ * events with the `Event` the page started with, and a ref reused after
+ * input, the hover of a swallowed click included, checks its locator again.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -126,6 +126,17 @@ describe('input', () => {
     expect(await page.browser.evaluate('window.left ?? false')).toBe(false);
     await page.engine.performAt!({ x: 1280, y: 720 }, { kind: 'hover' }, page.op());
     expect(await page.browser.evaluate('window.left ?? false')).toBe(true);
+  });
+
+  it('taps the centre of what shows of a node in a shadow root, cut by a clip around the root\'s host', async () => {
+    await page.setContent(`<style>body { margin: 0 }</style>
+      <div style="width:100px;height:40px;overflow:hidden"><div id="host"></div></div>
+      <script>
+        addEventListener('click', (event) => { document.title = event.clientX + ',' + event.clientY; }, true);
+        document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = '<div id="wide" style="width:160px;height:40px"></div>';
+      </script>`);
+    await page.act(bySelector('#wide'), { kind: 'tap' });
+    expect(await page.browser.evaluate(() => document.title)).toBe('50,20');
   });
 
   it('arms no click watch for a tap cancelled while it aims, so the pointer input after it reaches the page', async () => {

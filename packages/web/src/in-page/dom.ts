@@ -113,12 +113,8 @@ export function createDom(key: string) {
     let top = Math.max(rect.top, 0);
     let right = Math.min(rect.right, width);
     let bottom = Math.min(rect.bottom, height);
-    let at: Element | null = element;
     let position = getComputedStyle(element).position;
-    while (at !== null) {
-      const parent: Node | null = at.parentNode;
-      at = parent instanceof ShadowRoot ? parent.host : parent instanceof Element ? parent : null;
-      if (at === null || at === document.documentElement) break;
+    for (let at = parentOrHostOf(element); at !== null && at !== document.documentElement; at = parentOrHostOf(at)) {
       const clip = getComputedStyle(at);
       const transformed = clip.transform !== 'none' || clip.filter !== 'none' || clip.perspective !== 'none' || clip.contain.includes('paint') || clip.contain.includes('layout');
       if (position === 'fixed' && !transformed) continue;
