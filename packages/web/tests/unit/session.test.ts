@@ -8,7 +8,7 @@ import { fixtureKeyStroke, strokeSource, type KeyPhase } from '../../src/driver/
 import { DispatchScope, type BidiInput } from '../../src/driver/input.ts';
 import { routeEvents } from '../../src/driver/events.ts';
 import { BidiSession } from '../../src/driver/session.ts';
-import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
+import { BROWSER_TRAITS, type BrowserName, type BrowserTraits } from '../../src/browsers.ts';
 import { elementShown } from '../../src/in-page/actionability.ts';
 import { elementAttached, fill, focus } from '../../src/in-page/edits.ts';
 import type { UserContextMode } from '../../src/driver/user-context.ts';
@@ -21,11 +21,20 @@ import { ElementRef } from '../../src/driver/script.ts';
 
 const SHIFT = '';
 
-/** A session on `fake` that has opened nothing yet, on a 100 by 100 viewport, in a user context of its own unless `userContext` says otherwise. */
-function unopened(fake: FakeBidi, browser: BrowserName = 'chromium', userContext: UserContextMode = 'fresh'): BidiSession {
+/** A session on `fake` that has opened nothing yet, on a 100 by 100 viewport, in a browser of `traits`, in a user context of its own unless `userContext` says otherwise. */
+function unopenedOn(fake: FakeBidi, traits: BrowserTraits, userContext: UserContextMode = 'fresh'): BidiSession {
   const settings = { media: {}, viewport: { width: 100, height: 100 }, initScripts: { forAttempt: () => [] }, permissions: [], userContext, testIdAttribute: 'data-testid' };
   const attempt = { protectedApp: new ProtectedApp(new Set(), undefined, undefined) };
-  return new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS[browser] } as never, settings as never, attempt as never, new ContextTree());
+  return new BidiSession({ connection: fake.connection, exclusive: true, traits } as never, settings as never, attempt as never, new ContextTree());
+}
+
+/**
+ * A session on `fake` that has opened nothing yet (`unopenedOn`), on
+ * `browser` with windows that hold any viewport: `fake` models no window,
+ * and how one grows has tests of its own (`tab-windows.test.ts`).
+ */
+function unopened(fake: FakeBidi, browser: BrowserName = 'chromium', userContext: UserContextMode = 'fresh'): BidiSession {
+  return unopenedOn(fake, { ...BROWSER_TRAITS[browser], windowClipsViewport: false }, userContext);
 }
 
 /** A session on `fake` with its user context and its tab `tab` open; the tab it opens next is `tab-2`. */
@@ -622,6 +631,70 @@ describe('BidiSession tabs', () => {
     expect(held.context).toBe('tab-2');
     expect(held.tabs.list().map((tab) => tab.context)).toEqual(['tab', 'tab-2']);
     expect(held.tabs.active()).toBe(beside);
+  });
+
+  /**
+   * Gives `fake` one window of 50 by 60, 10 of its height chrome, which
+   * every tab is in and which grows no taller than `tallest`. Returns the
+   * window and viewport commands `fake` got, in order.
+   */
+  function oneWindow(fake: FakeBidi, tallest: number): () => string[] {
+    const window = { clientWindow: 'w', active: true, state: 'normal', x: 0, y: 0, width: 50, height: 60 };
+    fake
+      .on('browser.createUserContext', { result: { userContext: 'mine' } })
+      .on('network.addDataCollector', { result: { collector: 'c' } })
+      .on('browsingContext.create', { result: { context: 'tab' } })
+      .on('browsingContext.getTree', { result: { contexts: [{ context: 'tab', clientWindow: 'w' }] } })
+      .on('browser.getClientWindows', () => ({ result: { clientWindows: [{ ...window }] } }))
+      .on('script.callFunction', { result: { type: 'success', realm: 'r', result: { type: 'object', value: [['width', { type: 'number', value: 0 }], ['height', { type: 'number', value: 10 }]] } } })
+      .on('browser.setClientWindowState', (params) => {
+        Object.assign(window, { width: params['width'], height: Math.min(Number(params['height']), tallest) });
+        return { result: { ...window } };
+      });
+    return () => fake.sent
+      .filter((command) => ['browser.setClientWindowState', 'browsingContext.setViewport'].includes(command.method))
+      .map((command) => {
+        const size = (command.params['viewport'] ?? command.params) as { width: number; height: number };
+        return `${command.method.split('.')[1]!} ${String(size.width)}x${String(size.height)}`;
+      });
+  }
+
+  it('grows a tab\'s window to hold the viewport before it sizes the tab, where a window cuts a viewport short', async () => {
+    const fake = new FakeBidi();
+    const sized = oneWindow(fake, Infinity);
+    const clipped = unopenedOn(fake, BROWSER_TRAITS.firefox);
+    await clipped.openUserContext(new AbortController().signal);
+    await clipped.ensureContext();
+    expect(sized()).toEqual(['setClientWindowState 100x110', 'setViewport 100x100']);
+    await clipped.setViewport({ width: 300, height: 200 });
+    expect(sized().slice(2)).toEqual(['setClientWindowState 300x210', 'setViewport 300x200']);
+    await clipped.setViewport({ width: 100, height: 100 });
+    expect(sized().slice(4)).toEqual(['setViewport 100x100']);
+  });
+
+  it('keeps the viewport it has when the window cannot hold a new one, for the shown tab and the tabs after it', async () => {
+    const fake = new FakeBidi();
+    const sized = oneWindow(fake, 500);
+    const clipped = unopenedOn(fake, BROWSER_TRAITS.firefox);
+    await clipped.openUserContext(new AbortController().signal);
+    await clipped.ensureContext();
+    await expect(clipped.setViewport({ width: 300, height: 600 })).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY', message: expect.stringContaining('cannot hold a 300x600 viewport: it shows at most 490 pixels of the page\'s height') });
+    expect(sized().slice(2)).toEqual(['setClientWindowState 300x610', 'setClientWindowState 100x110']);
+    expect(await clipped.viewportSize()).toEqual({ width: 100, height: 100 });
+    await clipped.setViewport({ width: 300, height: 490 });
+    expect(sized().slice(4)).toEqual(['setClientWindowState 300x500', 'setViewport 300x490']);
+    expect(await clipped.viewportSize()).toEqual({ width: 300, height: 490 });
+  });
+
+  it('sizes a tab and no window where a window cuts no viewport short', async () => {
+    const fake = new FakeBidi();
+    const sized = oneWindow(fake, Infinity);
+    const whole = unopenedOn(fake, BROWSER_TRAITS.chromium);
+    await whole.openUserContext(new AbortController().signal);
+    await whole.ensureContext();
+    await whole.setViewport({ width: 300, height: 200 });
+    expect(sized()).toEqual(['setViewport 100x100', 'setViewport 300x200']);
+    expect(fake.commands('browser.getClientWindows')).toEqual([]);
   });
 
   it('answers its own tab to a newTab before any tab is open, opened once', async () => {

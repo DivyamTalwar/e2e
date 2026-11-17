@@ -51,6 +51,14 @@ export interface BrowserTraits {
    */
   readonly pointerWaitsForFrame: boolean;
   /**
+   * Whether a tab's window cuts its viewport short: `browsingContext.setViewport`
+   * lays the page out at any size and resizes no window, and mouse and wheel
+   * input goes through the window, so a point of the page past the window's
+   * content area takes none. The window is grown to hold the viewport before
+   * the tab gets it (`TabWindows`).
+   */
+  readonly windowClipsViewport: boolean;
+  /**
    * Whether the browser sends a page call again, to the document that
    * replaced the one it was running in. Firefox does for a call it sent to a
    * first, empty document (a new tab's, a frame's), also without
@@ -77,6 +85,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     continueRewritesUrl: true,
     navigationBodies: false,
     pointerWaitsForFrame: false,
+    windowClipsViewport: false,
     resendsPageCalls: false,
     permissions: [
       'accelerometer', 'ambient-light-sensor', 'background-sync', 'camera', 'clipboard-read', 'clipboard-write',
@@ -96,6 +105,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     continueRewritesUrl: false,
     navigationBodies: true,
     pointerWaitsForFrame: true,
+    windowClipsViewport: true,
     resendsPageCalls: true,
     permissions: ['geolocation', 'local-network-access', 'notifications', 'persistent-storage', 'push', 'screen-wake-lock'],
   },

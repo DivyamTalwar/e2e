@@ -21,6 +21,7 @@ import { OwnNavigations } from './own-navigations.ts';
 import { PageCalls } from './page-calls.ts';
 import { BidiRefs } from './refs.ts';
 import { AttemptTabs, type AttemptTab } from './tabs.ts';
+import { TabWindows } from './tab-windows.ts';
 import { AttemptUserContext, type UserContextSettings } from './user-context.ts';
 import { viewportSize } from '../in-page/document.ts';
 import { BidiVideo } from './video.ts';
@@ -91,6 +92,8 @@ export class BidiSession {
   readonly artifacts: ArtifactPaths;
   /** The viewport `browser.setViewport` set for the rest of the attempt; the configured one until then. */
   private viewport: ViewportSize | null;
+  /** The windows of the attempt's tabs, each grown to hold its tab's viewport where a window cuts one short. */
+  private readonly windows: TabWindows;
   /** The attempt's first tab while it opens in the user context in use, which concurrent first uses share. */
   private creating: Promise<AttemptTab> | undefined;
   /** The tab the attempt found open and adopted (`existingTab`), which it never closes. */
@@ -106,6 +109,7 @@ export class BidiSession {
     this.artifacts = new ArtifactPaths(attempt.artifactsDir);
     this.page = new PageCalls(browser.connection, () => this.requireContext());
     this.viewport = settings.viewport;
+    this.windows = new TabWindows(browser.connection);
     this.input = new BidiInput({ connection: browser.connection, traits: browser.traits, context: () => this.requireContext(), viewport: () => this.viewportSize() });
     this.network = new AttemptNetwork(browser.connection, {
       protectedApp: attempt.protectedApp,
@@ -345,20 +349,27 @@ export class BidiSession {
     return contexts.find((info) => info.userContext === userContext)?.context;
   }
 
-  /** Resizes the shown tab, and every tab shown after it, to `size`. */
+  /**
+   * Resizes the shown tab, and every tab shown after it, to `size`. A size
+   * the tab cannot take (`sizeTab`) fails and leaves the viewport as it was.
+   */
   async setViewport(size: ViewportSize): Promise<void> {
-    this.viewport = { width: size.width, height: size.height };
+    const viewport = { width: size.width, height: size.height };
     // Before the first page the size is only kept: the tab opens at it, and no page opens early.
-    if (this.context === undefined) return;
-    await this.sizeTab(this.context, this.viewport);
+    if (this.context !== undefined) await this.sizeTab(this.context, viewport);
+    this.viewport = viewport;
   }
 
   /**
    * Gives a tab the attempt's viewport at scale factor 1, whatever the
    * display's, so a headed run on a dense display renders the pixels a
-   * headless one does.
+   * headless one does. Where the tab's window would cut the viewport short
+   * (`BrowserTraits.windowClipsViewport`) the window grows to hold it first,
+   * and a viewport no window can hold fails `UNSUPPORTED_CAPABILITY` with
+   * the tab as it was.
    */
   private async sizeTab(context: string, viewport: ViewportSize): Promise<void> {
+    if (this.browser.traits.windowClipsViewport) await this.windows.hold(context, viewport);
     await this.connection.send('browsingContext.setViewport', { context, viewport, devicePixelRatio: 1 });
   }
 
