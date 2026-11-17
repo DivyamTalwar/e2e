@@ -11,6 +11,7 @@
 import { EngineError, TestError, type LocatorExpression, type SemanticNode } from '@e2e-dev/core/engine';
 import { ChromiumCdp } from './cdp.ts';
 import type { BrowserTraits } from '../browsers.ts';
+import { unlessStale } from '../errors.ts';
 import { compose, IDENTITY, invert, rectToQuad, scaleThenTranslate, type Point, type Projection } from './projection.ts';
 import { chainParts, cssChains } from './selector-tokens.ts';
 import type { FrameBox, ReadOptions, TurnedFrame } from '../in-page/create-readers.ts';
@@ -93,15 +94,42 @@ function contentWindow(element: HTMLIFrameElement): Window | null {
  */
 const FRAME_SANDBOX = 'e2e-frames';
 
+/** The browsing context of an iframe element's window, read in the frames sandbox; undefined for a frame with no window. */
+async function windowContext(connection: BidiConnection, frame: NodeTarget): Promise<string | undefined> {
+  const window = await callFunction(connection, frame.context, contentWindow, [frame.element], { sandbox: FRAME_SANDBOX });
+  return window instanceof WindowRef ? window.context : undefined;
+}
+
 /**
  * The child browsing context of an iframe element, or undefined when it has
  * no document to read yet: no window, or a window whose document has no
  * script context of its own (`hasScriptContext`).
  */
-export async function contentContext(connection: BidiConnection, frame: NodeTarget): Promise<string | undefined> {
-  const window = await callFunction(connection, frame.context, contentWindow, [frame.element], { sandbox: FRAME_SANDBOX });
-  if (!(window instanceof WindowRef)) return undefined;
-  return (await hasScriptContext(connection, window.context)) ? window.context : undefined;
+async function contentContext(connection: BidiConnection, frame: NodeTarget): Promise<string | undefined> {
+  const child = await windowContext(connection, frame);
+  return child !== undefined && (await hasScriptContext(connection, child)) ? child : undefined;
+}
+
+/**
+ * The child browsing context each of `iframes` shows, in their order, for a
+ * read of the document `context` shows that enters the frames `admits` lets
+ * in by URL. Every frame is resolved before any is read: the windows are
+ * asked at once, the URLs come from one tree of `context`, and only an
+ * admitted frame is asked for its script context (`hasScriptContext`).
+ * Undefined for a frame with no window, one not admitted, one with no
+ * document to read yet, and one that went away meanwhile.
+ */
+export async function childDocuments(connection: BidiConnection, context: string, iframes: readonly ElementRef[], admits: (url: string) => boolean): Promise<(string | undefined)[]> {
+  if (iframes.length === 0) return [];
+  const [windows, tree] = await Promise.all([
+    Promise.all(iframes.map((element) => unlessStale(windowContext(connection, { element, context }), undefined))),
+    unlessStale(connection.send('browsingContext.getTree', { root: context, maxDepth: 1 }), undefined),
+  ]);
+  const shown = new Set(windows);
+  const admitted = (tree?.contexts[0]?.children ?? []).filter((child) => shown.has(child.context) && admits(child.url)).map((child) => child.context);
+  const scripted = await Promise.all(admitted.map((child) => unlessStale(hasScriptContext(connection, child), false)));
+  const readable = new Set(admitted.filter((_child, index) => scripted[index]));
+  return windows.map((child) => (child !== undefined && readable.has(child) ? child : undefined));
 }
 
 /**

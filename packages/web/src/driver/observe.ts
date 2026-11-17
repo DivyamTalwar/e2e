@@ -24,7 +24,7 @@ import {
 } from '@e2e-dev/core/engine';
 import { SECURE_FIELD_SELECTOR, type RawNodeData, type RawObservedNode } from '../in-page/read-node.ts';
 import { cancelled, isStale, releaseQuietly, unlessStale } from '../errors.ts';
-import { contentContext, inViewport, pageParts, placeInFrame, resolveFrames, scriptedContexts, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
+import { childDocuments, inViewport, pageParts, placeInFrame, resolveFrames, scriptedContexts, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
 import { computedStyle, domReady } from '../in-page/document.ts';
 import { maskSecureFields, unmaskSecureFields } from '../in-page/mask.ts';
 import type { FrameBox } from '../in-page/create-readers.ts';
@@ -227,7 +227,8 @@ function selectorParts(expression: LocatorExpression): [string, PagePart[]][] {
 /**
  * Reads one document's tree in one call (the reader's metadata as one JSON
  * string, each walked element as its shared id, each iframe with the box
- * its document lays it out in), then each iframe on the app's site,
+ * its document lays it out in), then each iframe on the app's site, all
+ * resolved before the first is read (`childDocuments`), in order and
  * stitched under its boundary node within the node budget and the deadline.
  * An on-site frame left unread marks the tree truncated; a frame whose
  * document went away mid-read, or has none to read yet, shows nothing,
@@ -249,18 +250,16 @@ async function captureTree(session: BidiSession, context: string, framePath: rea
   let nodeCount = nodes.length;
   let truncated = decoded.truncated;
   const frameChildren = new Map<number, FrameChild>();
-  for (const { node: index, selector, box } of frames) {
-    const frame: NodeTarget = { element: elements[index]!, context };
-    const child = await unlessStale(contentContext(session.connection, frame), undefined);
+  const children = await childDocuments(session.connection, context, frames.map((frame) => elements[frame.node]!), (url) => isOnSiteFrame(url, session.settings.site));
+  for (const [at, { node: index, selector, box }] of frames.entries()) {
+    const child = children[at];
     if (child === undefined) continue;
-    const tree = await unlessStale(session.connection.send('browsingContext.getTree', { root: child, maxDepth: 0 }), undefined);
-    if (tree === undefined || !isOnSiteFrame(tree.contexts[0]?.url ?? '', session.settings.site)) continue;
     const remaining = budget - nodeCount;
     if (framePath.length >= MAX_FRAME_DEPTH || remaining <= 0 || Date.now() >= deadline || box === null) {
       truncated = true;
       continue;
     }
-    session.frames.enter(child, frame);
+    session.frames.enter(child, { element: elements[index]!, context });
     const captured = await unlessStale(captureTree(session, child, [...framePath, selector], remaining, deadline), undefined);
     if (captured === undefined) continue;
     for (const [id, target] of captured.generation) generation.set(id, target);

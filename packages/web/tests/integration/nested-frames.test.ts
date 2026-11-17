@@ -286,6 +286,35 @@ describe('a position inside a framed node', () => {
     }
   });
 
+  it('resolves every frame of a document before it reads one: each window, one tree for their URLs, and a script context check for the on-site ones alone', async () => {
+    const outer = '<p>outer</p><iframe title="nested" srcdoc="<p>nested</p>"></iframe>';
+    await page.setContent(`<iframe title="first" srcdoc="<p>first</p>"></iframe><iframe title="ad" src="data:text/html,<p>ad</p>"></iframe><iframe id="outer" title="outer" srcdoc="${attribute(outer)}"></iframe>`);
+    await page.browser.evaluate(async () => {
+      const nested = () => document.querySelector<HTMLIFrameElement>('#outer')?.contentDocument?.querySelector('iframe')?.contentDocument?.querySelector('p');
+      while (nested() == null) await new Promise((resolve) => setTimeout(resolve, 20));
+      return null;
+    });
+    await page.waitForFrames();
+    const calls = vi.spyOn(BidiConnection.prototype, 'send');
+    try {
+      const nodes = await page.nodes();
+      expect(nodes.flatMap((node) => (node.text === undefined || node.text === '' ? [] : [node.text]))).toEqual(['first', 'outer', 'nested']);
+      const sent = calls.mock.calls.flatMap(([method, params]) => {
+        if (method === 'script.getRealms') return ['script context check'];
+        if (method === 'browsingContext.getTree') return [`context tree to depth ${String((params as { maxDepth?: number }).maxDepth)}`];
+        if (method !== 'script.callFunction') return [];
+        const { functionDeclaration, target } = params as { functionDeclaration: string; target: { sandbox?: string } };
+        if (functionDeclaration === readerCall('tree')) return ['tree reader'];
+        return target.sandbox === 'e2e-frames' ? ['frame window'] : [];
+      });
+      const hostFrames = ['frame window', 'frame window', 'frame window', 'context tree to depth 1', 'script context check', 'script context check'];
+      const outerFrames = ['frame window', 'context tree to depth 1', 'script context check'];
+      expect(sent).toEqual(['tree reader', ...hostFrames, 'tree reader', 'tree reader', ...outerFrames, 'tree reader', 'context tree to depth 0']);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it('observes and locates a node in a scaled frame at the box the page shows it in', async () => {
     const inner = '<style>body { margin: 0 } #target { margin: 20px 0 0 30px; width: 100px; height: 60px; border: 10px solid }</style><div id="target" data-testid="target"></div>';
     await page.setContent(`<style>body { margin: 0 }</style><iframe id="pad" style="position: absolute; left: 200px; top: 150px; width: 300px; height: 200px; border: 0; transform-origin: 0 0; transform: scale(0.5)" srcdoc="${attribute(inner)}"></iframe>`);

@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LocatorExpression, SemanticNode } from '@e2e-dev/core/engine';
 import { ContextTree } from '../../src/driver/context-tree.ts';
-import { FrameRegistry, inViewport, pageParts, resolveFrames, splitFrames, placeInFrame } from '../../src/driver/frames.ts';
+import { childDocuments, FrameRegistry, inViewport, pageParts, resolveFrames, splitFrames, placeInFrame } from '../../src/driver/frames.ts';
 import { project, type Projection } from '../../src/driver/projection.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
@@ -106,6 +106,82 @@ describe('resolveFrames', () => {
     await expect(resolveFrames(unloaded.session, ['#editor'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_NOT_FOUND', message: 'frame #editor has no document yet', retryable: true });
     expect(unloaded.session.frames.chain('a-doc')).toEqual([]);
     await expect(resolveFrames((await frames({ top: [{ element: 'a' }, { element: 'b' }] })).session, ['iframe'], OPTIONS)).rejects.toMatchObject({ code: 'FRAME_AMBIGUOUS' });
+  });
+});
+
+/** One iframe of the document `top`: its window's context, the URL the tree lists it under, its realms, and where the peer answers that it is gone. */
+interface ChildFrame {
+  readonly window?: string;
+  readonly url?: string;
+  readonly bare?: boolean;
+  readonly gone?: 'window' | 'realms';
+}
+
+/** A peer whose document `top` holds `iframes` by element id, and the documents `childDocuments` reads for them, admitting `http://app.test`. */
+async function children(iframes: Record<string, ChildFrame>): Promise<{ fake: FakeBidi; documents: (string | undefined)[] }> {
+  const byWindow = new Map(Object.values(iframes).map((frame) => [frame.window, frame]));
+  const fake = new FakeBidi()
+    .on('script.callFunction', (params) => {
+      const [element] = params['arguments'] as { sharedId: string }[];
+      const frame = iframes[element!.sharedId]!;
+      if (frame.gone === 'window') return { error: 'no such node' };
+      return { result: { type: 'success', realm: 'r', result: frame.window === undefined ? { type: 'null' } : { type: 'window', value: { context: frame.window } } } };
+    })
+    .on('browsingContext.getTree', () => ({
+      result: { contexts: [{ context: 'top', url: 'http://app.test/', children: Object.values(iframes).flatMap((frame) => (frame.url === undefined ? [] : [{ context: frame.window, url: frame.url, children: null }])) }] },
+    }))
+    .on('script.getRealms', (params) => {
+      const frame = byWindow.get(String(params['context']))!;
+      if (frame.gone === 'realms') return { error: 'no such frame' };
+      return { result: { realms: [{ type: 'window', realm: 'r', origin: 'http://app.test', context: frame.window, ...(frame.bare === true ? { sandbox: 'e2e-frames' } : {}) }] } };
+    });
+  const documents = await childDocuments(fake.connection, 'top', Object.keys(iframes).map((id) => new ElementRef(id)), (url) => url.startsWith('http://app.test'));
+  return { fake, documents };
+}
+
+describe('childDocuments', () => {
+  it('asks nothing about a document with no iframes', async () => {
+    const { fake, documents } = await children({});
+    expect(documents).toEqual([]);
+    expect(fake.sent).toEqual([]);
+  });
+
+  it('asks every window in the frames sandbox, one tree, and a script context of the admitted frames alone', async () => {
+    const { fake, documents } = await children({
+      app: { window: 'app-doc', url: 'http://app.test/a' },
+      ad: { window: 'ad-doc', url: 'http://ads.test/' },
+      empty: { window: 'empty-doc', url: 'http://app.test/e', bare: true },
+      windowless: {},
+    });
+    expect(documents).toEqual(['app-doc', undefined, undefined, undefined]);
+    expect(fake.commands('script.callFunction').map((command) => command.params['target'])).toEqual(Array.from({ length: 4 }, () => ({ context: 'top', sandbox: 'e2e-frames' })));
+    expect(fake.commands('browsingContext.getTree').map((command) => command.params)).toEqual([{ root: 'top', maxDepth: 1 }]);
+    expect(fake.commands('script.getRealms').map((command) => command.params['context'])).toEqual(['app-doc', 'empty-doc']);
+  });
+
+  it('leaves out only the frame that went away, whichever answer says so', async () => {
+    const { fake, documents } = await children({
+      detached: { gone: 'window' },
+      first: { window: 'first-doc', url: 'http://app.test/1' },
+      unlisted: { window: 'unlisted-doc' },
+      closed: { window: 'closed-doc', url: 'http://app.test/c', gone: 'realms' },
+      last: { window: 'last-doc', url: 'http://app.test/2' },
+    });
+    expect(documents).toEqual([undefined, 'first-doc', undefined, undefined, 'last-doc']);
+    expect(fake.commands('script.getRealms').map((command) => command.params['context'])).toEqual(['first-doc', 'closed-doc', 'last-doc']);
+  });
+
+  it('reads no frame of a document that went away before its tree was read', async () => {
+    const fake = new FakeBidi()
+      .on('script.callFunction', { result: { type: 'success', realm: 'r', result: { type: 'window', value: { context: 'child' } } } })
+      .on('browsingContext.getTree', { error: 'no such frame' });
+    await expect(childDocuments(fake.connection, 'top', [new ElementRef('frame')], () => true)).resolves.toEqual([undefined]);
+    expect(fake.commands('script.getRealms')).toEqual([]);
+  });
+
+  it('fails on an answer that is no gone frame', async () => {
+    const fake = new FakeBidi().on('script.callFunction', { error: 'unknown error', message: 'renderer crashed' });
+    await expect(childDocuments(fake.connection, 'top', [new ElementRef('frame')], () => true)).rejects.toThrow('renderer crashed');
   });
 });
 
