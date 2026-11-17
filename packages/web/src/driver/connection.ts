@@ -3,6 +3,7 @@
 import type { Commands, Event as BidiEvent, Message } from 'webdriver-bidi-protocol';
 import { EngineError } from '@e2e-dev/core/engine';
 import { asError, BidiError } from '../errors.ts';
+import { browserSocket, textOf } from './browser-socket.ts';
 
 /** A text transport carrying BiDi messages: a WebSocket, or the Chromium mapper's process. */
 export interface BidiTransport {
@@ -142,27 +143,27 @@ function disconnected(method: string, reason?: string): EngineError {
   return new EngineError('ENGINE_FAILURE', `${method}: the BiDi connection closed${reason === undefined ? '' : `: ${reason}`}`, { retryable: false });
 }
 
-/** A transport over a WebSocket URL, opened with Node's built-in client. */
+/** A transport over a WebSocket URL (`browserSocket`). */
 export function webSocketTransport(url: string, timeoutMs: number): Promise<BidiTransport> {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url);
+    const socket = browserSocket(url);
     const timer = setTimeout(() => {
       socket.close();
       reject(new Error(`WebSocket ${url} did not open within ${timeoutMs}ms`));
     }, timeoutMs);
     const closeHandlers: (() => void)[] = [];
-    socket.addEventListener('close', () => {
+    socket.on('close', () => {
       for (const handler of closeHandlers) handler();
     });
-    socket.addEventListener('error', () => {
+    socket.on('error', () => {
       clearTimeout(timer);
       reject(new Error(`WebSocket ${url} failed to open`));
     });
-    socket.addEventListener('open', () => {
+    socket.on('open', () => {
       clearTimeout(timer);
       resolve({
         send: (message) => socket.send(message),
-        onMessage: (handler) => socket.addEventListener('message', (event) => handler(String(event.data))),
+        onMessage: (handler) => socket.on('message', (data) => handler(textOf(data))),
         onClose: (handler) => closeHandlers.push(handler),
         close: () => socket.close(),
       });

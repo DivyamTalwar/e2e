@@ -11,6 +11,8 @@
 
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
+import type { WebSocket } from 'ws';
+import { browserSocket, textOf } from './browser-socket.ts';
 import { cdpFixups } from './cdp-fixups.ts';
 
 /**
@@ -97,6 +99,30 @@ function installDisposableStack(): void {
   Object.defineProperty(globalThis, 'DisposableStack', { value: DisposableStackPolyfill, writable: true, configurable: true });
 }
 
+/**
+ * Hands the browser's messages to `deliver` one task apiece, in order, and
+ * runs `closed` after the last. The mapper is written for a tab, where each
+ * CDP message arrives in a task of its own and what a message starts (its
+ * promise reactions) runs before the next; `ws` emits every message of one
+ * network read in a row.
+ */
+function inTasks(socket: WebSocket, deliver: (message: string) => void, closed: () => void): void {
+  /** What has yet to be handed on, oldest first; null is the close. */
+  const waiting: (string | null)[] = [];
+  const next = (): void => {
+    const message = waiting.shift();
+    if (message === undefined) return;
+    if (waiting.length > 0) setImmediate(next);
+    if (message === null) closed();
+    else deliver(message);
+  };
+  const queue = (item: string | null): void => {
+    if (waiting.push(item) === 1) setImmediate(next);
+  };
+  socket.on('message', (data) => queue(textOf(data)));
+  socket.on('close', () => queue(null));
+}
+
 /** First line on stdout once the mapper serves, so the parent knows when to send. */
 export const MAPPER_READY = '{"e2e":"ready"}';
 
@@ -136,19 +162,25 @@ async function serve(): Promise<void> {
   });
   lines.on('close', () => process.exit(0));
   const [[{ BidiServer }, { MapperCdpConnection }], { url, headers }] = await Promise.all([loading, named]);
-  // Node's WebSocket takes the upgrade's headers beside the standard protocols.
-  const socket = new WebSocket(url, (headers === undefined ? undefined : { headers }) as ConstructorParameters<typeof WebSocket>[1]);
+  const socket = browserSocket(url, headers);
   await new Promise<void>((resolve, reject) => {
-    socket.addEventListener('open', () => resolve(), { once: true });
-    socket.addEventListener('error', () => reject(new Error(`CDP WebSocket ${headers === undefined ? url : new URL(url).origin} failed to open`)), { once: true });
+    const refused = (): void => reject(new Error(`CDP WebSocket ${headers === undefined ? url : new URL(url).origin} failed to open`));
+    socket.once('error', refused);
+    socket.once('open', () => {
+      socket.off('error', refused);
+      resolve();
+    });
   });
-  socket.addEventListener('close', () => process.exit(0));
+  socket.on('error', (cause) => {
+    process.stderr.write(`chromium-bidi: the CDP connection failed: ${cause.message}\n`);
+    process.exit(1);
+  });
   let readCdp: (message: string) => void = () => undefined;
   const fixed = cdpFixups((message) => readCdp(message), (message) => socket.send(message));
+  inTasks(socket, (message) => fixed.receive(message), () => process.exit(0));
   const cdpConnection = new MapperCdpConnection({
     setOnMessage: (handler) => {
       readCdp = (message) => void handler(message);
-      socket.addEventListener('message', (event) => fixed.receive(String(event.data)));
     },
     sendMessage: (message) => fixed.send(message),
     close: () => socket.close(),
