@@ -132,9 +132,18 @@ export function cdpExceptionText(details: Protocol.Runtime.ExceptionDetails): st
   return exception.subtype === 'error' ? cdpText(exception) : `${text} ${cdpText(exception)}`;
 }
 
-/** Whether a BiDi remote value is an object, array, map, or set whose entries the browser serialized. */
-function hasEntries(value: Script.RemoteValue): boolean {
+/** Whether a BiDi remote value says more than the browser's text of it does: an object, array, map, or set with the entries the browser serialized, an element with its tag. */
+function saysMoreThanItsText(value: Script.RemoteValue): boolean {
+  if (value.type === 'node') return value.value?.localName !== undefined;
   return (value.type === 'object' || value.type === 'array' || value.type === 'map' || value.type === 'set') && value.value !== undefined;
+}
+
+/** An element as its tag with its id and classes, as Chromium describes one (`<output#total.sum>`); any other node, or one the browser serialized nothing of, as `<node>`. */
+function nodeText(node: Script.NodeProperties | undefined): string {
+  if (node?.localName === undefined) return '<node>';
+  const id = node.attributes?.['id'] ?? '';
+  const classes = (node.attributes?.['class'] ?? '').split(/\s+/).filter((name) => name !== '');
+  return `<${node.localName}${id === '' ? '' : `#${id}`}${classes.map((name) => `.${name}`).join('')}>`;
 }
 
 /** A BiDi remote value inside an object, array, map, or set: a primitive as it prints, a string quoted, anything with fields of its own as its kind. */
@@ -171,7 +180,7 @@ function bidiText(value: Script.RemoteValue): string {
     case 'regexp':
       return `/${value.value.pattern}/${value.value.flags ?? ''}`;
     case 'node':
-      return `<${value.value?.localName ?? 'node'}>`;
+      return nodeText(value.value);
     case 'object':
       return value.value === undefined ? 'object' : `{${listed(value.value.map(([key, field]) => `${nestedText(key)}: ${nestedText(field)}`))}}`;
     case 'array':
@@ -189,9 +198,10 @@ function bidiText(value: Script.RemoteValue): string {
  * The line of one BiDi console entry: the browser's own `text`, which holds
  * the filled format string and an error's message, unless an argument is an
  * object, array, map, or set, of which that text gives only a size
- * (`Object(2)`); then every argument reads as its remote value does, where
- * an error is its type alone, since BiDi serializes nothing of one.
+ * (`Object(2)`), or an element, of which it gives only `node`; then every
+ * argument reads as its remote value does, where an error is its type
+ * alone, since BiDi serializes nothing of one.
  */
 export function bidiConsoleText(text: string, args: readonly Script.RemoteValue[]): string {
-  return args.some(hasEntries) ? args.map(bidiText).join(' ') : text;
+  return args.some(saysMoreThanItsText) ? args.map(bidiText).join(' ') : text;
 }

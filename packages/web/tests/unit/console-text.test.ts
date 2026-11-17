@@ -197,6 +197,15 @@ describe('bidiConsoleText', () => {
     expect(bidiConsoleText('Map(1)', [{ type: 'map', value: [[{ type: 'object', value: [] }, { type: 'undefined' }]] }])).toBe('Map(1) {Object => undefined}');
   });
 
+  it('reads a logged element as its tag with its id and classes, where the browser\'s text says only node', () => {
+    const element = (attributes: Record<string, string>): Script.RemoteValue => ({ type: 'node', sharedId: 'n', value: { nodeType: 1, childNodeCount: 1, localName: 'output', attributes } });
+    expect(bidiConsoleText('node', [element({ id: 'total', class: ' sum  wide ' })])).toBe('<output#total.sum.wide>');
+    expect(bidiConsoleText('node', [element({})])).toBe('<output>');
+    expect(bidiConsoleText('total node', [string('total'), element({ id: 'total' })])).toBe('total <output#total>');
+    expect(bidiConsoleText('node', [{ type: 'node', sharedId: 't', value: { nodeType: 3, childNodeCount: 0, nodeValue: 'text' } }])).toBe('node');
+    expect(bidiConsoleText('node', [{ type: 'node', sharedId: 'n' }])).toBe('node');
+  });
+
   it('reads every other argument beside an object as its remote value: an error as its type, since BiDi serializes nothing of one', () => {
     const args: Script.RemoteValue[] = [
       { type: 'object', value: [] }, { type: 'error' }, { type: 'bigint', value: '12' }, { type: 'number', value: 'NaN' }, { type: 'boolean', value: false },
