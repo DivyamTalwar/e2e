@@ -81,7 +81,7 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
     artifactsDir = mkdtempSync(path.join(tmpdir(), 'e2e-provider-downloads-'));
     remoteDisk = mkdtempSync(path.join(tmpdir(), 'e2e-browser-disk-'));
     chrome = await launchRemoteChrome();
-    const reads: { lease: string; file: string }[] = [];
+    const reads: { lease: string; file: string; suggestedFilename: string; body: string }[] = [];
     const provider: BrowserProvider = {
       name: 'toy-remote',
       scope,
@@ -89,9 +89,10 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
       release: async () => undefined,
       downloads: {
         dir: path.join(remoteDisk, 'downloads'),
-        async read(lease, file) {
-          reads.push({ lease: lease.id, file });
-          return readFile(file);
+        async read(lease, file, { suggestedFilename }) {
+          const bytes = await readFile(file);
+          reads.push({ lease: lease.id, file, suggestedFilename, body: bytes.toString('utf8') });
+          return bytes;
         },
       },
     };
@@ -123,6 +124,8 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
     }
     expect(attached).toEqual(files.map(file => file.path));
     expect(reads).toHaveLength(count);
+    // Each read is told the name of the file it reads, for a service that finds a download by name.
+    expect(reads.map(read => [read.suggestedFilename, read.body]).toSorted()).toEqual(files.map((_, index) => [`report-${index}.txt`, `report body ${index}`]));
     expect(reads.every(read => read.lease === 'lease-1')).toBe(true);
     expect(reads.every(read => path.dirname(read.file) === path.join(remoteDisk!, 'downloads'))).toBe(true);
     expect(readdirSync(path.join(remoteDisk, 'downloads')).toSorted()).toEqual(reads.map(read => path.basename(read.file)).toSorted());

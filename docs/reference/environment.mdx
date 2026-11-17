@@ -176,6 +176,8 @@ What is sent and how to read it is on the [Telemetry](/telemetry) page.
 | `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | `HTTPS_PROXY=http://proxy.example.com:3128` | value | The proxy `@e2e-dev/web` downloads browsers and ffmpeg through, and the hosts it reaches directly. On Node 22 and early Node 24 releases, only with `NODE_USE_ENV_PROXY=1` |
 | `E2E_FFMPEG_PATH` | `E2E_FFMPEG_PATH=/usr/bin/ffmpeg` | value | The ffmpeg that encodes Chromium video, with `libvpx-vp9`. Unset, the pinned build once it is in the browser cache, else `ffmpeg` on `PATH`; with neither, the first recording downloads the pinned build |
 | `KERNEL_API_KEY` | `KERNEL_API_KEY=<key>` | value | The API key `kernel()` from `@e2e-dev/kernel` creates browsers with. Unset, the browser lease fails. See [Kernel](/integrations/kernel) |
+| `NOTTE_API_KEY` | `NOTTE_API_KEY=<key>` | value | The API key `notte()` from `@e2e-dev/notte` starts sessions with. Unset, the browser lease fails. See [Notte](/integrations/notte) |
+| `NOTTE_API_URL` | `NOTTE_API_URL=<url>` | value | The Notte API URL `notte()` calls. Default `https://api.notte.cc` |
 | `LIGHTPANDA_PATH` | `LIGHTPANDA_PATH=/opt/lightpanda` | value | The binary `lightpanda()` from `@e2e-dev/lightpanda` starts a CDP server with. Unset, `lightpanda` on `PATH`, `~/.lightpanda`, or `~/.local/bin`. See [Lightpanda](/integrations/lightpanda) |
 | `MOLI_PATH` | `MOLI_PATH=/opt/moli` | value | The executable `moli()` from `@e2e-dev/moli` starts when `binary` is unset. Without `MOLI_PATH`, it searches `PATH`, then `~/.local/bin/moli`. See [Moli](/integrations/moli) |
 | [`EXPO_TOKEN`](#expo_token) | `EXPO_TOKEN=<token>` | value | The Expo access token `expoSimulators()` from `@e2e-dev/eas` uses |

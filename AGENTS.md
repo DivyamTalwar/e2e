@@ -146,6 +146,9 @@ suites that consume the built packages the way a user would.
   Its docs page under `docs/integrations/` ships with the vendor's logo on
   its overview card (`authoring-docs`, "Vendor logos");
   `scripts/check-docs-logos.ts` fails `pnpm docs:check` without it.
+- `packages/notte` - the published `@e2e-dev/notte` package: Notte cloud
+  browsers for the web engine, `attempt` scope only, with a marker-file
+  ledger for `sweep` since sessions carry no tags. Maintained by Notte.
 - `packages/lightpanda` - the published `@e2e-dev/lightpanda` package: a
   `BrowserProvider` that starts a local `lightpanda serve` per worker slot
   and stops it with the run; no vendor SDK, the binary is the dependency.

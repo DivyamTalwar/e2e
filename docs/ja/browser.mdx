@@ -183,6 +183,7 @@ WebKit には対応していません。`connect` を使うと、ブラウザを
 | サービス | プロバイダー |
 | --- | --- |
 | [Kernel](/integrations/kernel) | `@e2e-dev/kernel` の `kernel()` |
+| [Notte](/integrations/notte) | `@e2e-dev/notte` の `notte()` |
 | 自分のコンピューターで動く [smol machines](/integrations/smol) の microVM | `@e2e-dev/smol` の `smol()` |
 | 自分のマシンで動くオープンソースのヘッドレスブラウザ [Lightpanda](/integrations/lightpanda)。エンジンはまだ、このブラウザでページを開けません | `@e2e-dev/lightpanda` の `lightpanda()` |
 | ローカルブラウザ [Moli](/integrations/moli)。エンジンはまだ、このブラウザの要素を操作できません | `@e2e-dev/moli` の `moli()` |
@@ -332,7 +333,7 @@ export default {
 
 ### プロバイダーでダウンロードに対応する
 
-`downloads` を実装すると、`browser.waitForDownload` をローカルと同じように使えます。ホスト型ブラウザは、ランナーから開けない自身のディスクにファイルを保存します。`downloads` があると、ダウンロードしたファイルを `dir` に保存し、エンジンが完成した各ファイルのパスを `read` に渡します。`read` はサービスのファイル API からバイト列を取得します。[Kernel](/integrations/kernel#downloads)、[smol machines](/integrations/smol)、[E2B](/integrations/e2b) はこの方法でダウンロードに対応しています。
+`downloads` を実装すると、`browser.waitForDownload` をローカルと同じように使えます。ホスト型ブラウザは、ランナーから開けない自身のディスクにファイルを保存します。`downloads` があると、ダウンロードしたファイルを `dir` に保存し、エンジンが完成した各ファイルのパスを `read` に渡します。`read` はサービスのファイル API からバイト列を取得します。[Kernel](/integrations/kernel#downloads)、[smol machines](/integrations/smol)、[E2B](/integrations/e2b) はこの方法でダウンロードに対応しています。ダウンロードをパスではなく名前で保存するサービスは、サイトが提案した名前である `context.suggestedFilename` でファイルを探します。[Notte](/integrations/notte#downloads) がこの方式です。
 
 `downloads` がない場合、`browser.waitForDownload` はプロバイダー名を示す `UNSUPPORTED_CAPABILITY` をスローします。プロバイダーのブラウザで `setInputFiles` を使うと、ファイルのバイト列がページに送られます。上限は合計 50 MB です。ディレクトリを指定すると `UNSUPPORTED_CAPABILITY` をスローします。
 

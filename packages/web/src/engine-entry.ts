@@ -19,6 +19,8 @@ export type {
   BrowserReleaseContext,
   BrowserRequest,
 } from './provider.ts';
+export { releaseEach } from './sweep.ts';
+export type { SweepOutcome } from './sweep.ts';
 export type { BrowserName } from './browsers.ts';
 export type {
   Browser,

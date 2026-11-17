@@ -111,7 +111,7 @@ export class AttemptDownloads {
             continue;
           }
           slowRead = `download ${suggestedFilename} did not finish: ${served.provider} read it back too slowly`;
-          const bytes = await served.read(filepath, signal);
+          const bytes = await served.read(filepath, signal, suggestedFilename);
           writes.push({ suggestedFilename, write: (absolute) => writeFileSync(absolute, bytes) });
         }
         signal.throwIfAborted();

@@ -183,6 +183,7 @@ bunx @e2e-dev/web install firefox --with-deps
 | 服务 | 提供方 |
 | --- | --- |
 | [Kernel](/integrations/kernel) | `@e2e-dev/kernel` 中的 `kernel()` |
+| [Notte](/integrations/notte) | `@e2e-dev/notte` 中的 `notte()` |
 | 在你自己的电脑上运行的 [smol machines](/integrations/smol) microVM | `@e2e-dev/smol` 中的 `smol()` |
 | 在你自己的机器上运行的开源无头模式浏览器 [Lightpanda](/integrations/lightpanda)。引擎目前还无法在其中打开页面 | `@e2e-dev/lightpanda` 中的 `lightpanda()` |
 | [Moli](/integrations/moli)，本地浏览器。引擎目前还无法操作其中的元素 | `@e2e-dev/moli` 中的 `moli()` |
@@ -332,7 +333,7 @@ export default {
 
 ### 提供方上的下载
 
-实现 `downloads` 后，`browser.waitForDownload` 的用法就与本地相同。托管浏览器将下载文件保存到自己的磁盘上，运行器无法直接打开。设置 `downloads` 后，它会将下载文件保存到 `dir` 中，引擎再把每个下载完成的文件路径传给 `read`。`read` 通过服务的文件 API 获取字节数据。[Kernel](/integrations/kernel#downloads)、[smol machines](/integrations/smol) 和 [E2B](/integrations/e2b) 就以这种方式提供下载。
+实现 `downloads` 后，`browser.waitForDownload` 的用法就与本地相同。托管浏览器将下载文件保存到自己的磁盘上，运行器无法直接打开。设置 `downloads` 后，它会将下载文件保存到 `dir` 中，引擎再把每个下载完成的文件路径传给 `read`。`read` 通过服务的文件 API 获取字节数据。[Kernel](/integrations/kernel#downloads)、[smol machines](/integrations/smol) 和 [E2B](/integrations/e2b) 就以这种方式提供下载。按名称而非路径存储下载文件的服务，则通过 `context.suggestedFilename`（即网站建议的文件名）查找文件，[Notte](/integrations/notte#downloads) 就是如此。
 
 未实现 `downloads` 时，`browser.waitForDownload` 会抛出 `UNSUPPORTED_CAPABILITY`，并注明提供方名称。在提供方的浏览器上，`setInputFiles` 会将文件的字节数据发送到页面，总计最多 50 MB；传入目录会抛出 `UNSUPPORTED_CAPABILITY`。
 
