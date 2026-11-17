@@ -51,6 +51,14 @@ async function session(fake: FakeBidi, browser: BrowserName = 'chromium'): Promi
   return opened;
 }
 
+/** Has `fake` answer what an adoption asks beside the open contexts: each of `tabs` is a page target, the first the visible one, and no document takes a call. */
+function adoptable(fake: FakeBidi, ...tabs: string[]): FakeBidi {
+  return fake
+    .on('goog:cdp.sendCommand', { result: { result: { targetInfos: tabs.map((targetId) => ({ targetId, type: 'page' })) } } })
+    .on('script.getRealms', { result: { realms: [] } })
+    .on('script.callFunction', (params) => ({ result: { type: 'success', realm: 'r', result: { type: 'boolean', value: (params['target'] as { context: string }).context === tabs[0] } } }));
+}
+
 /** The BiDi key source of one `browser.keyboard` call, with Shift held before it or not. */
 function keySource(key: string, phase: KeyPhase, shiftHeld: boolean) {
   return strokeSource(fixtureKeyStroke(key, phase), shiftHeld);
@@ -761,7 +769,7 @@ describe('BidiSession tabs', () => {
 
   it('leaves a tab it adopted open when it cannot show it, and adopts it again on the next use', async () => {
     let refuse = true;
-    const fake = new FakeBidi()
+    const fake = adoptable(new FakeBidi(), 'theirs')
       .on('network.addDataCollector', { result: { collector: 'c' } })
       .on('browsingContext.getTree', { result: { contexts: [{ context: 'theirs', userContext: 'default' }] } })
       .on('browsingContext.setViewport', () => (refuse ? { error: 'unknown error', message: 'no viewport' } : { result: {} }));
@@ -917,7 +925,7 @@ describe('BidiSession tabs', () => {
   });
 
   it('shows the tab an attached browser had open again after a restart, and closes only the others', async () => {
-    const fake = new FakeBidi()
+    const fake = adoptable(new FakeBidi(), 'theirs', 'mine')
       .on('network.addDataCollector', { result: { collector: 'c' } })
       .on('browsingContext.getTree', { result: { contexts: [{ context: 'theirs', userContext: 'default' }, { context: 'mine', userContext: 'default' }] } })
       .on('browsingContext.create', { result: { context: 'mine' } });
@@ -994,7 +1002,7 @@ describe('BidiSession.close', () => {
   });
 
   it('closes every tab it opened in a browser it attached to, whichever is shown, and leaves the one it adopted', async () => {
-    const fake = new FakeBidi()
+    const fake = adoptable(new FakeBidi(), 'theirs')
       .on('network.addDataCollector', { result: { collector: 'c' } })
       .on('browsingContext.getTree', { result: { contexts: [{ context: 'theirs', userContext: 'default' }] } })
       .on('browsingContext.create', { result: { context: 'mine' } });

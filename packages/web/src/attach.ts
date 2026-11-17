@@ -26,9 +26,11 @@ export interface AttachedBrowser extends AsyncDisposable {
 
 /**
  * Attaches to the Chromium at `cdpEndpoint` (`http://127.0.0.1:9222`, or its
- * `ws://` DevTools URL) and drives its open tab in the default browser
- * context, with the same `browser` and `screen` a test gets. Relative URLs
- * have no base: pass `browser.goto` a full URL.
+ * `ws://` DevTools URL) and drives the tab it shows in the default browser
+ * context, as it is, with the same `browser` and `screen` a test gets. Of
+ * several open tabs that is the one visible; a browser that shows more than
+ * one (two windows, a headless shell with two tabs), or none of several, is
+ * refused. Relative URLs have no base: pass `browser.goto` a full URL.
  */
 export async function attachBrowser(cdpEndpoint: string, options: AttachBrowserOptions = {}): Promise<AttachedBrowser> {
   const engine = attachedWeb(cdpEndpoint, { viewport: null, ...(options.testIdAttribute === undefined ? {} : { testIdAttribute: options.testIdAttribute }) });

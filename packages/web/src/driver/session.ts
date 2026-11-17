@@ -20,6 +20,7 @@ import { AttemptNetwork } from './network.ts';
 import { OwnNavigations } from './own-navigations.ts';
 import { PageCalls } from './page-calls.ts';
 import { BidiRefs } from './refs.ts';
+import { shownTab } from './shown-tab.ts';
 import { AttemptTabs, type AttemptTab } from './tabs.ts';
 import { acrossNavigations, tabClosed, TabWindows } from './tab-windows.ts';
 import { AttemptUserContext, type UserContextSettings } from './user-context.ts';
@@ -96,7 +97,7 @@ export class BidiSession {
   private readonly windows: TabWindows;
   /** The attempt's first tab while it opens in the user context in use, which concurrent first uses share. */
   private creating: Promise<AttemptTab> | undefined;
-  /** The tab the attempt found open and adopted (`existingTab`), which it never closes. */
+  /** The tab the attempt found open and adopted (`shownTab`), which it never closes. */
   private adopted: string | undefined;
   private readonly ended = new AbortController();
 
@@ -263,13 +264,17 @@ export class BidiSession {
   }
 
   /**
-   * Opens the attempt's tab in its user context, or adopts the one already
-   * open there when the settings ask for it.
+   * Opens the attempt's tab in its user context, or, when the settings ask
+   * for it, adopts the tab a person sees there (`shownTab`). The documents
+   * an adopted tab already shows were open before the attempt's preloads
+   * were added, so the driver's own are run in each of them first
+   * (`AttemptUserContext.prepareOpen`).
    */
   private async createContext(): Promise<AttemptTab> {
     const userContext = this.userContext.id;
     if (userContext === '') throw invalidState('the attempt has no user context to open a tab in');
-    this.adopted = this.settings.userContext === 'adopt-tab' ? await this.existingTab(userContext) : undefined;
+    this.adopted = this.settings.userContext === 'adopt-tab' ? await shownTab(this.connection, userContext, this.adopted) : undefined;
+    if (this.adopted !== undefined) await this.userContext.prepareOpen(await this.callableDocuments(this.adopted));
     return this.openTab(userContext, this.adopted);
   }
 
@@ -336,12 +341,6 @@ export class BidiSession {
   /** Whether `tab` has closed, asking the browser when no event has told it yet. */
   async tabGone(tab: AttemptTab): Promise<boolean> {
     return tab.closed || (await tabClosed(this.connection, tab.context));
-  }
-
-  /** The first top-level tab already open in `userContext`, if any. */
-  private async existingTab(userContext: string): Promise<string | undefined> {
-    const { contexts } = await this.connection.send('browsingContext.getTree', { maxDepth: 0 });
-    return contexts.find((info) => info.userContext === userContext)?.context;
   }
 
   /**

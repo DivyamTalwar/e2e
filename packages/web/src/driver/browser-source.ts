@@ -119,7 +119,8 @@ export function connectSource(endpoint: CdpEndpointResolver): BrowserSource {
 
 /**
  * `attachBrowser`: the Chromium at `cdpEndpoint`, whose attempt adopts the
- * tab open in the browser's own user context and leaves both as they are.
+ * tab the browser shows in its own user context (`shownTab`) and leaves both
+ * as they are.
  */
 export function attachSource(cdpEndpoint: string): BrowserSource {
   return cdpSource(

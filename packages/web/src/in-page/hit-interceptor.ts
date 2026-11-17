@@ -2,7 +2,8 @@
  * The click watch: capture listeners on a document's window, which decide
  * whether the input of a click reaches the element it was aimed at and
  * suppress it when it does not. A document gets them from its preload,
- * ahead of the page's own scripts, or with the first watch armed in it.
+ * ahead of the page's own scripts, when the attempt adopts the tab it was
+ * already open in, or with the first watch armed in it.
  */
 
 import { withDom, type Outcome } from './dom.ts';
@@ -21,13 +22,15 @@ type HitWatch = { readonly target: Element; verdict: Outcome | undefined };
  * neither judged nor suppressed. `hitInterceptorResult` reads the decision.
  *
  * The first call in a document builds the listeners, which do nothing until
- * a watch is armed, and keeps what adds them (`listen`) for every call to
- * run. The preload's call comes with no element, before the page's own
- * scripts: it arms nothing, puts the listeners ahead of any the app adds,
- * and keeps the page's `Event` for the driver's edits (`dom.keepEvent`). A
- * document no preload ran in (one open before the attempt, as the tab
- * `attachBrowser` adopts) gets its listeners with the first watch armed
- * there, behind the capture listeners the app already has on the window.
+ * a watch is armed, keeps what adds them (`listen`) for every call to run,
+ * and keeps the page's `Event` as it is then for the driver's edits
+ * (`dom.keepEvent`). A call with no element arms nothing. The preload's is
+ * one, before the page's own scripts, so the listeners sit ahead of any the
+ * app adds. A document open before the attempt gets the same call when the
+ * attempt adopts its tab (`AttemptUserContext.prepareOpen`), and any other
+ * document no preload ran in gets its listeners with the first watch armed
+ * there: in both, behind the capture listeners the app already has on the
+ * window.
  */
 const watchHits = withDom((dom, element: Element | null): void => {
   let listen: (() => void) | undefined = Reflect.get(globalThis, Symbol.for('e2e.bidi.hit.listen'));
@@ -75,17 +78,15 @@ const watchHits = withDom((dom, element: Element | null): void => {
       }
     };
     Reflect.set(globalThis, Symbol.for('e2e.bidi.hit.listen'), listen);
+    dom.keepEvent();
   }
   listen();
-  if (element === null) {
-    dom.keepEvent();
-    return;
-  }
+  if (element === null) return;
   const watch: HitWatch = { target: dom.pointerTarget(element), verdict: undefined };
   Reflect.set(globalThis, Symbol.for('e2e.bidi.hit.active'), watch);
 });
 
-/** The preload: `watchHits` with no element, before the page's own scripts, so no listener of the app runs ahead of the watch's. */
+/** `watchHits` with no element, as a script: a preload runs it before the page's own scripts, so no listener of the app runs ahead of the watch's. */
 export const HIT_INTERCEPTOR_INIT_SCRIPT = `(${watchHits.toString()})(null);`;
 
 /** `watchHits` as the driver calls it, for the element a click is about to reach: it cannot arm nothing. */

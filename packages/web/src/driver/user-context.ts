@@ -9,7 +9,7 @@
 import type { Emulation } from 'webdriver-bidi-protocol';
 import { EngineError, obj } from '@e2e-dev/core/engine';
 import type { BrowserTraits } from '../browsers.ts';
-import { abortError, BidiError, releaseQuietly } from '../errors.ts';
+import { abortError, BidiError, releaseQuietly, unlessStale } from '../errors.ts';
 import { CLOSED_SHADOW_ROOTS_INIT_SCRIPT } from '../in-page/closed-shadow.ts';
 import { HIT_INTERCEPTOR_INIT_SCRIPT } from '../in-page/hit-interceptor.ts';
 import { MODAL_ORDER_INIT_SCRIPT } from '../in-page/modal-dialogs.ts';
@@ -19,6 +19,7 @@ import type { WebMedia } from '../options.ts';
 import type { ProtectedApp } from '../protected-app.ts';
 import type { BidiConnection } from './connection.ts';
 import type { AttemptDownloads } from './downloads.ts';
+import { callFunction } from './script.ts';
 
 /**
  * Refuses service worker registration, as Playwright's `serviceWorkers:
@@ -30,8 +31,8 @@ const BLOCK_SERVICE_WORKERS = "if (navigator.serviceWorker) navigator.serviceWor
 /**
  * Which user context an attempt runs in: a fresh one it creates and
  * removes, the browser's default one (which a per-attempt lease's `prepare`
- * may have signed in), or the default one on the tab already open there,
- * which the attempt adopts and leaves open (`attachBrowser`).
+ * may have signed in), or the default one on the tab the browser shows
+ * there, which the attempt adopts and leaves open (`attachBrowser`).
  */
 export type UserContextMode = 'fresh' | 'default' | 'adopt-tab';
 
@@ -170,6 +171,43 @@ export class AttemptUserContext {
   }
 
   /**
+   * Runs the driver's own preloaded scripts (`driverScripts`) in `documents`,
+   * which were open before the user context's preloads were added (the tab
+   * the attempt adopts, with its frames) and run none until they navigate.
+   * From here on such a document records its closed shadow roots and the
+   * order of its modal dialogs, has the click watch's listeners, and keeps
+   * its `Event` and builtins as they are now, as one that loaded under the
+   * preloads does from its start. What happened in it earlier stays unknown:
+   * a closed root already attached, dialogs already shown, a builtin the
+   * page already replaced, and capture listeners the app already has on the
+   * window, which stay ahead of the click watch's. A script that throws
+   * there (a page that broke what it calls) leaves the rest to run, and a
+   * document gone meanwhile gets the preloads with the one that replaces
+   * it. An app's own init scripts are for new documents, and are not run.
+   */
+  async prepareOpen(documents: readonly string[]): Promise<void> {
+    const source = `() => {\n${this.driverScripts().map((script) => `try {\n${script}\n} catch {}`).join('\n')}\n}`;
+    await Promise.all(documents.map((context) => unlessStale(callFunction(this.host.connection, context, source), undefined)));
+  }
+
+  /**
+   * The driver's own scripts for every document of the attempt, in the order
+   * they run: the builtins the readers are built over first. Each does
+   * nothing in a document that has run it, so one may run in a document
+   * twice (`prepareOpen` beside the preload).
+   */
+  private driverScripts(): string[] {
+    return [
+      BUILTINS_INIT_SCRIPT,
+      READERS_INIT_SCRIPT,
+      CLOSED_SHADOW_ROOTS_INIT_SCRIPT,
+      MODAL_ORDER_INIT_SCRIPT,
+      HIT_INTERCEPTOR_INIT_SCRIPT,
+      ...(this.host.protectedApp.sendsHeaders ? [BLOCK_SERVICE_WORKERS] : []),
+    ];
+  }
+
+  /**
    * Records a document of the attempt starting to load `url`: its origin is
    * remembered for a saved session, and granted the configured permissions,
    * once per origin and user context (BiDi grants per origin). Concurrent
@@ -214,12 +252,7 @@ export class AttemptUserContext {
       if (overtaken()) throw abortError(signal, 'user context setup');
       const scoped = { userContexts: [userContext] as [string] };
       const sources = [
-        wrapScript(BUILTINS_INIT_SCRIPT),
-        wrapScript(READERS_INIT_SCRIPT),
-        wrapScript(CLOSED_SHADOW_ROOTS_INIT_SCRIPT),
-        wrapScript(MODAL_ORDER_INIT_SCRIPT),
-        wrapScript(HIT_INTERCEPTOR_INIT_SCRIPT),
-        ...(this.host.protectedApp.sendsHeaders ? [wrapScript(BLOCK_SERVICE_WORKERS)] : []),
+        ...this.driverScripts().map(wrapScript),
         ...[...settings.initScripts.forAttempt(), ...this.addedScripts].map(wrapAppScript),
       ];
       const { userAgent, locale, timezoneId } = settings;
