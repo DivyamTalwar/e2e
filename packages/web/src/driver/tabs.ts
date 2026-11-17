@@ -87,6 +87,15 @@ export class AttemptTabs {
     return this.open;
   }
 
+  /**
+   * The browsing context of every tab the attempt has open: the ones in
+   * `list`, and the ones the app opened that have yet to join, or never
+   * will. What the attempt closes when it ends in a user context that stays.
+   */
+  contexts(): string[] {
+    return [...this.open.map((tab) => tab.context), ...this.unjoined.keys()];
+  }
+
   /** The open tab of `context`, if it is one. */
   find(context: string | null | undefined): AttemptTab | undefined {
     return context == null ? undefined : this.open.find((tab) => tab.context === context);

@@ -66,6 +66,24 @@ async function unhandledDuring(work: () => Promise<void>): Promise<unknown[]> {
 }
 
 describe('AttemptTabs', () => {
+  it('names every tab the attempt has open, the ones yet to join and the one that never will with the ones listed, until each closes', async () => {
+    const { tabs } = await tabsOn();
+    tabs.appOpened('joined', 'own');
+    tabs.loaded('joined', 'http://app.test/joined');
+    tabs.appOpened('loading', 'own');
+    tabs.navigationStarted('loading', 'http://app.test/slow');
+    tabs.appOpened('nowhere', 'own');
+    tabs.navigationStarted('nowhere', 'http://app.test/export.csv');
+    tabs.navigationFailed('nowhere');
+    expect(tabs.list().map((tab) => tab.context)).toEqual(['own', 'joined']);
+    expect(tabs.contexts()).toEqual(['own', 'joined', 'loading', 'nowhere']);
+    tabs.destroyed('loading');
+    tabs.destroyed('joined');
+    expect(tabs.contexts()).toEqual(['own', 'nowhere']);
+    tabs.clear();
+    expect(tabs.contexts()).toEqual([]);
+  });
+
   it('joins a tab the app opened with its first document, never with the blank one a failed navigation left', async () => {
     const { tabs } = await tabsOn();
     tabs.appOpened('download', 'own');

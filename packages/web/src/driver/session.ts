@@ -226,14 +226,18 @@ export class BidiSession {
   /**
    * Forgets the attempt's tabs and ends the recording of the shown one. A
    * user context the attempt removes closes them with it. One that stays
-   * (the browser's own) closes none, so every tab the attempt opened there
-   * is closed here, whichever is shown; the tab it adopted stays open.
+   * (the browser's own) closes none, so every tab the attempt has open
+   * there is closed here, whichever is shown: its own, and the ones the app
+   * opened from them, a tab that has yet to join (one still loading, or
+   * whose only navigation got no document) with the rest
+   * (`AttemptTabs.contexts`), as a restart closes them (`replaceTabs`). The
+   * tab it adopted stays open.
    */
   private async releaseTabs(): Promise<void> {
-    const opened = this.tabs.list().filter((tab) => tab.context !== this.adopted);
+    const opened = this.tabs.contexts().filter((context) => context !== this.adopted);
     await this.forgetTabs();
     if (this.settings.userContext === 'fresh') return;
-    await Promise.all(opened.map((tab) => releaseQuietly(this.connection.send('browsingContext.close', { context: tab.context }))));
+    await Promise.all(opened.map((context) => releaseQuietly(this.connection.send('browsingContext.close', { context }))));
   }
 
   /**
