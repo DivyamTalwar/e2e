@@ -452,7 +452,8 @@ await browser.goto('/dashboard', { waitUntil: 'networkidle' }); // default: 'loa
 | `POLICY_DENIED` | A URL whose scheme is not `http:` or `https:`. `about:blank` is admitted. |
 | `APP_URL_REQUIRED` | A relative URL, on a target that declares no `app.url`. |
 | `INVALID_ARGUMENT` | A `waitUntil` that is none of the three. |
-| `ACTION_FAILED` | The navigation failed. |
+| `ACTION_FAILED` | The page did not load in time, or a [route](#route) aborted the request. |
+| `ENGINE_FAILURE` | The browser could not load the URL: a refused connection, an unknown host, or a response with no content. |
 
 #### `reload`, `back`, `forward`
 
@@ -467,7 +468,8 @@ await browser.back({ timeout: 10_000 });
 
 | Throws | When |
 | --- | --- |
-| `ACTION_FAILED` | The navigation failed. |
+| `ACTION_FAILED` | The page did not load in time. |
+| `ENGINE_FAILURE` | The browser could not load the page, or `back` or `forward` has no history entry to go to. |
 
 #### `url`, `title`
 
