@@ -1,6 +1,7 @@
-/** A BiDi session's own state: the input it sends (held keys through chords and modifier clicks until their `keyboard.up`, pressure, the viewport bound, what counts as dispatched), refs a locate just proved, the tabs it opens and the ones it closes again, and the user contexts it removes or refuses to set up once the attempt closed. */
+/** A BiDi session's own state: the input it sends (held keys through chords and modifier clicks until their `keyboard.up`, pressure, the viewport bound, what counts as dispatched, a fill included), refs a locate just proved, the tabs it opens and the ones it closes again, and the user contexts it removes or refuses to set up once the attempt closed. */
 
 import { describe, expect, it, vi } from 'vitest';
+import { perform } from '../../src/driver/actions.ts';
 import { ContextTree } from '../../src/driver/context-tree.ts';
 import { clickSources, moveSources, pressDownSources, swipeSources, typeSource } from '../../src/driver/input-sources.ts';
 import { fixtureKeyStroke, strokeSource, type KeyPhase } from '../../src/driver/keyboard.ts';
@@ -8,6 +9,8 @@ import { DispatchScope, type BidiInput } from '../../src/driver/input.ts';
 import { routeEvents } from '../../src/driver/events.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
+import { elementShown } from '../../src/in-page/actionability.ts';
+import { fill } from '../../src/in-page/edits.ts';
 import type { UserContextMode } from '../../src/driver/user-context.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
 import { BidiError } from '../../src/errors.ts';
@@ -19,7 +22,7 @@ const SHIFT = '';
 
 /** A session on `fake` that has opened nothing yet, on a 100 by 100 viewport, in a user context of its own unless `userContext` says otherwise. */
 function unopened(fake: FakeBidi, browser: BrowserName = 'chromium', userContext: UserContextMode = 'fresh'): BidiSession {
-  const settings = { media: {}, viewport: { width: 100, height: 100 }, initScripts: { forAttempt: () => [] }, permissions: [], userContext };
+  const settings = { media: {}, viewport: { width: 100, height: 100 }, initScripts: { forAttempt: () => [] }, permissions: [], userContext, testIdAttribute: 'data-testid' };
   const attempt = { protectedApp: new ProtectedApp(new Set(), undefined, undefined) };
   return new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS[browser] } as never, settings as never, attempt as never, new ContextTree());
 }
@@ -267,6 +270,52 @@ describe('BidiInput.send', () => {
     expect(fake.commands('goog:cdp.sendCommand').at(-1)!.params['params']).toMatchObject({ modifiers: 0, autoRepeat: false });
     await held.input.send([keySource('Shift', 'keyDown', false)]);
     expect(keyActions(fake).at(-1)).toEqual([{ type: 'keyDown', value: SHIFT }]);
+  });
+});
+
+describe('a fill', () => {
+  /** A page call's answer of `outcome`. */
+  const answer = (outcome: Record<string, string>): Reply =>
+    ({ result: { type: 'success', realm: 'r', result: { type: 'object', value: Object.entries(outcome).map(([key, value]) => [key, { type: 'string', value }]) } } });
+
+  /** Has `fake` answer the page's `fill` with `filled`, and every check before it as a shown, enabled field. */
+  function field(fake: FakeBidi, filled: () => Reply | Promise<Reply>): void {
+    fake.on('script.callFunction', (params) => {
+      if (params['functionDeclaration'] === fill.toString()) return filled();
+      if (params['functionDeclaration'] === elementShown.toString()) return answer({ kind: 'ok' });
+      return { result: { type: 'success', realm: 'r', result: { type: 'boolean', value: false } } };
+    });
+  }
+
+  /** Fills the field `held` located as `id`, counted by a scope of its own. */
+  function filling(held: BidiSession, id: string, timeoutMs: number): { scope: DispatchScope; done: Promise<void> } {
+    held.refs.storeLocated(id, { element: { sharedId: 'e' } as ElementRef, context: 'tab', locator: { kind: 'selector', selector: '#a' } });
+    const scope = new DispatchScope();
+    return { scope, done: scope.run(() => perform(held, { id } as NodeRef, { kind: 'fill', value: 'x', sensitive: false }, timeoutMs, new AbortController().signal)) };
+  }
+
+  it('counts as dispatched while the page still runs it, so an operation timing out on it may have committed', async () => {
+    const fake = new FakeBidi();
+    const held = await session(fake);
+    let sent = false;
+    field(fake, () => {
+      sent = true;
+      return new Promise<never>(() => undefined);
+    });
+    const { scope } = filling(held, '1', 5_000);
+    await vi.waitFor(() => expect(sent).toBe(true));
+    expect(scope.dispatched).toBe(true);
+    expect(held.input.dispatches).toBe(1);
+  });
+
+  it('takes a try that changed nothing back from the operation, and never from the attempt', async () => {
+    const fake = new FakeBidi();
+    const held = await session(fake);
+    field(fake, () => answer({ kind: 'not-yet', reason: 'element is not editable' }));
+    const { scope, done } = filling(held, '1', 120);
+    await expect(done).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('element is not editable') });
+    expect(scope.dispatched).toBe(false);
+    expect(held.input.dispatches).toBeGreaterThan(0);
   });
 });
 

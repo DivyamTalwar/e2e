@@ -7,8 +7,9 @@
  * lands in what shows of a node in a shadow root, a tap cancelled while it
  * aims leaves no click watch behind, a click the app dispatched itself is
  * left to the app while the driver's own arrives trusted, a fill fires its
- * events with the `Event` the page started with, and a ref reused after
- * input, the hover of a swallowed click included, checks its locator again.
+ * events with the `Event` the page started with, a ref reused after input,
+ * the hover of a swallowed click included, checks its locator again, and a
+ * fill still running in the page at its deadline may have committed.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -263,5 +264,23 @@ describe('input', () => {
     const [number] = await page.locate(bySelector('#n'));
     await expect(page.engine.perform!(number!.ref, { kind: 'fill', value: '0x10', sensitive: false }, page.op())).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('Malformed value') });
     await expect(page.engine.perform!(twin!.ref, { kind: 'tap' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', message: expect.stringContaining('elements') });
+  });
+
+  it('reports a fill whose input handler still runs at the deadline as possibly committed: the field holds the value', async () => {
+    let release = (): void => undefined;
+    const hold = page.serve('/hold-fill', (_request, response) => {
+      release = () => response.end();
+    });
+    await page.setContent(`<input id=i><script>
+      i.addEventListener('input', () => {
+        const request = new XMLHttpRequest();
+        request.open('GET', ${JSON.stringify(hold)}, false);
+        request.send();
+      });
+    </script>`);
+    const [field] = await page.locate(bySelector('#i'));
+    await expect(page.engine.perform!(field!.ref, { kind: 'fill', value: 'held', sensitive: false }, page.op(1_000))).rejects.toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED' });
+    release();
+    expect(await page.browser.evaluate('document.getElementById("i").value')).toBe('held');
   });
 });

@@ -76,8 +76,8 @@ const operationDispatches = new AsyncLocalStorage<(delta: number) => void>();
 /**
  * One operation's own dispatch count, so whether it sent input that may have
  * reached the app is read off its own sends: input or an evaluate another
- * operation runs meanwhile does not count, nor does a send of its own that
- * the page swallowed (`BidiInput.sendSuppressible`).
+ * operation runs meanwhile does not count, nor does a send or mutation of
+ * its own that the page turned out not to take (`BidiInput.takeBack`).
  */
 export class DispatchScope {
   private count = 0;
@@ -115,7 +115,8 @@ export class BidiInput {
    * Input sends and page mutations so far. It never decreases: the pointer
    * move and the modifier keys of a click the page swallowed still reached
    * the app, so a ref located before one is checked again
-   * (`BidiRefs.claimFresh`).
+   * (`BidiRefs.claimFresh`), as is one located before a mutation that
+   * changed nothing.
    */
   get dispatches(): number {
     return this.total;
@@ -126,7 +127,7 @@ export class BidiInput {
     return this.state.pointer;
   }
 
-  /** Counts a change the driver or the test's code made in the page (a fill, a select, an evaluate), which may have reached the app. */
+  /** Counts a change the driver or the test's code makes in the page (a fill, a select, an evaluate), which may reach the app. */
   mutated(): void {
     this.count();
   }
@@ -135,6 +136,15 @@ export class BidiInput {
   private count(): void {
     this.total += 1;
     operationDispatches.getStore()?.(1);
+  }
+
+  /**
+   * Takes one send or mutation back from the operation that counted it, once
+   * the page turned out not to take it: a click it swallowed, a fill that
+   * changed nothing. The attempt's count keeps it (`dispatches`).
+   */
+  takeBack(): void {
+    operationDispatches.getStore()?.(-1);
   }
 
   /** Forgets everything held and where the mouse was, with the tab that held them: the tab shown next gets a state of its own. */
@@ -195,7 +205,7 @@ export class BidiInput {
       if (!dispatched || !(failure.cause instanceof BidiError && failure.cause.error === 'no such frame')) throw failure.cause;
       state.take(after);
     }
-    if (watch.suppressed(read)) operationDispatches.getStore()?.(-1);
+    if (watch.suppressed(read)) this.takeBack();
     return read;
   }
 

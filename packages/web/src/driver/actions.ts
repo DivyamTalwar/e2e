@@ -365,22 +365,19 @@ async function fill(session: BidiSession, target: NodeTarget, value: string, dea
 }
 
 /**
- * Runs a page mutation, polling while the page answers not yet: such an
- * answer changed nothing, as one of a detached element did not, so neither
- * counts as dispatched. A mutation that ran, threw midway, or refused does:
- * a fill refuses a malformed number only once the field took it. Nothing
- * runs once `signal` aborted.
+ * Runs a page mutation, polling while the page answers not yet. Each try
+ * counts as dispatched before it runs, like any input, so one whose handlers
+ * still run at the operation's deadline may have committed. A not yet
+ * changed nothing, as an answer of a detached element did not, so the
+ * operation takes those back (`BidiInput.takeBack`). A mutation that ran,
+ * threw midway, or refused stays counted: a fill refuses a malformed number
+ * only once the field took it. Nothing runs once `signal` aborted.
  */
 async function mutateWhenReady(session: BidiSession, deadline: Deadline, signal: AbortSignal, prefix: string, mutate: () => Promise<Outcome>): Promise<void> {
   await settle(deadline, signal, async () => {
-    let outcome: Outcome;
-    try {
-      outcome = await mutate();
-    } catch (cause) {
-      session.input.mutated();
-      throw cause;
-    }
-    if (outcome.kind === 'ok' || outcome.kind === 'refused') session.input.mutated();
+    session.input.mutated();
+    const outcome = await mutate();
+    if (outcome.kind === 'not-yet' || outcome.kind === 'detached') session.input.takeBack();
     return outcome;
   }, prefix);
 }
