@@ -75,7 +75,7 @@ jobs:
           pnpm exec tsc -p .dev/skills/babysit/scripts
           node --test .dev/skills/babysit/scripts/pr-status.test.ts
       - name: Install browsers
-        uses: ./.github/actions/chromium
+        uses: ./.github/actions/browsers
       # On a pull request, Jev leaves out the tests the change can't affect;
       # a push to main passes no --changed-since and runs every test.
       # Without the key (a fork's pull request), every test runs.
@@ -114,13 +114,12 @@ jobs:
       - uses: ./.github/actions/workspace-install
         with:
           agent-device-version: ${{ inputs.agent-device-version }}
-      - name: Install browsers
-        uses: ./.github/actions/chromium
-        with:
-          only-shell: false
       # @e2e-dev/web's integration suite, locator parity included, runs on Firefox too.
-      - name: Install Firefox
-        run: node packages/web/dist/bin.js install firefox --with-deps
+      - name: Install browsers
+        uses: ./.github/actions/browsers
+        with:
+          browsers: chromium firefox
+          only-shell: false
       - name: Unit and integration tests
         run: pnpm test
 
@@ -198,7 +197,9 @@ jobs:
       - name: Build
         run: pnpm run build
       - name: Install Firefox
-        run: node packages/web/dist/bin.js install firefox --with-deps
+        uses: ./.github/actions/browsers
+        with:
+          browsers: firefox
       - name: Testbed on Firefox
         working-directory: apps/testbed
         run: node node_modules/e2e/dist/cli/bin.js run --config e2e.firefox.config.ts --exclude-tag playwright

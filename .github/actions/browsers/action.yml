@@ -1,8 +1,8 @@
-name: chromium
+name: browsers
 description: >-
-  Installs the Chrome for Testing build @e2e-dev/web pins and its system
-  packages, with the .deb files apt downloads for them restored from and
-  saved to the Actions cache.
+  Installs the browser builds @e2e-dev/web pins and their system packages,
+  with the .deb files apt downloads for them restored from and saved to the
+  Actions cache.
 
 # `--with-deps` installs about 38 MB of packages from the Ubuntu mirror, and
 # the mirror often serves them at about 200 kB/s: the step takes 2 to 5
@@ -10,16 +10,19 @@ description: >-
 # archives from a directory this action restores first, so it downloads only
 # the packages whose version changed since the cache was saved.
 inputs:
+  browsers:
+    description: The browsers to install, by the names `e2e-web install` takes, separated by spaces.
+    default: chromium
   only-shell:
-    description: Install only the headless shell, not also the full browser a headed run launches.
+    description: Of chromium, install only the headless shell, not also the full browser a headed run launches.
     default: 'true'
 
 runs:
   using: composite
   steps:
-    # The prefix holds what decides the package list: the Ubuntu release and
-    # the Chrome build. The suffix is a digest of the .deb file names,
-    # so a key names one exact set of package versions.
+    # The prefix holds what decides the package list: the browsers, the
+    # Ubuntu release, and their builds. The suffix is a digest of the .deb
+    # file names, so a key names one exact set of package versions.
     # The directory sits under /var/cache, not the runner's temp directory:
     # apt downloads as `_apt`, which cannot traverse /home/runner and would
     # fall back to downloading as root. The runner owns the directory so the
@@ -30,16 +33,25 @@ runs:
       shell: bash
       env:
         ARCHIVES: /var/cache/chromium-apt
+        BROWSERS: ${{ inputs.browsers }}
+        PINS: packages/web/src/install/builds.json
       run: |
         set -euo pipefail
         . /etc/os-release
-        CHROME="$(jq -er '.chrome.buildId' packages/web/src/install/builds.json)"
+        BUILDS=''
+        for browser in $BROWSERS; do
+          case "$browser" in
+            chromium) BUILDS="$BUILDS-chrome-$(jq -er '.chrome.buildId' "$PINS")" ;;
+            firefox) BUILDS="$BUILDS-firefox-$(jq -er '.firefox.buildId' "$PINS")" ;;
+            *) echo "unknown browser: $browser" >&2; exit 1 ;;
+          esac
+        done
         sudo install -d -o "$(id -u)" -g "$(id -g)" -m 755 "$ARCHIVES"
         sudo install -d -o _apt -g root -m 700 "$ARCHIVES/partial"
         printf 'Dir::Cache::Archives "%s/";\nAPT::Keep-Downloaded-Packages "true";\n' "$ARCHIVES" \
           | sudo tee /etc/apt/apt.conf.d/99chromium-archives > /dev/null
         echo "archives=$ARCHIVES" >> "$GITHUB_OUTPUT"
-        echo "prefix=chromium-apt-$ID-$VERSION_ID-$(uname -m)-chrome-$CHROME" >> "$GITHUB_OUTPUT"
+        echo "prefix=${BROWSERS// /+}-apt-$ID-$VERSION_ID-$(uname -m)$BUILDS" >> "$GITHUB_OUTPUT"
     # No entry has exactly this key: restore-keys picks the newest entry with
     # the prefix.
     - name: Restore the archives
@@ -58,15 +70,20 @@ runs:
       run: |
         set -euo pipefail
         [ -f packages/web/dist/bin.js ] || { pnpm --filter @e2e-dev/core run build && pnpm --filter e2e run build && pnpm --filter @e2e-dev/web run build; }
-    # The install runs apt-get through sudo itself.
-    - name: Install Chromium
+    # The install runs apt-get through sudo itself. Full Chrome loads the
+    # packages the headless shell does, so its install asks for none.
+    - name: Install the browsers
       shell: bash
       env:
+        BROWSERS: ${{ inputs.browsers }}
         ONLY_SHELL: ${{ inputs.only-shell }}
       run: |
         set -euo pipefail
-        node packages/web/dist/bin.js install chromium --with-deps
-        [ "$ONLY_SHELL" = 'true' ] || node packages/web/dist/bin.js install chromium --with-deps --headed
+        # shellcheck disable=SC2086 # each name is its own argument
+        node packages/web/dist/bin.js install $BROWSERS --with-deps
+        case " $BROWSERS " in
+          *' chromium '*) [ "$ONLY_SHELL" = 'true' ] || node packages/web/dist/bin.js install chromium --headed ;;
+        esac
     # autoclean deletes the archives the mirror no longer serves, so the set
     # changes only when a package version does.
     - name: Name the archive set
