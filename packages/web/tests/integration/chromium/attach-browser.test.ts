@@ -2,7 +2,8 @@
  * `attachBrowser` on a Chrome the test owns: `browser` and `screen` drive the
  * open tab in the default context, and closing detaches without closing the
  * tab or the browser, whose cookies the next attach still sees. The frames
- * already loaded in the tab are the attached session's from the start.
+ * already loaded in the tab are the attached session's from the start, and
+ * a page no attach loaded is tapped as it is found.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -128,5 +129,36 @@ describe('attachBrowser', () => {
     } finally {
       await browser.clearCookies({ name: /^attach-/ });
     }
+  });
+
+  /**
+   * Has Chrome show `html` in its only tab with no driver attached, so no
+   * preload of an attach ever ran in the document, and returns its URL.
+   */
+  async function showUnattached(pathname: string, html: string): Promise<string> {
+    let loaded = (): void => undefined;
+    const ready = new Promise<void>((resolve) => { loaded = resolve; });
+    server.serve(`${pathname}-loaded`, (_request, response) => {
+      loaded();
+      response.end();
+    });
+    const url = server.serve(pathname, `${html}<script>fetch(${JSON.stringify(`${pathname}-loaded`)})</script>`);
+    const before = await pages(endpoint);
+    const opened = (await (await fetch(`${endpoint}/json/new?${url}`, { method: 'PUT' })).json()) as { id: string };
+    await ready;
+    for (const tab of before) await fetch(`${endpoint}/json/close/${tab.id}`);
+    await expect.poll(() => pages(endpoint)).toEqual([{ id: opened.id, url }]);
+    return url;
+  }
+
+  it('taps the page it finds open, which no attach loaded, with no navigation first', async () => {
+    const found = await showUnattached('/found', `<button id=b>Tap me</button><script>
+      window.log = [];
+      for (const type of ['mousedown', 'mouseup', 'click']) b.addEventListener(type, () => log.push(type));
+    </script>`);
+    await using attached = await attachBrowser(endpoint);
+    expect(await attached.browser.url()).toBe(found);
+    await attached.screen.getByRole('button', 'Tap me').tap();
+    expect(await attached.browser.evaluate('window.log')).toEqual(['mousedown', 'mouseup', 'click']);
   });
 });
