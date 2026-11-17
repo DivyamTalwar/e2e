@@ -32,7 +32,11 @@ export interface InterceptedRequest {
   readonly method: string;
   /** Header names lowercased, as Playwright reports a request's headers. */
   readonly headers: Readonly<Record<string, string>>;
-  /** The request body, when it has one the browser collected. */
+  /**
+   * The request body's bytes decoded as UTF-8, when it has one the browser
+   * reports: a body that is not text reads with U+FFFD in place of each
+   * byte that is no UTF-8.
+   */
   readonly postData?: string;
 }
 
@@ -86,6 +90,8 @@ interface RedirectPolicy {
 
 /** The part of a request's record the decisions read and keep; the binding holds the record until the request is over, and drops what belongs to one hop when the next starts. */
 export interface DecisionRecord {
+  /** The browsing context its hop in flight came from: its body is read there, and its closing retires the request. */
+  context: string;
   /**
    * Where its latest hop went, as its `beforeRequestSent` said: Firefox
    * names a challenge from a redirect's target with the URL the request
@@ -105,22 +111,24 @@ export interface DecisionRecord {
 
 /** What a decision reads and writes of the user context that holds the request; the binding provides it. */
 export interface DecisionScope {
-  /** The body the request collector kept for `request`; undefined when there is no collector or it kept none (too large, a stream). */
-  requestBody(request: string): Promise<Buffer | undefined>;
+  /** The body of held `request`, which came from `context`, as the browser gives it. */
+  requestBody(request: Network.RequestData, context: string): Promise<Exclude<HeldBody, 'unreported'>>;
   /** Stores `cookies` in the user context's jar, giving up once `signal` aborts. */
   storeCookies(cookies: readonly Storage.PartialCookie[], signal: AbortSignal): Promise<void>;
 }
 
 /**
  * A held request's body as the browser gives it: its bytes, `none` for a
- * request without one, `lost` for one the collector kept none of, and
+ * request without one, `lost` for one the collector kept none of,
+ * `unreadable` for one with a part the browser reports no bytes of, and
  * `unreported` for a held navigation's on a browser that never answers for it.
  */
-type HeldBody = Buffer | 'none' | 'lost' | 'unreported';
+export type HeldBody = Buffer | 'none' | 'lost' | 'unreadable' | 'unreported';
 
 /** Why a route's fetch has no body to replay a request with, for each way `heldBody` found none. */
-const NO_BODY: Readonly<Record<'lost' | 'unreported', string>> = {
+const NO_BODY: Readonly<Record<'lost' | 'unreadable' | 'unreported', string>> = {
   lost: 'the browser kept none of the request body (too large or streamed)',
+  unreadable: 'the browser reports no bytes for a part of the request body (a file on disk, or a stream)',
   unreported: 'this browser reports no body for a navigation it holds, such as a form submission',
 };
 
@@ -277,7 +285,7 @@ export class RequestDecisions {
     const address = stripHash(request.url);
     const url = URL.canParse(address) ? new URL(address) : undefined;
     const matching = url === undefined ? [] : this.routes.filter((route) => routePatternMatches(route.pattern, url.href)).toReversed();
-    const body = matching.length === 0 ? 'none' : await this.heldBody(request, event.navigation !== null);
+    const body = matching.length === 0 ? 'none' : await this.heldBody(request, record.context, event.navigation !== null);
     const intercepted: InterceptedRequest = {
       id: request.request,
       url: address,
@@ -305,16 +313,16 @@ export class RequestDecisions {
   }
 
   /**
-   * The request's body as the collector kept it. One it did not keep (too
-   * large, a stream) is lost. A held navigation's is unreported, and never
-   * asked for, on a browser that does not answer for it (`navigationBodies`):
-   * Chromium, for the body of a paused form submission
-   * (https://github.com/puppeteer/puppeteer/pull/15607).
+   * The body of held `request` from `context`, as the user context's scope
+   * reads it. A held navigation's is never asked for on a browser that does
+   * not answer for it (`navigationBodies`): Chromium, for the body of a
+   * paused form submission
+   * (https://github.com/puppeteer/puppeteer/pull/15607). There one BiDi
+   * sizes at nothing has none, and any other is unreported.
    */
-  private async heldBody(request: Network.RequestData, navigation: boolean): Promise<HeldBody> {
-    if (!hasBody(request)) return 'none';
-    if (navigation && !this.options.traits.navigationBodies) return 'unreported';
-    return (await this.scope.requestBody(request.request)) ?? 'lost';
+  private async heldBody(request: Network.RequestData, context: string, navigation: boolean): Promise<HeldBody> {
+    if (navigation && !this.options.traits.navigationBodies) return hasBody(request) ? 'unreported' : 'none';
+    return this.scope.requestBody(request, context);
   }
 
   /**
@@ -324,11 +332,11 @@ export class RequestDecisions {
    * stores the cookies the response sets in the user context, as
    * Playwright's `route.fetch` does. A Basic challenge is answered with the
    * credentials a challenge to the browser from that origin gets, once. A
-   * body the browser did not keep, or does not report, refuses the fetch
-   * with that reason (`NO_BODY`) rather than send none.
+   * body the browser did not keep, or does not report whole, refuses the
+   * fetch with that reason (`NO_BODY`) rather than send none or a part.
    */
   private async fetch(request: InterceptedRequest, cookies: readonly Network.Cookie[], body: HeldBody, budget: Pick<OperationContext, 'signal' | 'timeoutMs'>): Promise<FetchedResponse> {
-    if (body === 'lost' || body === 'unreported') {
+    if (body === 'lost' || body === 'unreadable' || body === 'unreported') {
       throw new TestError('ACTION_FAILED', `route.fetch: ${NO_BODY[body]}, so the request cannot be replayed`);
     }
     const signal = AbortSignal.any([budget.signal, AbortSignal.timeout(budget.timeoutMs), this.options.lifetime]);

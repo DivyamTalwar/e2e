@@ -582,7 +582,7 @@ describe('AttemptNetwork', () => {
 
     it('sends the request as the browser sent it, with its cookies, its body, and the configured headers', async () => {
       const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'a=1' } } });
-      const { outcome } = await fetched(fake, { headers: true }, (site) => {
+      const { outcome } = await fetched(fake, { headers: true, browser: 'firefox' }, (site) => {
         const posted = request('post', `${site}/form`);
         const cookie = (name: string, value: Network.BytesValue): Network.Cookie => ({ name, value, domain: new URL(site).hostname, path: '/', size: 0, httpOnly: false, secure: false, sameSite: 'lax' });
         const cookies = [cookie('sid', { type: 'string', value: 'old' }), cookie('lang', { type: 'base64', value: Buffer.from('en').toString('base64') })];
@@ -620,7 +620,7 @@ describe('AttemptNetwork', () => {
 
     it('refuses to fetch a request whose body the browser did not keep, rather than send none', async () => {
       const fake = new FakeBidi().on('network.getData', () => ({ error: 'no such network data', message: 'evicted' }));
-      const { outcome } = await fetched(fake, {}, (site) => {
+      const { outcome } = await fetched(fake, { browser: 'firefox' }, (site) => {
         const posted = request('post', `${site}/upload`);
         return { ...posted, request: { ...posted.request, method: 'POST', bodySize: 30_000_000 } };
       });
@@ -769,7 +769,7 @@ describe('AttemptNetwork', () => {
     });
 
     it.each(['POST', 'PUT'])('leaves the headers of a request body off every hop once a redirect turned the %s into a GET', async (method) => {
-      const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'a=1' } } });
+      const fake = new FakeBidi().on('goog:cdp.sendCommand', { result: { result: { postData: 'a=1', base64Encoded: false } } });
       const { net, open } = network(fake);
       await net.bind('user-1');
       await open('tab');
@@ -841,7 +841,6 @@ describe('AttemptNetwork', () => {
 
   it.each([
     ['the subscription', 'session.subscribe'],
-    ['the request collector', 'network.addDataCollector'],
     ['the intercept', 'network.addIntercept'],
   ])('takes a route back when %s fails to install, and installs everything on the next try', async (_step, method) => {
     const fake = new FakeBidi();
@@ -852,12 +851,10 @@ describe('AttemptNetwork', () => {
     let intercepts = 0;
     const answers: Record<string, (params: Record<string, unknown>) => { result: unknown }> = {
       'session.subscribe': () => ({ result: { subscription: 'subscription-1' } }),
-      'network.addDataCollector': () => ({ result: { collector: 'collector-2' } }),
       'network.addIntercept': () => ({ result: { intercept: `intercept-${(intercepts += 1)}` } }),
     };
     fake.on(method, (params) => {
-      const ours = method !== 'network.addDataCollector' || (params['dataTypes'] as string[]).includes('request');
-      if (ours && !failed) {
+      if (!failed) {
         failed = true;
         return { error: 'unknown error', message: 'install failed' };
       }
@@ -873,7 +870,6 @@ describe('AttemptNetwork', () => {
       await decisions.fallback();
     }));
     expect(fake.commands('session.subscribe')).toHaveLength(method === 'session.subscribe' ? 2 : 1);
-    expect(fake.commands('network.addDataCollector').filter((command) => (command.params['dataTypes'] as string[]).includes('request'))).toHaveLength(method === 'network.addDataCollector' ? 2 : 1);
     expect(fake.commands('network.addIntercept').map((command) => command.params)).toEqual([
       ...(method === 'network.addIntercept' ? [{ phases: ['beforeRequestSent'], contexts: ['tab'] }] : []),
       { phases: ['beforeRequestSent'], contexts: ['tab'] },
@@ -1156,10 +1152,8 @@ describe('AttemptNetwork', () => {
     await open('tab');
     await net.addRoute(route('**', async (_held, decisions) => decisions.fallback()));
     expect(fake.commands('network.addIntercept')).toHaveLength(1);
-    expect(fake.commands('network.addDataCollector').filter((command) => (command.params['dataTypes'] as string[]).includes('request'))).toHaveLength(1);
     await net.removeRoutes(() => true);
     expect(fake.commands('network.removeIntercept').map((command) => command.params['intercept'])).toEqual(['intercept-1']);
-    expect(fake.commands('network.removeDataCollector')).toHaveLength(1);
     contexts.created('scratch', 'user-1', null);
     const undo = await net.serveBlank('scratch');
     expect(fake.commands('network.addIntercept').at(-1)?.params).toEqual({ phases: ['beforeRequestSent'], contexts: ['tab', 'scratch'] });
@@ -1251,7 +1245,7 @@ describe('AttemptNetwork', () => {
 
     it('lets the request collector go of a held request’s body once the request is over', async () => {
       const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'a=1' } } });
-      const { net, open } = network(fake);
+      const { net, open } = network(fake, { browser: 'firefox' });
       await net.bind('user-1');
       await open('tab');
       await net.addRoute(route('**/api', async (_held, decisions) => decisions.continue({})));
@@ -1266,7 +1260,7 @@ describe('AttemptNetwork', () => {
 
     it('lets go of a posted body the server answered with a redirect to a page fetched without one', async () => {
       const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'a=1' } } });
-      const { net, open } = network(fake);
+      const { net, open } = network(fake, { browser: 'firefox' });
       await net.bind('user-1');
       await open('tab');
       await net.addRoute(route('**/api', async (_held, decisions) => decisions.continue({})));

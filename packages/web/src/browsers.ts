@@ -45,6 +45,13 @@ export interface BrowserTraits {
   /** Whether the body of a held navigation (a form submission) can be read; Chromium never answers for it. */
   readonly navigationBodies: boolean;
   /**
+   * Where the body of a held request is read: BiDi's request `collector`, or
+   * `cdp`. The Chromium mapper reports a body of bytes as the text of their
+   * base64 and sizes a Blob or a form with a file at nothing, so there the
+   * body comes from CDP's `Network.getRequestPostData`.
+   */
+  readonly requestBodies: 'collector' | 'cdp';
+  /**
    * Whether a mouse or wheel action first waits for the tab to be shown and
    * its document to have rendered a frame: the parent process hit-tests such
    * input against what the compositor shows.
@@ -84,6 +91,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     continueKeepsContentLength: false,
     continueRewritesUrl: true,
     navigationBodies: false,
+    requestBodies: 'cdp',
     pointerWaitsForFrame: false,
     windowClipsViewport: false,
     resendsPageCalls: false,
@@ -104,6 +112,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     continueKeepsContentLength: true,
     continueRewritesUrl: false,
     navigationBodies: true,
+    requestBodies: 'collector',
     pointerWaitsForFrame: true,
     windowClipsViewport: true,
     resendsPageCalls: true,

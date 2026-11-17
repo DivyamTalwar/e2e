@@ -3,12 +3,12 @@
  * request-stage pause reaches the mapper after the hop's
  * `Network.requestWillBeSent`, whichever Chrome sent first, a load the
  * renderer starts over is continued with what its first pause was continued
- * with, and a site icon's pauses, whose events the mapper drops, are
- * answered instead.
+ * with, a paused request's post data is answered from its pause, and a
+ * site icon's pauses, whose events the mapper drops, are answered instead.
  */
 
 import { describe, expect, it } from 'vitest';
-import { cdpFixups } from '../../src/driver/cdp-fixups.ts';
+import { cdpFixups, NO_POST_DATA, UNREPORTED_POST_DATA } from '../../src/driver/cdp-fixups.ts';
 
 const willBeSent = (requestId: string, sessionId = 's'): string => JSON.stringify({ method: 'Network.requestWillBeSent', sessionId, params: { requestId } });
 const redirected = (requestId: string, sessionId = 's'): string => JSON.stringify({ method: 'Network.requestWillBeSent', sessionId, params: { requestId, redirectResponse: { status: 302 } } });
@@ -206,5 +206,62 @@ describe('cdpFixups restarted loads', () => {
     const evaluate = { id: 9, method: 'Runtime.evaluate', params: { expression: '"Fetch.continueRequest"' }, sessionId: 's' };
     const { sent } = fix([willBeSent('r'), paused('r'), { mapper: JSON.stringify(evaluate) }, { mapper: JSON.stringify({ id: 10, method: 'Fetch.failRequest', params: { requestId: pauseId('r'), errorReason: 'Failed' }, sessionId: 's' }) }]);
     expect(sent).toEqual([evaluate, { id: 10, method: 'Fetch.failRequest', params: { requestId: pauseId('r'), errorReason: 'Failed' }, sessionId: 's' }]);
+  });
+});
+
+describe('cdpFixups request bodies', () => {
+  const base64 = (bytes: number[] | string): string => Buffer.from(bytes as never).toString('base64');
+  /** A request-stage pause of `networkId` whose request Chrome lists `entries` for, each its bytes or none; `undefined` for a request without a body. */
+  const posting = (networkId: string, entries: readonly (string | null)[] | undefined, hop = 0): string => paused(networkId, hop, 's', {
+    request: {
+      url: 'http://app.test/upload',
+      method: 'POST',
+      ...(entries === undefined ? {} : { hasPostData: true, postDataEntries: entries.map((bytes) => (bytes === null ? {} : { bytes })) }),
+    },
+  });
+  /** The mapper's `Network.getRequestPostData` for `requestId`. */
+  const asked = (requestId: string, sessionId = 's'): { mapper: string } => ({ mapper: JSON.stringify({ id: 11, method: 'Network.getRequestPostData', params: { requestId }, sessionId }) });
+  /** What the mapper received in answer to its command 11, parsed. */
+  const answer = (delivered: string[]): unknown => delivered.map((message) => JSON.parse(message) as { id?: number }).find((message) => message.id === 11);
+
+  it('answers the post data of a paused request with the bytes of every entry of its pause, and sends the browser nothing', () => {
+    const { delivered, sent } = fix([willBeSent('r'), posting('r', [base64('--b\r\n'), base64([0xff, 0x00, 0x41]), base64('\r\n--b--')]), asked('r')]);
+    expect(answer(delivered)).toEqual({ id: 11, result: { postData: Buffer.concat([Buffer.from('--b\r\n'), Buffer.from([0xff, 0x00, 0x41]), Buffer.from('\r\n--b--')]).toString('base64'), base64Encoded: true }, sessionId: 's' });
+    expect(sent).toEqual([]);
+  });
+
+  it('answers a request paused without a body as Chrome does', () => {
+    const { delivered, sent } = fix([willBeSent('r'), posting('r', undefined), asked('r')]);
+    expect(answer(delivered)).toEqual({ id: 11, error: { code: -32000, message: NO_POST_DATA }, sessionId: 's' });
+    expect(sent).toEqual([]);
+  });
+
+  it('answers a body with an entry that has no bytes, a file on disk or a stream, with the failure that names it', () => {
+    for (const entries of [[base64('--b'), null, base64('--b--')], [null]]) {
+      const { delivered, sent } = fix([willBeSent('r'), posting('r', entries), asked('r')]);
+      expect(answer(delivered)).toEqual({ id: 11, error: { code: -32000, message: UNREPORTED_POST_DATA }, sessionId: 's' });
+      expect(sent).toEqual([]);
+    }
+  });
+
+  it('answers a body of no entries as empty, and one Chrome names without listing its entries with the failure', () => {
+    const { delivered } = fix([willBeSent('r'), posting('r', []), asked('r')]);
+    expect(answer(delivered)).toEqual({ id: 11, result: { postData: '', base64Encoded: true }, sessionId: 's' });
+    const unlisted = paused('r', 0, 's', { request: { url: 'http://app.test/upload', method: 'POST', hasPostData: true } });
+    expect(answer(fix([willBeSent('r'), unlisted, asked('r')]).delivered)).toEqual({ id: 11, error: { code: -32000, message: UNREPORTED_POST_DATA }, sessionId: 's' });
+  });
+
+  it('answers with the body of the hop in flight once a redirect dropped or kept it', () => {
+    const dropped = fix([willBeSent('r'), posting('r', [base64('a=1')]), redirected('r'), posting('r', undefined, 1), asked('r')]);
+    expect(answer(dropped.delivered)).toEqual({ id: 11, error: { code: -32000, message: NO_POST_DATA }, sessionId: 's' });
+    const kept = fix([willBeSent('r'), posting('r', [base64('a=1')]), redirected('r'), posting('r', [base64('a=1')], 1), asked('r')]);
+    expect(answer(kept.delivered)).toMatchObject({ result: { postData: base64('a=1') } });
+  });
+
+  it('sends the browser the command for a request that is not paused: one never held, another session\'s, one whose load ended', () => {
+    const command = { id: 11, method: 'Network.getRequestPostData', params: { requestId: 'r' }, sessionId: 's' };
+    expect(fix([willBeSent('r'), asked('r')]).sent).toEqual([command]);
+    expect(fix([willBeSent('r', 'other'), posting('r', [base64('a=1')]).replace('"sessionId":"s"', '"sessionId":"other"'), asked('r')]).sent).toEqual([command]);
+    expect(fix([willBeSent('r'), posting('r', [base64('a=1')]), finished('r'), asked('r')]).sent).toEqual([command]);
   });
 });

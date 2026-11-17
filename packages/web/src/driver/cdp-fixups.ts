@@ -1,6 +1,6 @@
 /**
- * Fixes for four faults of the chromium-bidi mapper (still present in 159.0.8147), applied to
- * the CDP stream it reads and the commands it sends.
+ * Fixes for four faults of the chromium-bidi mapper (still present in 159.0.8147) and one of
+ * Chrome's, applied to the CDP stream the mapper reads and the commands it sends.
  *
  * Redirect pauses: Chrome sends a redirect hop's `Fetch.requestPaused` and
  * its `Network.requestWillBeSent` in either order, and the mapper handles a
@@ -34,7 +34,28 @@
  * an intercept covers it, so the request would stay paused with no driver
  * ever told. Its pauses are answered here, as the mapper answers a request no
  * intercept blocks, and never reach the mapper.
+ *
+ * Request bodies: Chrome answers `Network.getRequestPostData` from the
+ * renderer, which leaves a form's file read from disk out of the body
+ * without a word, and has no answer for a body that is one such file. The
+ * pause carries the body as the browser will send it (`postDataEntries`,
+ * one entry without bytes for each part it cannot report: a file on disk, a
+ * stream). For a request paused at the request stage the command is
+ * answered here from its pause, and never reaches the browser: the bytes of
+ * every entry, `NO_POST_DATA` for a request without a body, as Chrome
+ * answers, and `UNREPORTED_POST_DATA` when an entry has no bytes.
  */
+
+/** Chrome's own failure of `Network.getRequestPostData` for a request without a body. */
+export const NO_POST_DATA = 'No post data available for the request';
+
+/** The failure of `Network.getRequestPostData` for a paused request whose body has a part Chrome reports no bytes of. */
+export const UNREPORTED_POST_DATA = 'A part of the post data has no bytes';
+
+/** One part of a paused request's body, as `Fetch.requestPaused` lists it: its bytes in base64, or none Chrome reports. */
+interface PostDataEntry {
+  readonly bytes?: string;
+}
 
 /** What the fixups keep of one request of a CDP session, from its first event until its load ends. */
 interface RequestHops {
@@ -52,6 +73,8 @@ interface RequestHops {
   pauses: string[];
   /** What the mapper continued the first of `pauses` with, beside the id. */
   overrides?: Record<string, unknown>;
+  /** The body the latest of `pauses` reported, part by part, as one part without bytes when it listed none; undefined for a request without one. */
+  posted?: readonly PostDataEntry[];
 }
 
 /** The requests of one CDP session, by request id, and the ones a pause handed on belongs to, by Fetch id. */
@@ -71,7 +94,7 @@ interface CdpMessage {
     readonly sessionId?: string;
     readonly responseStatusCode?: number;
     readonly responseErrorReason?: string;
-    readonly request?: { readonly url?: string };
+    readonly request?: { readonly url?: string; readonly hasPostData?: boolean; readonly postDataEntries?: readonly PostDataEntry[] };
     readonly redirectResponse?: unknown;
   };
 }
@@ -104,10 +127,33 @@ function parse(message: string): CdpMessage {
   return JSON.parse(message) as CdpMessage;
 }
 
-/** A CDP command of the mapper's, whole, so it can be sent on with other parameters. */
-function parseCommand(message: string): { readonly method?: string; readonly sessionId?: string; readonly params?: Readonly<Record<string, unknown>> } {
+/** A CDP command the mapper sends. */
+interface CdpCommand {
+  readonly id?: number;
+  readonly method?: string;
+  readonly sessionId?: string;
+  readonly params?: Readonly<Record<string, unknown>>;
+}
+
+/** A CDP command of the mapper's, whole, so it can be sent on with other parameters, or answered. */
+function parseCommand(message: string): CdpCommand {
   // oxlint-disable-next-line e2e/no-unchecked-json -- the mapper's own serialized command; only optional fields are read
-  return JSON.parse(message) as { readonly method?: string; readonly sessionId?: string; readonly params?: Readonly<Record<string, unknown>> };
+  return JSON.parse(message) as CdpCommand;
+}
+
+/** The commands of the mapper's the fixups change or answer. */
+const SENT = ['"Fetch.continueRequest"', '"Network.getRequestPostData"'];
+
+/**
+ * What `Network.getRequestPostData` answers for a request paused with the
+ * body `posted`: its bytes, the failure Chrome answers a request without a
+ * body with, or the failure that tells a part has no bytes.
+ */
+function postDataAnswer(posted: readonly PostDataEntry[] | undefined): { readonly result: { readonly postData: string; readonly base64Encoded: true } } | { readonly error: { readonly code: number; readonly message: string } } {
+  if (posted === undefined) return { error: { code: -32000, message: NO_POST_DATA } };
+  const parts = posted.flatMap((entry) => (entry.bytes === undefined ? [] : [Buffer.from(entry.bytes, 'base64')]));
+  if (parts.length < posted.length) return { error: { code: -32000, message: UNREPORTED_POST_DATA } };
+  return { result: { postData: Buffer.concat(parts).toString('base64'), base64Encoded: true } };
 }
 
 /** Whether the mapper ignores every event of the request `message` pauses, its own rule. */
@@ -123,8 +169,10 @@ function isSiteIcon(message: CdpMessage): boolean {
  * hop, and none of a site icon's pauses, which are answered on `write`, the
  * mapper's CDP socket. `send` takes each command of the mapper's and writes
  * it, its continue of a restarted load with what the load's first pause was
- * continued with. Every other message passes through in order, unparsed
- * unless it names one of the events or the command the fixups depend on.
+ * continued with; its `Network.getRequestPostData` for a paused request is
+ * answered from the pause instead. Every other message passes through in
+ * order, unparsed unless it names one of the events or commands the fixups
+ * depend on.
  */
 export function cdpFixups(deliver: (message: string) => void, write: (message: string) => void): CdpFixups {
   const sessions = new Map<string, SessionRequests>();
@@ -146,8 +194,9 @@ export function cdpFixups(deliver: (message: string) => void, write: (message: s
   /**
    * Hands a request-stage pause on: to the mapper, or for a site icon,
    * straight back to the browser. One the mapper gets is kept by its Fetch
-   * id for the mapper's continue of it: a redirect hop's starts the hop in
-   * flight, any other joins the pauses that hop already has.
+   * id for the mapper's continue of it, with the body it reports: a
+   * redirect hop's starts the hop in flight, any other joins the pauses
+   * that hop already has.
    */
   const pause = (message: string, parsed: CdpMessage = parse(message)): void => {
     const { sessionId = '', params } = parsed;
@@ -166,6 +215,8 @@ export function cdpFixups(deliver: (message: string) => void, write: (message: s
       }
       hops.pauses.push(params.requestId);
       byPause.set(params.requestId, hops);
+      if (params.request?.hasPostData === true) hops.posted = params.request.postDataEntries ?? [{}];
+      else delete hops.posted;
     }
     deliver(message);
   };
@@ -229,13 +280,21 @@ export function cdpFixups(deliver: (message: string) => void, write: (message: s
     }
   };
   const send = (message: string): void => {
-    if (!message.includes('"Fetch.continueRequest"')) {
+    if (!SENT.some((method) => message.includes(method))) {
       write(message);
       return;
     }
     const parsed = parseCommand(message);
-    const pauseId = parsed.method === 'Fetch.continueRequest' ? parsed.params?.['requestId'] : undefined;
-    const hops = typeof pauseId === 'string' ? sessions.get(parsed.sessionId ?? '')?.byPause.get(pauseId) : undefined;
+    const requests = sessions.get(parsed.sessionId ?? '');
+    const named = parsed.params?.['requestId'];
+    if (parsed.method === 'Network.getRequestPostData' && typeof named === 'string') {
+      const paused = requests?.byId.get(named);
+      if (paused === undefined || paused.pauses.length === 0) write(message);
+      else deliver(JSON.stringify({ id: parsed.id, ...postDataAnswer(paused.posted), ...(parsed.sessionId === undefined ? {} : { sessionId: parsed.sessionId }) }));
+      return;
+    }
+    const pauseId = parsed.method === 'Fetch.continueRequest' ? named : undefined;
+    const hops = typeof pauseId === 'string' ? requests?.byPause.get(pauseId) : undefined;
     if (hops === undefined) {
       write(message);
       return;

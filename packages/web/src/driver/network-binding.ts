@@ -12,9 +12,11 @@ import type { Network, Storage } from 'webdriver-bidi-protocol';
 import { raceAbort } from '@e2e-dev/core/engine';
 import type { ContextTree } from './context-tree.ts';
 import { BidiError, releaseQuietly } from '../errors.ts';
+import { ChromiumCdp } from './cdp.ts';
+import { NO_POST_DATA, UNREPORTED_POST_DATA } from './cdp-fixups.ts';
 import type { BidiConnection, BidiEventParams } from './connection.ts';
 import { storeCookie } from './cookies.ts';
-import { RequestDecisions, type DecisionOptions, type DecisionRecord, type DecisionScope, type NetworkRoute } from './network-decisions.ts';
+import { RequestDecisions, type DecisionOptions, type DecisionRecord, type DecisionScope, type HeldBody, type NetworkRoute } from './network-decisions.ts';
 import { bytesOf, hasBody, headerRecord, stripHash } from './network-wire.ts';
 
 /** A finished response as a response wait reports it. */
@@ -29,8 +31,6 @@ export interface ObservedResponse {
 
 /** Everything the binding keeps of one request, from its first event until its last hop settles, its tab closes, or every wait that matched it read its body. */
 interface RequestRecord extends DecisionRecord {
-  /** The browsing context it came from, whose closing retires it. */
-  context: string;
   /** How many redirects led to its hop in flight, as the hop's `beforeRequestSent` said. */
   redirectCount?: number;
   /** Whether it counts as in flight for `networkidle`: a request of the attempt's tab that is no EventSource stream, between a hop's start and its settling. */
@@ -125,7 +125,8 @@ export class NetworkBinding implements DecisionScope {
    * blank-served tab, and basic-auth challenges for credentials or a browser
    * that would prompt; the request events are needed for either, and for the
    * idle count once the attempt is `tracking`; request bodies are collected
-   * for routes to read, and the HTTP cache is bypassed while there is a
+   * for routes to read, where the collector is what reads them
+   * (`requestBodies`), and the HTTP cache is bypassed while there is a
    * route, which sees only what asks the network. The subscription and its
    * listeners, the request and response collectors, the cache bypass, and
    * the intercepts are each checked on their own, so a step that failed
@@ -149,7 +150,7 @@ export class NetworkBinding implements DecisionScope {
         userContexts: [this.userContext],
       })).subscription;
     }
-    if (this.routes.length > 0) {
+    if (this.routes.length > 0 && this.options.traits.requestBodies === 'collector') {
       this.requestCollector ??= (await this.connection.send('network.addDataCollector', {
         dataTypes: ['request'],
         maxEncodedDataSize: MAX_COLLECTED_BODY,
@@ -347,14 +348,43 @@ export class NetworkBinding implements DecisionScope {
     return starts ? record : undefined;
   }
 
-  /** The body the request collector kept for `request`; undefined when there is no collector or it kept none (too large, a stream). */
-  async requestBody(request: string): Promise<Buffer | undefined> {
+  /**
+   * The body of held `request`, which came from `context`. Where the
+   * request collector reads it (`requestBodies`), a request BiDi sizes at
+   * nothing has none, and one the collector kept none of (too large, a
+   * stream, no collector in place yet) is lost. Chromium's is read over CDP
+   * (`pausedBody`).
+   */
+  async requestBody(request: Network.RequestData, context: string): Promise<Exclude<HeldBody, 'unreported'>> {
+    if (this.options.traits.requestBodies === 'cdp') return this.pausedBody(request, context);
+    if (!hasBody(request)) return 'none';
     const collector = this.requestCollector;
-    if (collector === undefined) return undefined;
+    if (collector === undefined) return 'lost';
     try {
-      return bytesOf((await this.connection.send('network.getData', { dataType: 'request', request, collector })).bytes);
+      return bytesOf((await this.connection.send('network.getData', { dataType: 'request', request: request.request, collector })).bytes);
     } catch (cause) {
-      if (cause instanceof BidiError && cause.error === 'no such network data') return undefined;
+      if (cause instanceof BidiError && cause.error === 'no such network data') return 'lost';
+      throw cause;
+    }
+  }
+
+  /**
+   * The body of `request`, paused in `context`, from CDP's
+   * `Network.getRequestPostData`, which the fixups in front of the mapper
+   * answer from the pause (`cdp-fixups.ts`): the bytes the browser will
+   * send, none for a request without a body, and unreadable when a part of
+   * it has no bytes the browser reports. A GET or HEAD carries no body, and
+   * is not asked for.
+   */
+  private async pausedBody(request: Network.RequestData, context: string): Promise<Buffer | 'none' | 'unreadable'> {
+    if (request.method === 'GET' || request.method === 'HEAD') return 'none';
+    try {
+      const cdp = await ChromiumCdp.forContext(this.connection, context);
+      const { postData, base64Encoded } = await cdp.send('Network.getRequestPostData', { requestId: request.request });
+      return Buffer.from(postData, base64Encoded ? 'base64' : 'utf8');
+    } catch (cause) {
+      if (cause instanceof BidiError && cause.message.includes(NO_POST_DATA)) return 'none';
+      if (cause instanceof BidiError && cause.message.includes(UNREPORTED_POST_DATA)) return 'unreadable';
       throw cause;
     }
   }
