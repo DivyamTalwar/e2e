@@ -37,6 +37,11 @@ function operation(): OperationContext {
   return attemptOperation('hung', { timeoutMs: BUDGET_MS });
 }
 
+/** An operation that sets a test up, on a page that answers: a first navigation of a new browser takes longer than the budget under test on a busy machine. */
+function setup(): OperationContext {
+  return attemptOperation('hung', { timeoutMs: 15_000 });
+}
+
 /**
  * Settles one call, or gives up on it a while after its budget: a call
  * still pending then is reported as such, so an unbounded one fails the test
@@ -92,9 +97,9 @@ describe('operations on a hung page', () => {
 
   /** Opens the busy page, observes it, and taps the button that starts the endless script. */
   async function freeze(): Promise<void> {
-    await engine.session!.open!(`${origin}/`, operation());
-    await engine.observe!(operation());
-    const [target] = await engine.locate!(byRole('button', 'Freeze'), operation());
+    await engine.session!.open!(`${origin}/`, setup());
+    await engine.observe!(setup());
+    const [target] = await engine.locate!(byRole('button', 'Freeze'), setup());
     const tap = await bounded(() => engine.perform!(target!.ref as NodeRef, { kind: 'tap' }, operation()));
     expect(tap.error).toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED' });
   }
@@ -174,8 +179,8 @@ describe('operations on a hung page', () => {
 
   it('keeps the reason the driver gives for a tap that cannot land, ahead of the deadline', async () => {
     await start();
-    await engine.session!.open!(`${origin}/covered`, operation());
-    const [target] = await engine.locate!(byRole('button', 'Pay'), operation());
+    await engine.session!.open!(`${origin}/covered`, setup());
+    const [target] = await engine.locate!(byRole('button', 'Pay'), setup());
     const tap = await bounded(() => engine.perform!(target!.ref as NodeRef, { kind: 'tap' }, operation()));
     expect(tap.error).toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('intercepts pointer events') });
   });
