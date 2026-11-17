@@ -32,7 +32,7 @@ export interface AttemptTab {
 export interface TabHost {
   /** Sets up `context` to be shown: the attempt's viewport, and with `front` the browser's focus. */
   prepare(context: string, front: boolean): Promise<void>;
-  /** Another tab is shown, or none: every ref and frame of the one shown before is forgotten, with its input state. */
+  /** Another tab is shown, or none: every ref and frame of the one shown before is forgotten. */
   forget(): void;
   /** Moves the recording to `context`, ending the one before; `closed` when that one closed on its own. */
   record(context: string | undefined, closed: boolean): Promise<void>;

@@ -1,7 +1,8 @@
 /**
  * Browser-wide events routed to the running BiDi attempt: context
  * ownership, user prompts through its dialog router (and never another
- * session's), and its app log.
+ * session's), its app log, and the input state it drops with a tab that
+ * closed.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -21,6 +22,7 @@ async function attempt(owners: ContextTree, userContext: string) {
   const added: string[] = [];
   const lines: string[] = [];
   const visited: string[] = [];
+  const forgotten: string[] = [];
   const session = {
     get context(): string | undefined {
       return session.tabs.active()?.context;
@@ -34,6 +36,7 @@ async function attempt(owners: ContextTree, userContext: string) {
     userContext: { visit: async (url: string) => void visited.push(url) },
     network: { addContext: async (context: string) => void added.push(context), removeContext: async () => undefined, retire: () => undefined },
     owns: (context: string | null | undefined) => context != null && owners.owner(context) === userContext,
+    input: { forget: (context: string) => void forgotten.push(context) },
   };
   session.tabs = new AttemptTabs({
     prepare: async () => undefined,
@@ -42,7 +45,7 @@ async function attempt(owners: ContextTree, userContext: string) {
     close: async () => undefined,
   });
   await session.tabs.own('tab');
-  return { session: session as unknown as BidiSession, state: session, log, added, latch, lines, visited };
+  return { session: session as unknown as BidiSession, state: session, log, added, latch, lines, visited, forgotten };
 }
 
 /** A user prompt event in `context`. */
@@ -108,6 +111,18 @@ describe('routeEvents', () => {
     off();
     fake.emit('log.entryAdded', entry('tab', 'after unsubscribe'));
     expect(log).toEqual([{ source: 'console', level: 'error', text: 'boom' }]);
+  });
+
+  it('drops the input state kept of a tab once it closed, a tab of a user context the attempt left too', async () => {
+    const fake = new FakeBidi();
+    const owners = new ContextTree();
+    const { session, forgotten } = await attempt(owners, 'mine');
+    routeEvents(fake.connection, owners, () => session);
+    for (const [context, userContext] of [['tab', 'mine'], ['old', 'replaced']]) {
+      fake.emit('browsingContext.contextCreated', { context, userContext, parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
+      fake.emit('browsingContext.contextDestroyed', { context, userContext, parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
+    }
+    expect(forgotten).toEqual(['tab', 'old']);
   });
 
   it('tells where the app went in event order, never the driver’s own navigations, names each frame and tab once as it joins the tabs, and visits every document it starts or lands at', async () => {

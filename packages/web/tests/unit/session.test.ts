@@ -1,4 +1,4 @@
-/** A BiDi session's own state: the input it sends (held keys through chords and modifier clicks until their `keyboard.up`, pressure, the viewport bound, what counts as dispatched, a fill included), refs a locate just proved, the tabs it opens and the ones it closes again, and the user contexts it removes or refuses to set up once the attempt closed. */
+/** A BiDi session's own state: the input it sends (held keys through chords and modifier clicks until their `keyboard.up`, pressure, the viewport bound, what each tab holds while another is shown, what counts as dispatched, a fill and a press on a node included), refs a locate just proved, the tabs it opens and the ones it closes again, and the user contexts it removes or refuses to set up once the attempt closed. */
 
 import { describe, expect, it, vi } from 'vitest';
 import { perform } from '../../src/driver/actions.ts';
@@ -234,6 +234,44 @@ describe('BidiInput.send', () => {
     expect(cdp.map((command) => [command.session, command.params.type, command.params.modifiers])).toEqual([['cdp', 'rawKeyDown', 8], ['cdp', 'keyUp', 8]]);
   });
 
+  it('keeps what each tab holds while another is shown: its keys, its button, and where its mouse is', async () => {
+    const fake = new FakeBidi().on('input.performActions', { result: {} });
+    const held = await session(fake);
+    const [first] = held.tabs.list();
+    await held.input.send([keySource('Shift', 'keyDown', false)]);
+    await held.input.send(pressDownSources(20, 30));
+    const second = await held.newTab();
+    expect(held.input.pointer).toEqual({ x: 0, y: 0 });
+    await held.input.send(clickSources(5, 5, { modifiers: ['Shift'] }));
+    expect(keyActions(fake).at(-1)!.filter((action) => action.value === SHIFT).map((action) => action.type)).toEqual(['keyDown', 'keyUp']);
+    await held.tabs.show(first!);
+    expect(held.input.pointer).toEqual({ x: 20, y: 30 });
+    await held.input.send([keySource('Shift+ArrowRight', 'press', true)]);
+    expect(keyActions(fake).at(-1)!.some((action) => action.value === SHIFT)).toBe(false);
+    await held.input.send(moveSources(40, 40));
+    const sent = fake.commands('input.performActions').at(-1)!.params as { context: string; actions: { actions: { pressure?: number }[] }[] };
+    expect([sent.context, sent.actions[0]!.actions[0]!.pressure]).toEqual(['tab', 0.5]);
+    await held.tabs.show(second);
+    expect(held.input.pointer).toEqual({ x: 5, y: 5 });
+  });
+
+  it('drops what a tab held once the browser says the tab is gone', async () => {
+    const fake = new FakeBidi().on('input.performActions', { result: {} });
+    const shared = await sharedSession(fake);
+    // The scripted browser gives the next tab the id of the one that closed, which no browser does: anything kept of the closed one would show in it.
+    const reopened = (): Reply => {
+      fake.emit('browsingContext.contextCreated', { context: 'tab-2', userContext: 'mine', parent: null });
+      return { result: { context: 'tab-2' } };
+    };
+    fake.on('browsingContext.create', reopened);
+    const closing = await shared.newTab();
+    await shared.input.send([keySource('Shift', 'keyDown', false)]);
+    await shared.tabs.close(closing);
+    await shared.newTab();
+    await shared.input.send([keySource('Shift', 'keyDown', false)]);
+    expect(keyActions(fake).at(-1)).toEqual([{ type: 'keyDown', value: SHIFT }]);
+  });
+
   it('forgets held keys with the tab that held them', async () => {
     const fake = new FakeBidi().on('input.performActions', { result: {} });
     const held = await session(fake);
@@ -251,9 +289,10 @@ describe('BidiInput.send', () => {
     ['a suppressible send the closed tab failed', 'input.performActions', { error: 'no such frame', message: 'Browsing context is gone' }, (input) => input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), unsuppressed)],
     ['a CDP key', 'goog:cdp.sendCommand', { result: {} }, (input) => input.key(fixtureKeyStroke('MediaPlayPause', 'keyDown'))],
     ['a drag event', 'goog:cdp.sendCommand', { result: {} }, (input) => input.dragEvent('drop', { x: 5, y: 5 }, { items: [], dragOperationsMask: 1 }, AbortSignal.timeout(500))],
-  ])('keeps what %s left in a tab that closed under it out of the tab shown next', async (_name, method, reply, send) => {
+  ])('keeps what %s left in a tab that closed under it out of the tab shown next, which has what it had', async (_name, method, reply, send) => {
     const fake = new FakeBidi().on('input.performActions', { result: {} }).on('goog:cdp.getSession', { result: { session: 'cdp' } }).on('goog:cdp.sendCommand', { result: {} });
     const held = await session(fake);
+    await held.input.send(moveSources(7, 9));
     await held.newTab();
     await held.input.send([keySource('Shift', 'keyDown', false)]);
     // The tab's close reaches the driver before the answer to the input that closed it.
@@ -265,7 +304,7 @@ describe('BidiInput.send', () => {
     fake.on(method, { result: {} });
     await held.tabs.settled();
     expect(held.context).toBe('tab');
-    expect(held.input.pointer).toEqual({ x: 0, y: 0 });
+    expect(held.input.pointer).toEqual({ x: 7, y: 9 });
     await held.input.key(fixtureKeyStroke('MediaPlayPause', 'keyDown'));
     expect(fake.commands('goog:cdp.sendCommand').at(-1)!.params['params']).toMatchObject({ modifiers: 0, autoRepeat: false });
     await held.input.send([keySource('Shift', 'keyDown', false)]);

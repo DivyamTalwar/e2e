@@ -72,7 +72,7 @@ export class BidiSession {
   readonly userContext: AttemptUserContext;
   /** The attempt's open tabs, in the order they opened. */
   readonly tabs: AttemptTabs;
-  /** The tab's keyboard and mouse, the only sender of input. */
+  /** The attempt's keyboard and mouse, the only sender of input, with what it left held in each tab. */
   readonly input: BidiInput;
   /** The calls into the attempt's documents: page functions, and the readers each document keeps. */
   readonly page: PageCalls;
@@ -140,7 +140,6 @@ export class BidiSession {
       forget: () => {
         this.refs.clear();
         this.frames.clear();
-        this.input.reset();
       },
       record: async (context, closed) => {
         if (closed) await this.video.contextClosed();
@@ -225,10 +224,10 @@ export class BidiSession {
   }
 
   /**
-   * Forgets every tab of the attempt at once, with the refs, frames, and
-   * input state of the shown one (`TabHost.forget`), then ends the
-   * recording while its tab can still flush it. The tabs are about to
-   * close: a failure between this and their close must not keep them open.
+   * Forgets every tab of the attempt at once, with the refs and frames of
+   * the shown one (`TabHost.forget`), then ends the recording while its tab
+   * can still flush it. The tabs are about to close: a failure between this
+   * and their close must not keep them open.
    */
   private async forgetTabs(): Promise<void> {
     this.tabs.clear();

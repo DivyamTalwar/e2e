@@ -1,8 +1,10 @@
 /**
  * Tabs in a real browser: a tab the app opens joins the tabs in the
- * background, `waitForPopup` and `switchTab` show one, and when the shown tab
- * closes, the tab that opened it is shown again. Driven through the engine
- * hooks the harness and the agent use, and the `browser` fixture's tab calls.
+ * background, `waitForPopup` and `switchTab` show one, when the shown tab
+ * closes, the tab that opened it is shown again, and each tab keeps the keys
+ * and buttons it holds and where its mouse is while another is shown.
+ * Driven through the engine hooks the harness and the agent use, and the
+ * `browser` fixture's tab calls.
  */
 
 import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
@@ -34,6 +36,11 @@ const PAGES: Readonly<Record<string, string>> = {
     <button onclick="window.open('/slow', '_blank'); window.close();">Hand off</button>`,
   '/nested': '<!doctype html><title>Nested</title><h1>Nested</h1><button onclick="window.close()">Close nested</button>',
   '/slow': '<!doctype html><title>Slow</title><h1>Slow</h1>',
+  '/input': `<!doctype html><title>Input</title><h1>Input</h1><script>
+    window.log = [];
+    for (const type of ['keydown', 'keyup']) addEventListener(type, (event) => log.push(type + ' ' + event.key + (event.shiftKey ? ' shifted' : '')), true);
+    addEventListener('mousedown', (event) => log.push('mousedown ' + event.clientX + ',' + event.clientY), true);
+  </script>`,
 };
 
 const HEADING = byRole('heading');
@@ -368,6 +375,38 @@ describe('tabs', () => {
       await browser.goto('/nested');
       expect(await browser.evaluate('document.cookie')).toBe('shared=yes');
       expect(browser.tabs()).toHaveLength(2);
+    });
+  });
+
+  it('a tab keeps the keys it holds and where its mouse is while another tab is shown, and the other tab has neither', async () => {
+    await withAttempt(async (_engine, browser) => {
+      /** The input events the shown tab logged since they were last read. */
+      const logged = (): Promise<string[]> => browser.evaluate<string[]>('window.log.splice(0)');
+      const [first] = browser.tabs();
+      await browser.goto('/input');
+      await browser.keyboard.down('Shift');
+      await browser.mouse.move(100, 120);
+      expect(await logged()).toEqual(['keydown Shift shifted']);
+      const second = await browser.newTab();
+      await browser.goto('/input');
+      await browser.keyboard.press('a');
+      await browser.mouse.move(30, 40);
+      await browser.mouse.down();
+      await browser.mouse.up();
+      expect(await logged()).toEqual(['keydown a', 'keyup a', 'mousedown 30,40']);
+      await first!.activate();
+      // Shift is still down here: a chord with it neither presses nor releases it, and the mouse presses where it was left.
+      await browser.keyboard.press('Shift+b');
+      await browser.keyboard.press('a');
+      await browser.mouse.down();
+      await browser.mouse.up();
+      await browser.keyboard.up('Shift');
+      await browser.keyboard.press('a');
+      expect(await logged()).toEqual(['keydown B shifted', 'keyup B shifted', 'keydown A shifted', 'keyup A shifted', 'mousedown 100,120', 'keyup Shift', 'keydown a', 'keyup a']);
+      await second.activate();
+      await browser.mouse.down();
+      await browser.mouse.up();
+      expect(await logged()).toEqual(['mousedown 30,40']);
     });
   });
 

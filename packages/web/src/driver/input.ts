@@ -1,8 +1,8 @@
 /**
- * The keyboard and mouse of one attempt's tab: the only sender of input,
+ * The keyboard and mouse of one attempt: the only sender of input,
  * WebDriver BiDi `input.performActions` and Chromium's CDP input commands
- * alike, and the keeper of what that input leaves behind (the keys and
- * buttons held, where the mouse is) and of how much input went out.
+ * alike, and the keeper of what that input leaves behind in each tab (the
+ * keys and buttons held, where the mouse is) and of how much input went out.
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -25,17 +25,21 @@ type HeldKey = { readonly via: 'bidi'; readonly value: string } | { readonly via
 export interface InputTarget {
   readonly connection: BidiConnection;
   readonly traits: BrowserTraits;
-  /** The tab input goes to; throws when none is open. */
+  /** The tab shown, which input goes to; throws when none is open. */
   readonly context: () => string;
   /** The viewport in CSS pixels, which every pointer target must lie in. */
   readonly viewport: () => Promise<ViewportSize>;
 }
 
 /**
- * The input state of one tab, which the browser keeps between calls and the
- * driver mirrors. One object for the tab's whole life: input records what it
- * leaves in the state it read, so input still in flight when its tab closes
- * changes nothing in the state of the tab shown next (`BidiInput.reset`).
+ * The input state of one tab, which the driver mirrors. Chromium and Firefox
+ * both keep it per top-level browsing context for as long as the tab is
+ * open, whichever tab is shown: a key or button held in one tab is not held
+ * in another, each tab's mouse starts at the origin, and a tab shown again
+ * still holds what it held and has its mouse where it was left. One object
+ * for the tab's whole life: input records what it leaves in the state it
+ * read, so input still in flight when its tab closes changes nothing in the
+ * state of the tab shown next.
  */
 class InputState {
   constructor(
@@ -103,9 +107,10 @@ interface InputWatch<V> {
   readonly suppressed: (verdict: V) => boolean;
 }
 
-/** The keyboard and mouse of one attempt's tab. */
+/** The keyboard and mouse of one attempt, which go to the tab it shows. */
 export class BidiInput {
-  private state = new InputState();
+  /** The state of each tab input went to, by its browsing context, until the tab closes (`forget`). */
+  private readonly states = new Map<string, InputState>();
   private total = 0;
   private cdpSession: { readonly context: string; readonly cdp: Promise<ChromiumCdp> } | undefined;
 
@@ -122,9 +127,24 @@ export class BidiInput {
     return this.total;
   }
 
-  /** Where the mouse last moved, which a viewport swipe wheels at. */
+  /** Where the shown tab's mouse last moved, which a viewport swipe wheels at; throws when no tab is open. */
   get pointer(): ViewportPoint {
     return this.state.pointer;
+  }
+
+  /** The state of the tab shown; throws when none is open. */
+  private get state(): InputState {
+    return this.stateOf(this.target.context());
+  }
+
+  /** The state of the tab `context`: nothing held and the mouse at the origin until input went to it. */
+  private stateOf(context: string): InputState {
+    let state = this.states.get(context);
+    if (state === undefined) {
+      state = new InputState();
+      this.states.set(context, state);
+    }
+    return state;
   }
 
   /** Counts a change the driver or the test's code makes in the page (a fill, a select, an evaluate), which may reach the app. */
@@ -147,10 +167,9 @@ export class BidiInput {
     operationDispatches.getStore()?.(-1);
   }
 
-  /** Forgets everything held and where the mouse was, with the tab that held them: the tab shown next gets a state of its own. */
-  reset(): void {
-    this.state = new InputState();
-    this.cdpSession = undefined;
+  /** Forgets what the tab `context` held and where its mouse was, once the browser closed it. */
+  forget(context: string): void {
+    this.states.delete(context);
   }
 
   /**
@@ -162,9 +181,9 @@ export class BidiInput {
    * sent once `signal` aborted.
    */
   async send(actions: readonly Input.SourceActions[], signal?: AbortSignal): Promise<void> {
-    const { sent, state, after } = await this.prepare(actions, signal);
+    const { context, sent, state, after } = await this.prepare(actions, signal);
     this.count();
-    await this.perform(sent);
+    await this.perform(context, sent);
     state.take(after);
   }
 
@@ -182,7 +201,7 @@ export class BidiInput {
    * own tab): that input was taken.
    */
   async sendSuppressible<V>(actions: readonly Input.SourceActions[], signal: AbortSignal, watch: InputWatch<V>): Promise<V> {
-    const { sent, state, after } = await this.prepare(actions, signal);
+    const { context, sent, state, after } = await this.prepare(actions, signal);
     let dispatched = false;
     let failure: { cause: unknown } | undefined;
     try {
@@ -190,7 +209,7 @@ export class BidiInput {
       signal.throwIfAborted();
       dispatched = true;
       this.count();
-      await this.perform(sent);
+      await this.perform(context, sent);
       state.take(after);
     } catch (cause) {
       failure = { cause };
@@ -201,10 +220,7 @@ export class BidiInput {
     } catch (cause) {
       throw failure === undefined ? cause : failure.cause;
     }
-    if (failure !== undefined) {
-      if (!dispatched || !(failure.cause instanceof BidiError && failure.cause.error === 'no such frame')) throw failure.cause;
-      state.take(after);
-    }
+    if (failure !== undefined && (!dispatched || !(failure.cause instanceof BidiError && failure.cause.error === 'no such frame'))) throw failure.cause;
     if (watch.suppressed(read)) this.takeBack();
     return read;
   }
@@ -221,9 +237,10 @@ export class BidiInput {
    * key is released the way it was pressed.
    */
   key(stroke: KeyStroke, signal?: AbortSignal): Promise<void> {
-    const modifiers = this.state.modifiers();
+    const state = this.state;
+    const modifiers = state.modifiers();
     if (this.target.traits.cdp) {
-      const pressed = new Set([...this.state.keys].filter(([, held]) => held.via === 'cdp').map(([code]) => code));
+      const pressed = new Set([...state.keys].filter(([, held]) => held.via === 'cdp').map(([code]) => code));
       const commands = chromiumKeyCommands(stroke, { held: modifiers, pressed, mac: process.platform === 'darwin' });
       if (commands !== undefined) return this.sendCdpKeys(commands, signal);
     }
@@ -283,17 +300,18 @@ export class BidiInput {
     return this.cdpSession.cdp;
   }
 
-  /** The sources as they go out, the tab's state they were read against, and what they leave of it (`after`) once the browser took them; refuses a pointer target outside the viewport. */
-  private async prepare(actions: readonly Input.SourceActions[], signal: AbortSignal | undefined): Promise<{ sent: Input.SourceActions[]; state: InputState; after: InputState }> {
+  /** The tab the sources go to, the sources as they go out, that tab's state they were read against, and what they leave of it (`after`) once the browser took them; refuses a pointer target outside the viewport. */
+  private async prepare(actions: readonly Input.SourceActions[], signal: AbortSignal | undefined): Promise<{ context: string; sent: Input.SourceActions[]; state: InputState; after: InputState }> {
     signal?.throwIfAborted();
     this.target.context();
     await this.checkInViewport(actions.flatMap(targets));
     if (this.target.traits.pointerWaitsForFrame && actions.some((source) => source.type !== 'key')) await this.framePresented();
     signal?.throwIfAborted();
-    const state = this.state;
+    const context = this.target.context();
+    const state = this.stateOf(context);
     const after = state.copy();
     const sent = actions.map((source) => (source.type === 'key' ? keepHeld(source, after) : source.type === 'pointer' ? withPressure(source, after) : source));
-    return { sent, state, after };
+    return { context, sent, state, after };
   }
 
   /**
@@ -318,9 +336,9 @@ export class BidiInput {
     await callFunction(connection, context, nextFrame, [], { awaitPromise: true });
   }
 
-  /** Sends sources to the tab. */
-  private async perform(actions: Input.SourceActions[]): Promise<void> {
-    await this.target.connection.send('input.performActions', { context: this.target.context(), actions });
+  /** Sends sources to the tab `context`. */
+  private async perform(context: string, actions: Input.SourceActions[]): Promise<void> {
+    await this.target.connection.send('input.performActions', { context, actions });
   }
 
   /**
