@@ -702,8 +702,10 @@ trees, on both platforms, without a device.
 - CI: `.github/workflows/spec.yml` runs lint, typecheck, and the testbed on
   Node 26, `pnpm test` on the newest Node 22, 24, and 26 and on the
   `engines.node` floors (22.22.3, 24.8.0), the CLI on Bun 1.4.3 and the
-  latest Bun, and `scripts/install-smoke.ts`, a fresh install of the packed
-  packages with pnpm 11 and 12; `benchmark.yml` runs the
+  latest Bun, `scripts/install-smoke.ts`, a fresh install of the packed
+  packages with pnpm 11 and 12, the testbed on Firefox (`testbed
+  (firefox)`), and `@e2e-dev/web`'s `lifecycle`, `keyboard`, and `tabs`
+  integration files on Windows (`web (windows)`); `benchmark.yml` runs the
   web benchmark's two suites; `mobile.yml` runs the mobile benchmark's on an
   iOS simulator and an Android emulator (KVM on x64 Linux); `docs.yml`
   checks the docs. All four run on pull requests and in the merge queue
@@ -724,12 +726,15 @@ trees, on both platforms, without a device.
   the Expo app on a cache miss, since main's caches are the ones every pull
   request restores. A new build input or benchmark dependency goes into
   `filters.yml` in the same change. Every workflow
-  pins actions by SHA; keep new actions SHA-pinned. Every job runs on
-  Blacksmith, like the e2e-inc repos. Linux jobs use
+  pins actions by SHA; keep new actions SHA-pinned. Linux and macOS jobs
+  run on Blacksmith, like the e2e-inc repos. Linux jobs use
   `blacksmith-4vcpu-ubuntu-2404` and macOS jobs `blacksmith-6vcpu-macos-26`;
-  keep new jobs on those labels. The one exception is the `release` job:
-  npm Trusted Publishing rejects OIDC tokens from self-hosted runners, and
-  Blacksmith counts as one, so it stays on `ubuntu-latest`.
+  keep new jobs on those labels. Two exceptions run on GitHub's own
+  runners. The `release` and `nightly` jobs of `release.yml` stay on
+  `ubuntu-latest`: npm Trusted Publishing rejects OIDC tokens from
+  self-hosted runners, and Blacksmith counts as one. `web (windows)` in
+  `spec.yml` runs on `windows-latest`: no workflow here names a Blacksmith
+  Windows label.
 - Commits follow Conventional Commits; PRs are squash-merged with the number in
   the subject.
 - PR titles and bodies follow the `writing-pr` skill
