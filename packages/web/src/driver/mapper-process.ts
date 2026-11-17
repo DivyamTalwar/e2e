@@ -143,12 +143,14 @@ async function serve(): Promise<void> {
     socket.addEventListener('error', () => reject(new Error(`CDP WebSocket ${headers === undefined ? url : new URL(url).origin} failed to open`)), { once: true });
   });
   socket.addEventListener('close', () => process.exit(0));
+  let readCdp: (message: string) => void = () => undefined;
+  const fixed = cdpFixups((message) => readCdp(message), (message) => socket.send(message));
   const cdpConnection = new MapperCdpConnection({
     setOnMessage: (handler) => {
-      const fixed = cdpFixups((message) => void handler(message), (message) => socket.send(message));
-      socket.addEventListener('message', (event) => fixed(String(event.data)));
+      readCdp = (message) => void handler(message);
+      socket.addEventListener('message', (event) => fixed.receive(String(event.data)));
     },
-    sendMessage: (message) => socket.send(message),
+    sendMessage: (message) => fixed.send(message),
     close: () => socket.close(),
   });
   const browserClient = await cdpConnection.createBrowserSession();

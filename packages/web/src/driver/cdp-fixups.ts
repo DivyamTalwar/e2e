@@ -1,6 +1,6 @@
 /**
- * Fixes for three faults of the chromium-bidi mapper (still present in 159.0.8147), applied to
- * the CDP stream it reads.
+ * Fixes for four faults of the chromium-bidi mapper (still present in 159.0.8147), applied to
+ * the CDP stream it reads and the commands it sends.
  *
  * Redirect pauses: Chrome sends a redirect hop's `Fetch.requestPaused` and
  * its `Network.requestWillBeSent` in either order, and the mapper handles a
@@ -8,8 +8,19 @@
  * pause lands on the previous hop, which already reported
  * `network.beforeRequestSent`, so the mapper continues the hop untouched and
  * never reports it, and a route's header overrides never reach the redirect.
- * Each such pause is held until its hop is sent. A request that never sends
- * `Network.requestWillBeSent` is never held.
+ * A redirect hop's pause names the pause of the hop before it
+ * (`redirectedRequestId`), and each such pause is held until its hop is
+ * sent. A request that never sends `Network.requestWillBeSent` is never held.
+ *
+ * Restarted loads: Chrome pauses a hop again, under a new Fetch id and with
+ * no new `Network.requestWillBeSent`, when the renderer starts the hop's
+ * load over. Blink does so for a web font: it asks the HTTP cache alone
+ * first, and on a miss loads the font again from the network. The mapper
+ * continues the second pause with no overrides, so what the first pause was
+ * continued with (a route's headers, the configured headers, a rewritten
+ * URL) never reaches the server. Such a pause names no
+ * `redirectedRequestId`: it is never held, and the mapper's continue of it
+ * is sent with what the mapper continued the hop's first pause with.
  *
  * Early response ExtraInfo: Chrome sends `Network.responseReceivedExtraInfo`
  * out of band, so the next hop's can arrive before the redirect's
@@ -25,13 +36,28 @@
  * intercept blocks, and never reach the mapper.
  */
 
-/** Counts, per request id of a CDP session, the hops sent and paused, the pauses waiting for their hop, and the current hop's response ExtraInfo and the next hops' held behind it. */
+/** What the fixups keep of one request of a CDP session, from its first event until its load ends. */
 interface RequestHops {
-  sent: number;
-  paused: number;
+  /** Whether a `Network.requestWillBeSent` announced any hop of it. */
+  sent: boolean;
+  /** How many redirect hops were announced, and how many of their pauses were handed on. */
+  redirects: number;
+  redirectPauses: number;
+  /** The redirect pauses waiting for their hop. */
   held: string[];
+  /** The response ExtraInfo events the hop in flight got, and the next hops' held behind them. */
   infos: number;
   heldInfos: string[];
+  /** The Fetch ids the hop in flight was paused under, oldest first: more than one once its load restarted. */
+  pauses: string[];
+  /** What the mapper continued the first of `pauses` with, beside the id. */
+  overrides?: Record<string, unknown>;
+}
+
+/** The requests of one CDP session, by request id, and the ones a pause handed on belongs to, by Fetch id. */
+interface SessionRequests {
+  readonly byId: Map<string, RequestHops>;
+  readonly byPause: Map<string, RequestHops>;
 }
 
 /** What the fixups read of a CDP message. */
@@ -41,12 +67,21 @@ interface CdpMessage {
   readonly params?: {
     readonly requestId?: string;
     readonly networkId?: string;
+    readonly redirectedRequestId?: string;
     readonly sessionId?: string;
     readonly responseStatusCode?: number;
     readonly responseErrorReason?: string;
     readonly request?: { readonly url?: string };
     readonly redirectResponse?: unknown;
   };
+}
+
+/** The mapper's CDP connection with the fixups applied, in both directions. */
+export interface CdpFixups {
+  /** Takes a message from the browser, and hands the mapper what it may read of it. */
+  readonly receive: (message: string) => void;
+  /** Takes a command of the mapper's, and sends the browser what it should get of it. */
+  readonly send: (message: string) => void;
 }
 
 const WATCHED = [
@@ -69,38 +104,72 @@ function parse(message: string): CdpMessage {
   return JSON.parse(message) as CdpMessage;
 }
 
+/** A CDP command of the mapper's, whole, so it can be sent on with other parameters. */
+function parseCommand(message: string): { readonly method?: string; readonly sessionId?: string; readonly params?: Readonly<Record<string, unknown>> } {
+  // oxlint-disable-next-line e2e/no-unchecked-json -- the mapper's own serialized command; only optional fields are read
+  return JSON.parse(message) as { readonly method?: string; readonly sessionId?: string; readonly params?: Readonly<Record<string, unknown>> };
+}
+
 /** Whether the mapper ignores every event of the request `message` pauses, its own rule. */
 function isSiteIcon(message: CdpMessage): boolean {
   return message.params?.request?.url?.endsWith('/favicon.ico') === true;
 }
 
 /**
- * Wraps the mapper's CDP message handler (`deliver`): each redirect hop's
- * request-stage `Fetch.requestPaused` reaches it after the hop's
- * `Network.requestWillBeSent`, and a site icon's pauses are answered on
- * `send`, the mapper's CDP socket, instead of reaching it. Every other
- * message passes through in order, unparsed unless it names one of the
- * events the fixups depend on.
+ * The mapper's CDP connection with the fixups on it. `receive` takes each
+ * message of the browser's and hands the mapper's handler (`deliver`) what
+ * it may read: a redirect hop's request-stage `Fetch.requestPaused` after
+ * the hop's `Network.requestWillBeSent`, a response ExtraInfo with its own
+ * hop, and none of a site icon's pauses, which are answered on `write`, the
+ * mapper's CDP socket. `send` takes each command of the mapper's and writes
+ * it, its continue of a restarted load with what the load's first pause was
+ * continued with. Every other message passes through in order, unparsed
+ * unless it names one of the events or the command the fixups depend on.
  */
-export function cdpFixups(deliver: (message: string) => void, send: (message: string) => void): (message: string) => void {
-  const sessions = new Map<string, Map<string, RequestHops>>();
+export function cdpFixups(deliver: (message: string) => void, write: (message: string) => void): CdpFixups {
+  const sessions = new Map<string, SessionRequests>();
   let nextId = FIRST_COMMAND_ID;
   const command = (sessionId: string, method: string, params: Record<string, unknown>): void => {
-    send(JSON.stringify({ id: nextId++, method, params, ...(sessionId === '' ? {} : { sessionId }) }));
+    write(JSON.stringify({ id: nextId++, method, params, ...(sessionId === '' ? {} : { sessionId }) }));
+  };
+  const requestsOf = (session: string): SessionRequests => {
+    let requests = sessions.get(session);
+    if (requests === undefined) sessions.set(session, (requests = { byId: new Map(), byPause: new Map() }));
+    return requests;
   };
   const hopsOf = (session: string, request: string): RequestHops => {
-    let requests = sessions.get(session);
-    if (requests === undefined) sessions.set(session, (requests = new Map()));
-    let hops = requests.get(request);
-    if (hops === undefined) requests.set(request, (hops = { sent: 0, paused: 0, held: [], infos: 0, heldInfos: [] }));
+    const { byId } = requestsOf(session);
+    let hops = byId.get(request);
+    if (hops === undefined) byId.set(request, (hops = { sent: false, redirects: 0, redirectPauses: 0, held: [], infos: 0, heldInfos: [], pauses: [] }));
     return hops;
   };
-  /** Hands a request-stage pause on: to the mapper, or for a site icon, straight back to the browser. */
+  /**
+   * Hands a request-stage pause on: to the mapper, or for a site icon,
+   * straight back to the browser. One the mapper gets is kept by its Fetch
+   * id for the mapper's continue of it: a redirect hop's starts the hop in
+   * flight, any other joins the pauses that hop already has.
+   */
   const pause = (message: string, parsed: CdpMessage = parse(message)): void => {
-    if (isSiteIcon(parsed) && parsed.params?.requestId !== undefined) command(parsed.sessionId ?? '', 'Fetch.continueRequest', { requestId: parsed.params.requestId });
-    else deliver(message);
+    const { sessionId = '', params } = parsed;
+    const hops = params?.networkId === undefined ? undefined : hopsOf(sessionId, params.networkId);
+    const redirect = params?.redirectedRequestId !== undefined;
+    if (hops !== undefined && redirect) hops.redirectPauses++;
+    if (isSiteIcon(parsed) && params?.requestId !== undefined) {
+      command(sessionId, 'Fetch.continueRequest', { requestId: params.requestId });
+      return;
+    }
+    if (hops !== undefined && params?.requestId !== undefined) {
+      const { byPause } = requestsOf(sessionId);
+      if (redirect) {
+        for (const id of hops.pauses.splice(0)) byPause.delete(id);
+        delete hops.overrides;
+      }
+      hops.pauses.push(params.requestId);
+      byPause.set(params.requestId, hops);
+    }
+    deliver(message);
   };
-  return (message) => {
+  const receive = (message: string): void => {
     if (!WATCHED.some((method) => message.includes(method))) {
       deliver(message);
       return;
@@ -113,11 +182,10 @@ export function cdpFixups(deliver: (message: string) => void, send: (message: st
     }
     if (method === 'Fetch.requestPaused' && params?.responseStatusCode === undefined && params?.responseErrorReason === undefined) {
       const hops = params?.networkId === undefined ? undefined : hopsOf(sessionId, params.networkId);
-      if (hops !== undefined && hops.sent > 0 && hops.paused >= hops.sent) {
+      if (hops !== undefined && params?.redirectedRequestId !== undefined && hops.sent && hops.redirectPauses >= hops.redirects) {
         hops.held.push(message);
         return;
       }
-      if (hops !== undefined) hops.paused++;
       pause(message, parsed);
       return;
     }
@@ -132,32 +200,53 @@ export function cdpFixups(deliver: (message: string) => void, send: (message: st
       return;
     }
     if (method === 'Network.responseReceived' || method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
-      const hops = params?.requestId === undefined ? undefined : sessions.get(sessionId)?.get(params.requestId);
+      const hops = params?.requestId === undefined ? undefined : sessions.get(sessionId)?.byId.get(params.requestId);
       for (const info of hops?.heldInfos.splice(0) ?? []) deliver(info);
     }
     deliver(message);
     if (method === 'Network.requestWillBeSent' && params?.requestId !== undefined) {
       const hops = hopsOf(sessionId, params.requestId);
-      if (params.redirectResponse !== undefined) {
-        hops.infos = 0;
-        const info = hops.heldInfos.shift();
-        if (info !== undefined) {
-          hops.infos++;
-          deliver(info);
-        }
+      hops.sent = true;
+      if (params.redirectResponse === undefined) return;
+      hops.infos = 0;
+      const info = hops.heldInfos.shift();
+      if (info !== undefined) {
+        hops.infos++;
+        deliver(info);
       }
-      hops.sent++;
+      hops.redirects++;
       const held = hops.held.shift();
-      if (held !== undefined) {
-        hops.paused++;
-        pause(held);
-      }
+      if (held !== undefined) pause(held);
     } else if ((method === 'Network.loadingFinished' || method === 'Network.loadingFailed') && params?.requestId !== undefined) {
       const requests = sessions.get(sessionId);
-      for (const held of requests?.get(params.requestId)?.held ?? []) pause(held);
-      requests?.delete(params.requestId);
+      const hops = requests?.byId.get(params.requestId);
+      if (requests === undefined || hops === undefined) return;
+      for (const held of hops.held.splice(0)) pause(held);
+      for (const id of hops.pauses) requests.byPause.delete(id);
+      requests.byId.delete(params.requestId);
     } else if (method === 'Target.detachedFromTarget' && params?.sessionId !== undefined) {
       sessions.delete(params.sessionId);
     }
   };
+  const send = (message: string): void => {
+    if (!message.includes('"Fetch.continueRequest"')) {
+      write(message);
+      return;
+    }
+    const parsed = parseCommand(message);
+    const pauseId = parsed.method === 'Fetch.continueRequest' ? parsed.params?.['requestId'] : undefined;
+    const hops = typeof pauseId === 'string' ? sessions.get(parsed.sessionId ?? '')?.byPause.get(pauseId) : undefined;
+    if (hops === undefined) {
+      write(message);
+      return;
+    }
+    if (hops.pauses[0] === pauseId) {
+      const { requestId: _requestId, ...overrides } = parsed.params ?? {};
+      hops.overrides = overrides;
+      write(message);
+      return;
+    }
+    write(JSON.stringify({ ...parsed, params: { ...hops.overrides, ...parsed.params } }));
+  };
+  return { receive, send };
 }
