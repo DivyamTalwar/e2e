@@ -2,7 +2,7 @@
 
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Deadline, EngineError, raceAbort } from '@e2e-dev/core/engine';
-import { isStale } from '../errors.ts';
+import { BidiError, isStale } from '../errors.ts';
 import { historyEntry, readyState } from '../in-page/document.ts';
 import type { BidiSession } from './session.ts';
 
@@ -139,7 +139,9 @@ export function reload(session: BidiSession, signal: AbortSignal): Promise<void>
  * Moves `delta` entries through the tab's history and waits until the
  * document reads complete on another entry than before: a new document, a
  * page restored from the back-forward cache, or the same document on an
- * entry the app pushed, whose URL may not differ.
+ * entry the app pushed, whose URL may not differ. With no entry that far in
+ * that direction the tab stays where it is, as when a person presses a
+ * greyed-out back button.
  */
 export function traverse(session: BidiSession, delta: number, timeoutMs: number, signal: AbortSignal): Promise<void> {
   return session.navigations.own(async () => {
@@ -147,7 +149,12 @@ export function traverse(session: BidiSession, delta: number, timeoutMs: number,
     const deadline = new Deadline(timeoutMs);
     const before = await landedEntry(session);
     signal.throwIfAborted();
-    await session.connection.send('browsingContext.traverseHistory', { context, delta });
+    try {
+      await session.connection.send('browsingContext.traverseHistory', { context, delta });
+    } catch (cause) {
+      if (cause instanceof BidiError && cause.error === 'no such history entry') return;
+      throw cause;
+    }
     for (;;) {
       const entry = await landedEntry(session);
       if (entry !== undefined && entry !== before) return;

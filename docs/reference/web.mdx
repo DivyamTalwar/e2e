@@ -458,7 +458,7 @@ await browser.goto('/dashboard', { waitUntil: 'networkidle' }); // default: 'loa
 #### `reload`, `back`, `forward`
 
 `reload` reloads the current document. `back` and `forward` navigate browser
-history once. All three wait for the document load. A back/forward-cache restore can reuse an already-loaded document.
+history once, and do nothing when there is no entry to go to. All three wait for the document load. A back/forward-cache restore can reuse an already-loaded document.
 Use locators and assertions to wait for app content.
 
 ```ts
@@ -469,7 +469,7 @@ await browser.back({ timeout: 10_000 });
 | Throws | When |
 | --- | --- |
 | `ACTION_FAILED` | The page did not load in time. |
-| `ENGINE_FAILURE` | The browser could not load the page, or `back` or `forward` has no history entry to go to. |
+| `ENGINE_FAILURE` | The browser could not load the page. |
 
 #### `url`, `title`
 
