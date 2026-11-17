@@ -161,24 +161,23 @@ export class AttemptTabs {
   /**
    * A top-level context closed. When it was the shown tab, its nearest open
    * opener is shown next, else the open tab shown most recently, at once;
-   * the recording follows in turn. Returns whether it was one of the tabs.
+   * the recording follows in turn.
    */
-  destroyed(context: string): boolean {
+  destroyed(context: string): void {
     this.unjoined.delete(context);
     const tab = this.find(context);
-    if (tab === undefined) return false;
+    if (tab === undefined) return;
     tab.closed = true;
     this.open.splice(this.open.indexOf(tab), 1);
     this.closes.get(tab)?.();
     this.closes.delete(tab);
-    if (this.showing !== tab) return true;
+    if (this.showing !== tab) return;
     const next = this.returnTo(tab);
     this.publish(next);
     void this.inTurn(async () => {
       if (next !== undefined && this.showing === next) await this.host.prepare(next.context, true);
       await this.host.record(next !== undefined && this.showing === next ? next.context : undefined, true);
     });
-    return true;
   }
 
   /** Forgets every tab, the shown one with them, as a restart or a new user context closes them all. */
