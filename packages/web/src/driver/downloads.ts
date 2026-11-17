@@ -69,8 +69,9 @@ export class AttemptDownloads {
    * trigger, the downloads, and reading each back; past it the wait stops
    * listening and fails, whatever the trigger is still doing, naming what it
    * still waited for. A canceled download fails the wait. Every download is
-   * read back before the first is written, so a wait that fails saves none:
-   * a file no step attached is never redacted. Refused before the trigger
+   * read back before the first is written, and a write that fails takes the
+   * ones before it along, so a wait that fails saves none: a file no step
+   * attached is never redacted. Refused before the trigger
    * runs when no download can be read back.
    */
   async save(count: number, trigger: () => Promise<void>, budget: OperationBudget): Promise<SavedDownload[]> {
@@ -114,11 +115,18 @@ export class AttemptDownloads {
           writes.push({ suggestedFilename, write: (absolute) => writeFileSync(absolute, bytes) });
         }
         signal.throwIfAborted();
-        return writes.map(({ suggestedFilename, write }) => {
-          const { relative, absolute } = this.artifacts.reserve('downloads', suggestedFilename, '');
-          write(absolute);
-          return { path: relative, absolutePath: absolute, suggestedFilename };
-        });
+        const saved: SavedDownload[] = [];
+        try {
+          for (const { suggestedFilename, write } of writes) {
+            const { relative, absolute } = this.artifacts.reserve('downloads', suggestedFilename, '');
+            saved.push({ path: relative, absolutePath: absolute, suggestedFilename });
+            write(absolute);
+          }
+        } catch (cause) {
+          for (const { absolutePath } of saved) rmSync(absolutePath, { force: true });
+          throw cause;
+        }
+        return saved;
       }, budget, (triggerMs) => {
         if (triggerMs === undefined) return new TestError('ACTION_FAILED', `the download trigger did not resolve within ${timeoutMs}ms`);
         if (slowRead !== undefined) return new TestError('ACTION_FAILED', slowRead);

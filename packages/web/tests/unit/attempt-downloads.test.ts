@@ -59,6 +59,18 @@ describe('AttemptDownloads.save', () => {
     expect(saved.map((file) => readFileSync(file.absolutePath, 'utf8'))).toEqual(['body of a.txt', 'body of b.txt']);
   });
 
+  it('keeps none of a wait whose second download cannot be written', async () => {
+    local = attemptDownloads();
+    const { dir } = local;
+    const wait = local.save(2, async () => {
+      writeFileSync(path.join(dir, 'a.txt'), 'body of a.txt');
+      download('a.txt', path.join(dir, 'a.txt'));
+      download('b.txt', path.join(dir, 'gone.txt'));
+    }, budget(1_000));
+    await expect(wait).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(kept()).toEqual([]);
+  });
+
   it('keeps nothing when its provider fails to read a later download back', async () => {
     const reads: string[] = [];
     const downloads = attemptDownloads({
