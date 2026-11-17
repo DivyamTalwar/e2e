@@ -6,6 +6,11 @@
 
 import { withDom, type Outcome } from './dom.ts';
 
+/** Whether an element is in the document, for an action that reads nothing else of it before it changes the page. */
+export function elementAttached(element: Element): Outcome {
+  return element.isConnected ? { kind: 'ok' } : { kind: 'detached' };
+}
+
 /**
  * Focuses an element, unless it is out of the document, where a key pressed
  * after would reach whatever else holds focus. One that takes no focus keeps

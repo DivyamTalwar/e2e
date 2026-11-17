@@ -10,12 +10,12 @@ import { routeEvents } from '../../src/driver/events.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
 import { elementShown } from '../../src/in-page/actionability.ts';
-import { fill, focus } from '../../src/in-page/edits.ts';
+import { elementAttached, fill, focus } from '../../src/in-page/edits.ts';
 import type { UserContextMode } from '../../src/driver/user-context.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
-import { BidiError } from '../../src/errors.ts';
+import { afterDispatch, BidiError, classify } from '../../src/errors.ts';
 import type { NodeRef } from '@e2e-dev/core/engine';
-import { FakeBidi, settle, type Reply } from '../helpers/bidi-fake.ts';
+import { FakeBidi, settle, type Reply, type SentCommand } from '../helpers/bidi-fake.ts';
 import type { ElementRef } from '../../src/driver/script.ts';
 
 const SHIFT = '';
@@ -379,6 +379,74 @@ describe('a press on a node', () => {
     await expect(pressing).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
     expect(fake.commands('input.performActions')).toEqual([]);
     expect(scope.dispatched).toBe(false);
+  });
+
+  const ok: Reply = { result: { type: 'success', realm: 'r', result: { type: 'object', value: [['kind', { type: 'string', value: 'ok' }]] } } };
+
+  /**
+   * Presses a key on a node an observation gave, on a page that answers its
+   * `focus` with `focused` and the read before it, where there is one, with
+   * `read`; counted by a scope of its own.
+   */
+  async function press(browser: BrowserName, focused: Reply, read: Reply = ok): Promise<{ fake: FakeBidi; scope: DispatchScope; failure: unknown }> {
+    const fake = new FakeBidi().on('input.performActions', { result: {} }).on('script.callFunction', (params) => (params['functionDeclaration'] === focus.toString() ? focused : read));
+    const held = await session(fake, browser);
+    held.refs.publish(new Map([['1', { element: { sharedId: 'e' } as ElementRef, context: 'tab' }]]));
+    const scope = new DispatchScope();
+    const failure = await scope.run(() => perform(held, { id: '1' } as NodeRef, { kind: 'press', key: 'a' }, 5_000, new AbortController().signal)).then(() => undefined, (cause: unknown) => cause);
+    return { fake, scope, failure };
+  }
+
+  /** The page calls of `fn` that `fake` got. */
+  const calls = (fake: FakeBidi, fn: { toString(): string }): SentCommand[] => fake.commands('script.callFunction').filter((command) => command.params['functionDeclaration'] === fn.toString());
+
+  // What Chromium answered for an element of a document a navigation replaced, settled and in flight: each time before the function ran.
+  it.each<Reply>([
+    { error: 'no such node', message: 'SharedId "f.1.d.2.e.3" belongs to different document. Current document is 4.' },
+    { error: 'no such node', message: 'SharedId "f.1.d.2.e.3" was not found.' },
+    { error: 'unknown error', message: 'Node with given id does not belong to the document' },
+  ])('fails stale, as never dispatched, when Chromium refused the node of a document a navigation replaced, and sends no key: %j', async (refusal) => {
+    const { fake, scope, failure } = await press('chromium', refusal);
+    expect(failure).toMatchObject({ code: 'NODE_STALE', retryable: true });
+    expect(fake.commands('input.performActions')).toEqual([]);
+    expect(scope.dispatched).toBe(false);
+  });
+
+  // What Chromium answered for a focus whose function ran and whose document, frame, or tab went away under it.
+  it.each<Reply>([
+    { error: 'unknown error', message: 'Inspected target navigated or closed' },
+    { error: 'unknown error', message: 'Cannot find context with specified id' },
+    { error: 'unknown error', message: 'Execution context was destroyed.' },
+    { error: 'no such frame', message: 'Browsing context is gone' },
+  ])('keeps a focus whose document went away under it counted, so it may have committed: %j', async (gone) => {
+    const { fake, scope, failure } = await press('chromium', gone);
+    expect(failure).toBeInstanceOf(BidiError);
+    expect(fake.commands('input.performActions')).toEqual([]);
+    expect(scope.dispatched).toBe(true);
+  });
+
+  it('keeps a focus Firefox refused the node of counted: Firefox sends a call again to the document that replaced the one it ran in', async () => {
+    const { fake, scope, failure } = await press('firefox', { error: 'no such node', message: 'The node with the reference e is not known' });
+    expect(failure).toMatchObject({ error: 'no such node' });
+    expect(fake.commands('input.performActions')).toEqual([]);
+    expect(scope.dispatched).toBe(true);
+  });
+
+  it('reads the node before it focuses it on Firefox, so one of a document a navigation replaced fails stale, as never dispatched', async () => {
+    const { fake, scope, failure } = await press('firefox', ok, { error: 'no such node', message: 'The node with the reference e is not known' });
+    expect(afterDispatch(classify(failure, 'press'), 'press', scope.dispatched)).toMatchObject({ code: 'NODE_STALE', retryable: true });
+    expect(calls(fake, elementAttached)).toHaveLength(1);
+    expect(calls(fake, focus)).toEqual([]);
+    expect(fake.commands('input.performActions')).toEqual([]);
+  });
+
+  it('focuses in one page call where the refusal of a node proves nothing ran, and in two on Firefox', async () => {
+    for (const [browser, reads] of [['chromium', 0], ['firefox', 1]] as const) {
+      const { fake, scope, failure } = await press(browser, ok);
+      expect(failure).toBeUndefined();
+      expect([calls(fake, elementAttached).length, calls(fake, focus).length, fake.commands('input.performActions').length]).toEqual([reads, 1, 1]);
+      expect(scope.dispatched).toBe(true);
+    }
   });
 });
 

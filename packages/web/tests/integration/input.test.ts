@@ -10,9 +10,12 @@
  * of the element's document saw may have committed, a fill fires its
  * events with the `Event` the page started with, a ref reused after input,
  * the hover of a swallowed click included, checks its locator again, a
- * fill still running in the page at its deadline may have committed, and a
+ * fill still running in the page at its deadline may have committed, a
  * press, a fill, or a select of an element the page took out of the
- * document is stale and changes nothing.
+ * document is stale and changes nothing, a press or a focus on a node of a
+ * document a navigation replaced is stale too, so a locator's press lands
+ * in the document that replaced it, and a press whose focus handler took
+ * its document away may have committed.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -21,7 +24,7 @@ import { bySelector, onFirefox, startWebSession, type WebSession } from '../help
 import { BidiConnection } from '../../src/driver/connection.ts';
 import { ROOT_NODE_ID } from '../../src/driver/observe.ts';
 import { callFunction } from '../../src/driver/script.ts';
-import { fill, selectOption } from '../../src/in-page/edits.ts';
+import { elementAttached, fill, focus, selectOption } from '../../src/in-page/edits.ts';
 
 const send = BidiConnection.prototype.send;
 
@@ -37,6 +40,21 @@ function beforeNext(fn: { toString(): string }, change: string): void {
     if (changed || call.functionDeclaration !== fn.toString()) return send.call(this, method, params);
     changed = true;
     return callFunction(this, call.target!.context!, `() => { ${change} }`).then(() => send.call(this, method, params));
+  });
+}
+
+/**
+ * Has the tab finish a navigation to `url` just before the driver's next
+ * call of the page function `fn`, as a page that navigates between a locate
+ * and the action after it.
+ */
+function navigatedBeforeNext(fn: { toString(): string }, url: string): void {
+  let navigated = false;
+  vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(function (this: BidiConnection, method, params) {
+    const call = params as { functionDeclaration?: unknown; target?: { context?: string } };
+    if (navigated || call.functionDeclaration !== fn.toString()) return send.call(this, method, params);
+    navigated = true;
+    return send.call(this, 'browsingContext.navigate', { context: call.target!.context!, url, wait: 'complete' }).then(() => send.call(this, method, params));
   });
 }
 
@@ -353,6 +371,74 @@ describe('input', () => {
     });
     await expect(page.engine.perform!(gone!.ref, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
     expect(await page.browser.evaluate('document.getElementById("kept").value')).toBe('');
+  });
+
+  it('fails a press and a focus on an observed node whose document a navigation replaced as stale, and sends its key to nothing', async () => {
+    await page.setContent('<button id=old>old</button>');
+    const old = (await page.nodes()).find((node) => node.name === 'old');
+    await page.setContent('<input id=kept>');
+    await page.browser.evaluate(() => {
+      document.getElementById('kept')!.focus();
+      return null;
+    });
+    await expect(page.engine.perform!(old!.ref, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    await expect(page.engine.perform!(old!.ref, { kind: 'focus' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    expect(await page.browser.evaluate('document.getElementById("kept").value')).toBe('');
+  });
+
+  it('presses a located field in the document a navigation replaced its own with since the locate', async () => {
+    const field = '<input id=i>';
+    await page.setContent(field);
+    // The first page call of a press: the focus on Chromium, whose refusal of the node proves nothing ran, and the read before it on Firefox.
+    navigatedBeforeNext(onFirefox ? elementAttached : focus, page.serve('/replaced-before-press', field));
+    await page.browser.locator('#i').press('x');
+    expect(await page.browser.evaluate('[location.pathname, document.getElementById("i").value]')).toEqual(['/replaced-before-press', 'x']);
+  });
+
+  it('fails a focus whose node Chromium refused as stale, and reports one Firefox refused as possibly committed', async () => {
+    const field = '<input id=i>';
+    await page.setContent(field);
+    const [located] = await page.locate(bySelector('#i'));
+    navigatedBeforeNext(focus, page.serve('/replaced-before-focus', field));
+    // Firefox sends a call again to the document that replaced the one it ran in, so its refusal may follow a focus that ran.
+    await expect(page.engine.perform!(located!.ref, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject(
+      onFirefox ? { code: 'ACTION_MAY_HAVE_COMMITTED', retryable: false } : { code: 'NODE_STALE', retryable: true },
+    );
+    expect(await page.browser.evaluate('[location.pathname, document.getElementById("i").value]')).toEqual(['/replaced-before-focus', '']);
+  });
+
+  it('reports a press whose focus handler navigated to another site and then blocked as possibly committed on Firefox, which answers it for the document that came after', async () => {
+    let release = (): void => undefined;
+    let handled = 0;
+    const held = new Promise<void>((resolve) => {
+      page.serve('/hold-focus', (_request, response) => {
+        handled += 1;
+        release = () => response.end();
+        resolve();
+      });
+    });
+    const other = page.serve('/after-focus', '<p>after</p>').replace('127.0.0.1', 'localhost');
+    await page.setContent(`<input id=i><script>
+      i.addEventListener('focus', () => {
+        location.href = ${JSON.stringify(other)};
+        const request = new XMLHttpRequest();
+        request.open('GET', '/hold-focus', false);
+        try { request.send(); } catch {}
+      });
+    </script>`);
+    const [field] = await page.locate(bySelector('#i'));
+    const press = page.engine.perform!(field!.ref, { kind: 'press', key: 'x' }, page.op());
+    await held;
+    try {
+      // The handler ran, and Firefox then answers the focus for the document the navigation led to, which refuses the node.
+      if (onFirefox) await expect(press).rejects.toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED' });
+    } finally {
+      release();
+    }
+    if (!onFirefox) await press;
+    expect(handled).toBe(1);
+    // The handler's navigation ends before the next test starts its own.
+    await expect.poll(() => page.browser.evaluate('location.pathname'), { timeout: 10_000 }).toBe('/after-focus');
   });
 
   it('fails a fill of a field the page replaced since its checks as stale, so the fill lands in the field that replaced it', async () => {

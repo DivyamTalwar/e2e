@@ -171,6 +171,24 @@ export async function unlessStale<T>(work: Promise<T>, fallback: T): Promise<T> 
 }
 
 /**
+ * `work`'s result, or `fallback` when the browser refused an element the
+ * page call was passed: BiDi's `no such node`, and CDP's word for a node of
+ * the document a navigation just replaced (`STALE_PATTERN`). Both are raised
+ * while the call's arguments are read, before its function runs, so nothing
+ * ran unless the browser sent the call twice
+ * (`BrowserTraits.resendsPageCalls`). A frame or document gone under the
+ * call is not this: its function may have run.
+ */
+export async function unlessRefused<T>(work: Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await work;
+  } catch (cause) {
+    if (cause instanceof BidiError && (cause.error === 'no such node' || /does not belong to the document/i.test(cause.detail))) return fallback;
+    throw cause;
+  }
+}
+
+/**
  * Runs cleanup whose failure changes nothing for the caller: releasing a
  * subscription, intercept, collector, or preload script that the browser
  * drops with its context or session anyway. Never for work whose outcome

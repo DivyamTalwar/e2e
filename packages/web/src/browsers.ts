@@ -50,6 +50,13 @@ export interface BrowserTraits {
    * input against what the compositor shows.
    */
   readonly pointerWaitsForFrame: boolean;
+  /**
+   * Whether the browser sends a page call again, to the document that
+   * replaced the one it was running in (Firefox's `remote.retry-on-abort`).
+   * Its refusal of an element then tells nothing of the call: the function
+   * may have run in the document that went away.
+   */
+  readonly resendsPageCalls: boolean;
   /** The permission names a target's `app.permissions` may grant. */
   readonly permissions: readonly string[];
 }
@@ -68,6 +75,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     continueRewritesUrl: true,
     navigationBodies: false,
     pointerWaitsForFrame: false,
+    resendsPageCalls: false,
     permissions: [
       'accelerometer', 'ambient-light-sensor', 'background-sync', 'camera', 'clipboard-read', 'clipboard-write',
       'geolocation', 'gyroscope', 'local-fonts', 'local-network-access', 'magnetometer', 'microphone', 'midi',
@@ -86,6 +94,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     continueRewritesUrl: false,
     navigationBodies: true,
     pointerWaitsForFrame: true,
+    resendsPageCalls: true,
     permissions: ['geolocation', 'local-network-access', 'notifications', 'persistent-storage', 'push', 'screen-wake-lock'],
   },
 };
