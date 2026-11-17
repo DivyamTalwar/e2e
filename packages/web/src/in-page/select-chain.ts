@@ -21,13 +21,14 @@ export type PagePart =
  * The elements a `>>` chain (`pageParts`) matches, each part evaluated inside
  * every element the part before it matched, as Playwright's engines read it.
  * CSS pierces open shadow roots: the last compound is queried natively in the
- * scope and in each shadow root under it, and the compounds before it are
- * matched right to left up the composed tree (`dom.parentOrHostOf`), memoized
- * per element and compound, with every combinator stopping at the scope
- * element, which only a `:scope` compound matches. XPath stays in the light
- * DOM, a leading `/` read from the scope element. The result is a set: its
- * order means nothing, and `locate` answers matches in its own. A selector
- * the page cannot parse is its error message.
+ * scope and in each shadow root under it, and matched against the scope
+ * element too, which a native query never answers; the compounds before it
+ * are matched right to left up the composed tree (`dom.parentOrHostOf`),
+ * memoized per element and compound, with every combinator stopping at the
+ * scope element, which only a `:scope` compound matches. XPath stays in the
+ * light DOM, a leading `/` read from the scope element. The result is a set:
+ * its order means nothing, and `locate` answers matches in its own. A
+ * selector the page cannot parse is its error message.
  */
 export function selectChain(dom: Dom, parts: readonly PagePart[]): Element[] | string {
   const queryCss = (scope: Document | Element, chains: readonly (readonly CssStep[])[], into: Set<Element>): void => {
@@ -74,6 +75,7 @@ export function selectChain(dom: Dom, parts: readonly PagePart[]): Element[] | s
       for (const root of roots) {
         for (const element of root.querySelectorAll(last.compound)) if (matchesBefore(element, chain.length - 1)) into.add(element);
       }
+      if (scope instanceof Element && matchesCompound(scope, last.compound) && matchesBefore(scope, chain.length - 1)) into.add(scope);
     }
   };
   const queryXpath = (scope: Document | Element, body: string, into: Set<Element>): void => {
