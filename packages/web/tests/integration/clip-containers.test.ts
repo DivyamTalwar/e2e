@@ -149,6 +149,20 @@ describe('clip containers', () => {
     expect(await title()).toBe('clicked');
   });
 
+  it.each([
+    'translate:0px',
+    'rotate:0deg',
+    'scale:1',
+    'contain:strict',
+    'contain:content',
+    'will-change:transform',
+    'backdrop-filter:blur(1px)',
+  ])('refuses a tap on a fixed target clipped by an overflow: hidden ancestor that %s makes its containing block', async (css) => {
+    await page.setContent(`<!doctype html><div style="margin-top:100px;overflow:hidden;width:200px;height:20px;${css}">${styled('position:fixed;top:-80px')}</div>`);
+    expect(await painted()).toBe(false);
+    await expectClipped();
+  });
+
   it('refuses a tap on a target clipped by the positioned box around a display: contents element', async () => {
     await page.setContent(`<!doctype html><div style="margin-top:100px;position:relative;overflow:hidden;height:20px"><div style="display:contents">${styled('position:absolute;top:-80px')}</div></div>`);
     expect(await painted()).toBe(false);

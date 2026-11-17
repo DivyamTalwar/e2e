@@ -142,6 +142,17 @@ export function createDom(key: string) {
   const layoutParentOf = (element: Element): Element | null => (inTopLayer(element) ? null : parentOf(element));
 
   /**
+   * Whether a box with `style` is the containing block of its `fixed` and
+   * `absolute` descendants whatever its `position`: one with a transform of
+   * any kind, a filter, a perspective, or layout or paint containment, or
+   * whose `will-change` names a property that would make it one.
+   */
+  const holdsPositioned = (style: CSSStyleDeclaration): boolean =>
+    [style.transform, style.translate, style.rotate, style.scale, style.perspective, style.filter, style.backdropFilter].some((value) => value !== undefined && value !== '' && value !== 'none')
+    || /\b(?:paint|layout|strict|content)\b/.test(style.contain)
+    || /\b(?:transform|translate|rotate|scale|perspective|filter|contain)\b/.test(style.willChange);
+
+  /**
    * The ancestors that clip the element's boxes, innermost first, each as
    * its box and the axes it clips on: those its used `overflow` is not
    * `visible` on. They are the flat-tree ancestors the element is laid out
@@ -160,9 +171,9 @@ export function createDom(key: string) {
     for (let at = layoutParentOf(element); at !== null; at = layoutParentOf(at)) {
       const style = getComputedStyle(at);
       if (style.display === 'contents') continue;
-      const transformed = style.transform !== 'none' || style.filter !== 'none' || style.perspective !== 'none' || style.contain.includes('paint') || style.contain.includes('layout');
-      if (position === 'fixed' && !transformed) continue;
-      if (position === 'absolute' && !transformed && style.position === 'static') continue;
+      const holds = holdsPositioned(style);
+      if (position === 'fixed' && !holds) continue;
+      if (position === 'absolute' && !holds && style.position === 'static') continue;
       position = style.position;
       if (viewportTakesOverflow(at)) continue;
       const [x, y] = [style.overflowX !== 'visible', style.overflowY !== 'visible'];
