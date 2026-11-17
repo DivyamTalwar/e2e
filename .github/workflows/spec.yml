@@ -51,6 +51,8 @@ jobs:
         run: pnpm check:dead-code
       - name: Typecheck packages
         run: pnpm typecheck
+      - name: Published types compile in a consumer's project
+        run: pnpm check:consumer-types
       - name: Error code reference
         run: pnpm docs:check-errors
       - name: Peer ranges on the runner
