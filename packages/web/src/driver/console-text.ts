@@ -7,6 +7,16 @@
  * wherever it says more. Either way an object shows its own first fields,
  * never a nested one's, and a line stays one line of bounded parts; the
  * harness redacts and clips the whole.
+ *
+ * The harness redacts a secret where its whole value stands, so a text a
+ * browser cut short is never printed in part. Chromium cuts every value
+ * inside a preview (`PropertyPreview.value`: a string, an error's message
+ * and stack, a regular expression, a symbol, a node, a class name) and
+ * every description of a BigInt down to `PREVIEW_CUT` characters, with an
+ * ellipsis in its middle or at its end. An argument's own value,
+ * description, and class name, a BigInt's `unserializableValue`, and a
+ * field's name come whole, as does every string of a BiDi remote value and
+ * Firefox's own text.
  */
 
 import type { Protocol } from 'devtools-protocol';
@@ -16,11 +26,12 @@ import type { Script } from 'webdriver-bidi-protocol';
 const MAX_SHOWN = 5;
 
 /**
- * The length from which Chromium cuts a string inside a preview. A string
- * that long is left out of the line: what is left of a secret the browser
- * cut would no longer match it, and so escape the harness's redaction.
+ * The length Chromium cuts a text inside a preview down to. One that long
+ * may be what is left of a longer one, and is left out of the line: what is
+ * left of a secret would no longer match it, and so escape the harness's
+ * redaction.
  */
-const PREVIEW_STRING_CUT = 100;
+const PREVIEW_CUT = 100;
 
 /** The first `MAX_SHOWN` of `parts`, with an ellipsis when there are more, or `more` says the browser left some out. */
 function listed(parts: readonly string[], more = false): string {
@@ -33,23 +44,31 @@ function quoted(text: string): string {
   return JSON.stringify(text);
 }
 
-/** One field, item, key, or value of a CDP preview, of `type` and printed by Chromium as `value`: a primitive as it is, a string quoted unless Chromium may have cut it, an object as its class name. */
-function previewValue(type: string, value: string | undefined): string {
-  if (type === 'string') return (value ?? '').length >= PREVIEW_STRING_CUT ? '"…"' : quoted(value ?? '');
+/**
+ * One field, item, key, or value of a CDP preview, of `type` and `subtype`
+ * and printed by Chromium as `text`: a primitive as it is, a string quoted,
+ * an error as its message and stack, any other object as its class name, a
+ * function as its type. A text of `PREVIEW_CUT` characters or more is left
+ * out, whole or not: a string reads as an elision mark, anything else as
+ * its subtype (`error`, `regexp`, `node`) or its type.
+ */
+function previewValue(type: string, subtype: string | undefined, text: string | undefined): string {
   if (type === 'function') return 'function';
-  return value ?? type;
+  if (text !== undefined && text.length >= PREVIEW_CUT) return type === 'string' ? '"…"' : (subtype ?? type);
+  if (type === 'string') return quoted(text ?? '');
+  return text ?? type;
 }
 
 /** A CDP preview of an object, array, map, or set as one bounded line; `name` is the class name it carries, none for a plain object or an array. */
 function previewText(preview: Protocol.Runtime.ObjectPreview, name: string): string {
   const prefix = name === '' ? '' : `${name} `;
   if (preview.entries !== undefined) {
-    const part = (side: Protocol.Runtime.ObjectPreview): string => previewValue(side.type, side.description);
+    const part = (side: Protocol.Runtime.ObjectPreview): string => previewValue(side.type, side.subtype, side.description);
     const entries = preview.entries.map((entry) => (entry.key === undefined ? part(entry.value) : `${part(entry.key)} => ${part(entry.value)}`));
     return `${prefix}{${listed(entries, preview.overflow)}}`;
   }
-  if (preview.subtype === 'array' || preview.subtype === 'typedarray') return `${prefix}[${listed(preview.properties.map((item) => previewValue(item.type, item.value)), preview.overflow)}]`;
-  return `${prefix}{${listed(preview.properties.map((property) => `${property.name}: ${previewValue(property.type, property.value)}`), preview.overflow)}}`;
+  if (preview.subtype === 'array' || preview.subtype === 'typedarray') return `${prefix}[${listed(preview.properties.map((item) => previewValue(item.type, item.subtype, item.value)), preview.overflow)}]`;
+  return `${prefix}{${listed(preview.properties.map((property) => `${property.name}: ${previewValue(property.type, property.subtype, property.value)}`), preview.overflow)}}`;
 }
 
 /**
@@ -57,7 +76,8 @@ function previewText(preview: Protocol.Runtime.ObjectPreview, name: string): str
  * prints, an error as its own description (its message and stack), a node
  * as its tag, an object as its class name (none for a plain one) with its
  * first fields, an array as its first items, a map or set with its size and
- * first entries.
+ * first entries. Each is read off what Chromium hands over whole: a BigInt
+ * off its `unserializableValue`, never its description.
  */
 function cdpText(object: Protocol.Runtime.RemoteObject): string {
   if (object.type === 'string') return String(object.value);

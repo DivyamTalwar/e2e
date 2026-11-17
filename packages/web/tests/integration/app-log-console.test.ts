@@ -5,18 +5,25 @@
  * whose format string and arguments do not pair up, and what each browser
  * hands over of a class instance. Chromium's lines come off its DevTools
  * protocol; Firefox's off `log.entryAdded`, which gives no class name and
- * labels its own lines as errors of the page.
+ * labels its own lines as errors of the page. A secret the run registered
+ * reaches the attempt's trace whole, where the harness redacts it, or not
+ * at all.
  */
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { AppLogEntry } from '@e2e-dev/core/engine';
 import { onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
+
+/** The secret the run registers as `API_KEY`. */
+const SECRET = 'sk_live_9f31c7a2d4e5';
 
 describe('app log console lines', () => {
   let page: WebSession;
   const entries: AppLogEntry[] = [];
   beforeAll(async () => {
-    page = await startWebSession({ timeoutMs: 10_000, startAttempt: false, attempt: { appLog: (entry) => entries.push(entry) } });
+    page = await startWebSession({ timeoutMs: 10_000, startAttempt: false, secrets: { API_KEY: SECRET }, attempt: { appLog: (entry) => entries.push(entry) } });
   });
   beforeEach(async () => {
     await page.startAttempt();
@@ -111,5 +118,30 @@ describe('app log console lines', () => {
     const [line] = await logged('console.log({ token: "tok-9f31c7a2", note: "n".repeat(150) + "tok-9f31c7a2" });', 1);
     // Chromium cuts a string of a preview at 100 characters, which would leave the head of a secret unredacted; Firefox gives it whole.
     expect(line!.text).toBe(onFirefox ? `{token: "tok-9f31c7a2", note: "${'n'.repeat(150)}tok-9f31c7a2"}` : '{token: "tok-9f31c7a2", note: "…"}');
+  });
+
+  it('leaves no part of a registered secret in the trace: one late in the message of an error inside an object or an array, in a long regular expression and symbol, and in an error logged on its own', async () => {
+    const failure = `new Error("x".repeat(91) + ${JSON.stringify(SECRET)})`;
+    const lines = await logged(`
+      console.error("save failed", { error: ${failure} });
+      console.error("retries", [${failure}]);
+      console.error("matched", { by: new RegExp("x".repeat(45) + ${JSON.stringify(SECRET)} + "x".repeat(60)), tag: Symbol("x".repeat(85) + ${JSON.stringify(SECRET)}) });
+      console.error("gave up", ${failure});
+    `, 4);
+    // Chromium cuts an error, a regular expression, and a symbol inside an object at 100 characters; BiDi hands Firefox nothing of an error or a symbol.
+    expect(lines.slice(0, 3).map((line) => line.text)).toEqual([
+      'save failed {error: error}',
+      'retries [error]',
+      onFirefox ? `matched {by: /${'x'.repeat(45)}${SECRET}${'x'.repeat(60)}/, tag: symbol}` : 'matched {by: regexp, tag: symbol}',
+    ]);
+    expect(lines[3]!.text).toMatch(new RegExp(`^gave up Error: x{91}${SECRET}`));
+    const trace = path.join(page.artifactsDir, 'trace.md');
+    await page.endAttempt();
+    const told = readFileSync(trace, 'utf8').split('\n').filter((line) => line.includes('console error'));
+    expect(told.filter((line) => line.includes('save failed {error: error}'))).not.toHaveLength(0);
+    expect(told.filter((line) => line.includes(`gave up Error: ${'x'.repeat(91)}<secret:API_KEY>`))).not.toHaveLength(0);
+    // Every part of the secret of four characters or more, its head and its tail alike, holds one of these.
+    const parts = Array.from({ length: SECRET.length - 3 }, (_, start) => SECRET.slice(start, start + 4));
+    expect(told.filter((line) => parts.some((part) => line.includes(part)))).toEqual([]);
   });
 });

@@ -19,6 +19,15 @@ function object(className: string, properties: Protocol.Runtime.PropertyPreview[
   return { type: 'object', className, description: className, preview: { type: 'object', description: className, overflow, properties } };
 }
 
+/** A secret a page logs, which the harness redacts only where it stands whole. */
+const SECRET = 'sk_live_9f31c7a2d4e5';
+
+/** `value` as Chromium cuts a string, a regular expression, or a BigInt over 100 characters inside a preview: its first 50, an ellipsis, its last 49. */
+const cutInMiddle = (value: string): string => `${value.slice(0, 50)}…${value.slice(-49)}`;
+
+/** `value` as Chromium cuts anything else over 100 characters inside a preview: its first 99 and an ellipsis. */
+const cutAtEnd = (value: string): string => `${value.slice(0, 99)}…`;
+
 describe('cdpConsoleText', () => {
   it('joins the arguments by spaces, each primitive as it prints', () => {
     expect(cdpConsoleText([text('plain'), number(1), { type: 'boolean', value: true }, { type: 'undefined' }, { type: 'object', subtype: 'null', value: null }, { type: 'number', unserializableValue: 'NaN' }, { type: 'bigint', unserializableValue: '12n' }, { type: 'symbol', description: 'Symbol(s)' }, { type: 'function', className: 'Function', description: '() => 1' }]))
@@ -72,9 +81,56 @@ describe('cdpConsoleText', () => {
   });
 
   it('leaves a string Chromium may have cut inside a preview out of the line, and keeps a shorter one whole', () => {
-    const cut = `${'n'.repeat(100)}…`;
-    expect(cdpConsoleText([object('Object', [{ name: 'note', type: 'string', value: cut }, { name: 'short', type: 'string', value: 'n'.repeat(99) }])])).toBe(`{note: "…", short: "${'n'.repeat(99)}"}`);
+    const fields: Protocol.Runtime.PropertyPreview[] = [
+      { name: 's99', type: 'string', value: 's'.repeat(99) },
+      { name: 's100', type: 'string', value: 's'.repeat(100) },
+      { name: 's101', type: 'string', value: cutInMiddle('s'.repeat(101)) },
+    ];
+    expect(cdpConsoleText([object('Object', fields)])).toBe(`{s99: "${'s'.repeat(99)}", s100: "…", s101: "…"}`);
     expect(cdpConsoleText([text('n'.repeat(500))])).toBe('n'.repeat(500));
+  });
+
+  it('never prints a part of what Chromium cut inside an object: an error, a regular expression, a symbol, a BigInt, a node, and a class name read as their type', () => {
+    const failure = `Error: 401 for https://api.test/v1/accounts/7f3c2a9e/sessions/current/save?retry=2&key=${SECRET}\n    at save (https://app.test/app.js:8:30)`;
+    const fields: Protocol.Runtime.PropertyPreview[] = [
+      { name: 'error', type: 'object', subtype: 'error', value: cutAtEnd(failure) },
+      { name: 'r', type: 'object', subtype: 'regexp', value: cutInMiddle(`/${'z'.repeat(40)}${SECRET}${'z'.repeat(60)}/`) },
+      { name: 's', type: 'symbol', value: cutAtEnd(`Symbol(${'q'.repeat(85)}${SECRET})`) },
+      { name: 'b', type: 'bigint', value: cutInMiddle(`1${'0'.repeat(200)}n`) },
+      { name: 'el', type: 'object', subtype: 'node', value: cutAtEnd(`div#${'i'.repeat(200)}`) },
+    ];
+    const line = cdpConsoleText([text('save failed'), object('Object', fields)]);
+    expect(line).toBe('save failed {error: error, r: regexp, s: symbol, b: bigint, el: node}');
+    expect(line).not.toContain(SECRET.slice(0, 4));
+    expect(cdpConsoleText([object('Object', [{ name: 'c', type: 'object', value: cutAtEnd('A'.repeat(200)) }, { name: 'f', type: 'function', value: '' }])])).toBe('{c: object, f: function}');
+    const items: Protocol.Runtime.PropertyPreview[] = [{ name: '0', type: 'object', subtype: 'error', value: cutAtEnd(failure) }];
+    expect(cdpConsoleText([{ type: 'object', subtype: 'array', className: 'Array', description: 'Array(1)', preview: { type: 'object', subtype: 'array', description: 'Array(1)', overflow: false, properties: items } }])).toBe('[error]');
+  });
+
+  it('keeps an error inside an object whole when Chromium cut nothing of it', () => {
+    const whole = 'Error: in array\n    at http://127.0.0.1:53589/throws:12:38';
+    expect(cdpConsoleText([object('Object', [{ name: 'e', type: 'object', subtype: 'error', value: whole }])])).toBe(`{e: ${whole}}`);
+  });
+
+  it('leaves a long key or value of a map or set out of the line, which Chromium hands over whole but for a BigInt', () => {
+    const entry = (type: Protocol.Runtime.ObjectPreview['type'], description: string, subtype?: Protocol.Runtime.ObjectPreview['subtype']): Protocol.Runtime.ObjectPreview => ({ type, ...(subtype === undefined ? {} : { subtype }), description, overflow: false, properties: [] });
+    const failure = `Error: ${'e'.repeat(85)}${SECRET}\n    at <anonymous>:7:14`;
+    const entries: Protocol.Runtime.EntryPreview[] = [
+      { key: entry('string', SECRET), value: entry('object', failure, 'error') },
+      { key: entry('string', 'k'.repeat(200)), value: entry('bigint', cutInMiddle(`1${'0'.repeat(200)}n`)) },
+      { key: entry('symbol', `Symbol(${'q'.repeat(200)})`), value: entry('function', 'function f() {}') },
+    ];
+    expect(cdpConsoleText([{ type: 'object', subtype: 'map', className: 'Map', description: 'Map(3)', preview: { type: 'object', subtype: 'map', description: 'Map(3)', overflow: false, properties: [{ name: 'size', type: 'number', value: '3' }], entries } }]))
+      .toBe(`Map(3) {"${SECRET}" => error, "…" => bigint, symbol => function}`);
+  });
+
+  it('prints an argument of its own whole, as Chromium hands it over: an error\'s message and stack, a BigInt off its unserializable value', () => {
+    const description = `Error: ${'m'.repeat(200)}${SECRET}\n    at <anonymous>:7:14`;
+    const preview: Protocol.Runtime.ObjectPreview = { type: 'object', subtype: 'error', description, overflow: false, properties: [{ name: 'stack', type: 'string', value: cutInMiddle(description) }, { name: 'message', type: 'string', value: cutInMiddle(`${'m'.repeat(200)}${SECRET}`) }] };
+    expect(cdpConsoleText([{ type: 'object', subtype: 'error', className: 'Error', description, preview }])).toBe(description);
+    const digits = `1${'0'.repeat(200)}n`;
+    expect(cdpConsoleText([{ type: 'bigint', unserializableValue: digits, description: cutInMiddle(digits) }])).toBe(digits);
+    expect(cdpConsoleText([{ type: 'symbol', description: `Symbol(${'q'.repeat(200)})` }])).toBe(`Symbol(${'q'.repeat(200)})`);
   });
 });
 
