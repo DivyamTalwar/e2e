@@ -578,7 +578,7 @@ test('renames the workspace', async ({ workspace, screen }) => {
 | 誤り | 失敗のタイミングと内容 |
 | --- | --- |
 | 関数を値に持つプレーンオブジェクトではない定義、空の名前、コアの名前（`agent`、`app`、`screen`、`platform`、`session`）、またはチェーン内の前の `extend` で定義済みの名前 | インポート時に、フィクスチャ名を示す `COLLECTION_ERROR` |
-| ターゲットのエンジンが提供する名前（Playwright ターゲットの `browser`） | 試行の `beforeEach` で `TEST_SETUP_FAILED` |
+| ターゲットのエンジンが提供する名前（Web ターゲットの `browser`） | 試行の `beforeEach` で `TEST_SETUP_FAILED` |
 | `use` を呼ばずに戻る定義 | 試行の `beforeEach` で `TEST_SETUP_FAILED` |
 | `use` を 2 回呼ぶ定義 | 試行の後処理で `TEST_SETUP_FAILED` |
 | `use` の前に例外をスローする定義 | 試行の `beforeEach` で、そのエラー |
