@@ -32,6 +32,20 @@ export interface Area {
 }
 
 /**
+ * An ancestor that clips an element's boxes: the box it clips them to
+ * (`clipEdge` in `createDom`), its border box, and the axes it clips on.
+ * The border box is as the browser reports it, so a box flush with it
+ * compares equal to it, where the edge is a sum that may differ from such
+ * a box by a rounding of floats.
+ */
+interface Clipper {
+  readonly edge: Area;
+  readonly bounds: DOMRect;
+  readonly x: boolean;
+  readonly y: boolean;
+}
+
+/**
  * Builds the helpers over the closed shadow roots recorded under `key`,
  * read when a helper runs, so roots recorded after the helpers were built
  * count too. Self-contained: its source is what `withDom` splices in.
@@ -142,30 +156,77 @@ export function createDom(key: string) {
   const layoutParentOf = (element: Element): Element | null => (inTopLayer(element) ? null : parentOf(element));
 
   /**
+   * Whether a box of `style` has layout containment (`layout`) or paint
+   * containment (`paint`) on (CSS Containment 2): its `contain` names the
+   * kind, or `strict` or `content`, which hold both, or its
+   * `content-visibility` is `auto` or `hidden`: `auto` turns layout, style,
+   * and paint containment on whether or not the box is on screen, and
+   * `hidden` every containment, as it skips its contents. Neither is on
+   * for a box that takes none: a non-atomic inline box, an internal table
+   * box other than a cell, an internal ruby box, and an element that lays
+   * out no box (`display: contents`).
+   */
+  const contains = (style: CSSStyleDeclaration, kind: 'layout' | 'paint'): boolean =>
+    !/^(?:inline(?: list-item)?|contents|none|ruby(?:-.*)?|table-(?:row|column|header|footer)(?:-group)?)$/.test(style.display)
+    && (['auto', 'hidden'].includes(style.contentVisibility) || style.contain.split(' ').some((value) => value === kind || value === 'strict' || value === 'content'));
+
+  /**
    * Whether a box with `style` is the containing block of its `fixed` and
    * `absolute` descendants whatever its `position`: one with a transform of
-   * any kind, a filter, a perspective, or layout or paint containment, or
-   * whose `will-change` names a property that would make it one.
+   * any kind, a filter, a perspective, or layout or paint containment
+   * (`contains`), or whose `will-change` names a property that would make
+   * it one.
    */
   const holdsPositioned = (style: CSSStyleDeclaration): boolean =>
     [style.transform, style.translate, style.rotate, style.scale, style.perspective, style.filter, style.backdropFilter].some((value) => value !== undefined && value !== '' && value !== 'none')
-    || /\b(?:paint|layout|strict|content)\b/.test(style.contain)
+    || contains(style, 'layout')
+    || contains(style, 'paint')
     || /\b(?:transform|translate|rotate|scale|perspective|filter|contain)\b/.test(style.willChange);
 
   /**
-   * The ancestors that clip the element's boxes, innermost first, each as
-   * its box and the axes it clips on: those its used `overflow` is not
-   * `visible` on. They are the flat-tree ancestors the element is laid out
-   * in, up to the top-layer element that holds it (`layoutParentOf`): one a
-   * `fixed` or `absolute` box is not laid out against clips nothing of it,
-   * nor does a `display: contents` one, which lays out no box to clip to or
-   * to lay a box out against, whatever its `position` or `transform`, nor
-   * one whose `overflow` the viewport takes (`viewportTakesOverflow`). A
-   * `display: contents` element's own boxes are its contents', laid out in
-   * its parent whatever its `position`.
+   * The box `at`, laid out on `bounds`, clips its content to: its padding
+   * box, and for a clip at the overflow clip edge (`margin`: `overflow:
+   * clip` and paint containment, CSS Overflow 3) the box its
+   * `overflow-clip-margin` names, the padding box when it names none, grown
+   * by that margin's length. Border, padding, and margin are scaled as the
+   * box is, by its laid-out size where it has one (an SVG element has
+   * none). It is read as a rectangle: what a `border-radius` rounds off a
+   * corner is left to the hit test at the action's point.
    */
-  const clippers = (element: Element): { bounds: DOMRect; x: boolean; y: boolean }[] => {
-    const found: { bounds: DOMRect; x: boolean; y: boolean }[] = [];
+  const clipEdge = (at: Element, style: CSSStyleDeclaration, bounds: DOMRect, margin: boolean): Area => {
+    const clipMargin = margin ? style.getPropertyValue('overflow-clip-margin') : '';
+    const box = /content-box|border-box/.exec(clipMargin)?.[0] ?? 'padding-box';
+    const grown = Number.parseFloat(/[\d.]+px/.exec(clipMargin)?.[0] ?? '') || 0;
+    /** How far inside the border box the edge sits on `side`, before scaling; negative where the margin puts it outside. */
+    const inset = (side: 'Top' | 'Right' | 'Bottom' | 'Left'): number =>
+      (box === 'border-box' ? 0 : Number.parseFloat(style[`border${side}Width`]) || 0) + (box === 'content-box' ? Number.parseFloat(style[`padding${side}`]) || 0 : 0) - grown;
+    const { offsetWidth, offsetHeight } = at as Element & Partial<Pick<HTMLElement, 'offsetWidth' | 'offsetHeight'>>;
+    const scaleX = offsetWidth ? bounds.width / offsetWidth : 1;
+    const scaleY = offsetHeight ? bounds.height / offsetHeight : 1;
+    return {
+      left: bounds.left + inset('Left') * scaleX,
+      top: bounds.top + inset('Top') * scaleY,
+      right: bounds.right - inset('Right') * scaleX,
+      bottom: bounds.bottom - inset('Bottom') * scaleY,
+    };
+  };
+
+  /**
+   * The ancestors that clip the element's boxes, innermost first
+   * (`Clipper`). One clips on the axes its used `overflow` is not `visible`
+   * on: its computed one, but `visible` for one whose `overflow` the
+   * viewport takes (`viewportTakesOverflow`), and with paint containment
+   * (`contains`) `clip` in place of `visible`, so such a box clips on both
+   * axes whatever its `overflow`. They are the flat-tree ancestors the
+   * element is laid out in, up to the top-layer element that holds it
+   * (`layoutParentOf`): one a `fixed` or `absolute` box is not laid out
+   * against clips nothing of it, nor does a `display: contents` one, which
+   * lays out no box to clip to or to lay a box out against, whatever its
+   * `position` or `transform`. A `display: contents` element's own boxes
+   * are its contents', laid out in its parent whatever its `position`.
+   */
+  const clippers = (element: Element): Clipper[] => {
+    const found: Clipper[] = [];
     const own = getComputedStyle(element);
     let position = own.display === 'contents' ? 'static' : own.position;
     for (let at = layoutParentOf(element); at !== null; at = layoutParentOf(at)) {
@@ -175,9 +236,15 @@ export function createDom(key: string) {
       if (position === 'fixed' && !holds) continue;
       if (position === 'absolute' && !holds && style.position === 'static') continue;
       position = style.position;
-      if (viewportTakesOverflow(at)) continue;
-      const [x, y] = [style.overflowX !== 'visible', style.overflowY !== 'visible'];
-      if (x || y) found.push({ bounds: at.getBoundingClientRect(), x, y });
+      const taken = viewportTakesOverflow(at);
+      const paint = contains(style, 'paint');
+      const [x, y] = [style.overflowX, style.overflowY].map((computed) => {
+        const used = taken ? 'visible' : computed;
+        return used === 'visible' && paint ? 'clip' : used;
+      });
+      if (x === 'visible' && y === 'visible') continue;
+      const bounds = at.getBoundingClientRect();
+      found.push({ edge: clipEdge(at, style, bounds, x === 'clip' || y === 'clip'), bounds, x: x !== 'visible', y: y !== 'visible' });
     }
     return found;
   };
@@ -193,14 +260,14 @@ export function createDom(key: string) {
     let top = Math.max(rect.top, 0);
     let right = Math.min(rect.right, width);
     let bottom = Math.min(rect.bottom, height);
-    for (const { bounds, x, y } of clippers(element)) {
+    for (const { edge, x, y } of clippers(element)) {
       if (x) {
-        left = Math.max(left, bounds.left);
-        right = Math.min(right, bounds.right);
+        left = Math.max(left, edge.left);
+        right = Math.min(right, edge.right);
       }
       if (y) {
-        top = Math.max(top, bounds.top);
-        bottom = Math.min(bottom, bounds.bottom);
+        top = Math.max(top, edge.top);
+        bottom = Math.min(bottom, edge.bottom);
       }
     }
     return (right - left) * (bottom - top) > 0.99 && right > left && bottom > top ? { left, top, right, bottom } : null;
@@ -228,11 +295,22 @@ export function createDom(key: string) {
   /** Not yet, for an element with no box a person could see. */
   const hidden: Outcome<never> = { kind: 'not-yet', reason: 'element is not visible' };
 
-  /** Whether the element shows, before anything about a pointer: attached, laying out a box, and not `visibility: hidden`. */
+  /**
+   * Whether a flat-tree ancestor with `content-visibility: hidden` skips the
+   * element: it keeps the box it was laid out with, and the browser neither
+   * paints it nor lets a pointer reach it, as the reader's `hidden` state
+   * has it (`isSkippedContent` in `read-semantics.ts`).
+   */
+  const skipped = (element: Element): boolean => {
+    for (let at = parentOf(element); at !== null; at = parentOf(at)) if (getComputedStyle(at).contentVisibility === 'hidden') return true;
+    return false;
+  };
+
+  /** Whether the element shows, before anything about a pointer: attached, laying out a box, not `visibility: hidden`, and not content the browser skips (`skipped`). */
   const shown = (element: Element): Outcome => {
     if (!element.isConnected) return { kind: 'detached' };
     const box = boxOf(element);
-    return box.width === 0 || box.height === 0 || getComputedStyle(element).visibility === 'hidden' ? hidden : { kind: 'ok' };
+    return box.width === 0 || box.height === 0 || getComputedStyle(element).visibility === 'hidden' || skipped(element) ? hidden : { kind: 'ok' };
   };
 
   /**

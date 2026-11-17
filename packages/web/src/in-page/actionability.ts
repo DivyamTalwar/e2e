@@ -69,8 +69,9 @@ export const scrollFrameIntoView = withDom((dom, frame: Element): void => {
 
 /**
  * Whether the element shows, as `actionPoint` reads it before anything
- * about a pointer: attached, laying out a box, and not `visibility: hidden`.
- * For an action that types or selects, which needs no point.
+ * about a pointer: attached, laying out a box, not `visibility: hidden`,
+ * and not content a `content-visibility: hidden` ancestor skips. For an
+ * action that types or selects, which needs no point.
  */
 export const elementShown = withDom((dom, element: Element): Outcome => dom.shown(element));
 
@@ -139,16 +140,16 @@ export function labelStandIn(node: Element): Outcome<{ label: HTMLLabelElement |
 /**
  * Scrolls an element into view as Playwright's `scrollIntoViewIfNeeded`
  * does: once it holds still for a frame, and only when some of it is out of
- * the viewport or an ancestor that clips it (`clippers` in `dom.ts`; to its
- * nearest edge there), one around its shadow host or the slot it is
- * assigned to included. In the viewport each axis follows Chromium's
- * center-if-needed, which Playwright's rect scroll uses: a box wholly out is
- * centred, a box partly out goes to its closest edge, start unless it is
- * smaller than the view and past its end or larger and short of it. Any
- * element with a box counts, a zero-sized or `visibility: hidden` one
- * included; a `display: contents` element counts by the boxes of its
- * contents. Not yet while nothing lays out a box (it may appear) or the box
- * moves.
+ * the viewport or the box of an ancestor that clips it (`clippers` in
+ * `dom.ts`; to its nearest edge there), one around its shadow host or the
+ * slot it is assigned to included. In the viewport each axis follows
+ * Chromium's center-if-needed, which Playwright's rect scroll uses: a box
+ * wholly out is centred, a box partly out goes to its closest edge, start
+ * unless it is smaller than the view and past its end or larger and short
+ * of it. Any element with a box counts, a zero-sized or `visibility:
+ * hidden` one included; a `display: contents` element counts by the boxes
+ * of its contents. Not yet while nothing lays out a box (it may appear) or
+ * the box moves.
  */
 export const scrollIntoViewIfNeeded = withDom(async (dom, element: Element): Promise<Outcome> => {
   if (!element.isConnected) return { kind: 'detached' };

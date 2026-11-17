@@ -5,7 +5,11 @@
  * none a positioned node could be laid out against. A top-layer element (a
  * modal dialog, an open popover, a fullscreen element) is laid out against
  * the viewport, so nothing around it clips what it holds. Everything else
- * with an `overflow` other than `visible` clips what is laid out in it.
+ * with an `overflow` other than `visible` clips what is laid out in it, and
+ * so does a box with paint containment (`contain`, `content-visibility`)
+ * whatever its `overflow`: each at its padding edge, or where its
+ * `overflow-clip-margin` puts the edge of an `overflow: clip` or a paint
+ * containment.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -50,15 +54,21 @@ const painted = (): Promise<boolean> => page.browser.evaluate(() => {
   return document.elementFromPoint(left + width / 2, top + height / 2) === button;
 });
 
-/** Taps the button, expecting the tap to find it clipped away until its budget ends. */
-async function expectClipped(): Promise<void> {
+/** Taps the button, expecting the tap to end its budget on `reason` with nothing clicked. */
+async function expectRefused(reason: string): Promise<void> {
   const [button] = await page.locate(bySelector('button'));
   await expect(page.engine.perform!(button!.ref, { kind: 'tap' }, page.op(2_000))).rejects.toMatchObject({
     code: 'NOT_ACTIONABLE',
-    message: expect.stringContaining('element is outside of the viewport'),
+    message: expect.stringContaining(reason),
   });
   expect(await title()).toBe('');
 }
+
+/** Taps the button, expecting the tap to find it clipped away until its budget ends. */
+const expectClipped = (): Promise<void> => expectRefused('element is outside of the viewport');
+
+/** The values that turn paint containment on. */
+const PAINT_CONTAINMENTS = ['contain:paint', 'contain:strict', 'contain:content', 'content-visibility:auto'];
 
 describe('clip containers', () => {
   it.each([
@@ -161,12 +171,96 @@ describe('clip containers', () => {
     'scale:1',
     'contain:strict',
     'contain:content',
+    'content-visibility:auto',
     'will-change:transform',
     'backdrop-filter:blur(1px)',
   ])('refuses a tap on a fixed target clipped by an overflow: hidden ancestor that %s makes its containing block', async (css) => {
     await page.setContent(`<!doctype html><div style="margin-top:100px;overflow:hidden;width:200px;height:20px;${css}">${styled('position:fixed;top:-80px')}</div>`);
     expect(await painted()).toBe(false);
     await expectClipped();
+  });
+
+  it.each([
+    'display:inline;contain:layout',
+    'display:inline;contain:paint',
+    'display:inline;content-visibility:auto',
+    'display:table-row;contain:strict',
+  ])('taps a fixed target past an overflow: hidden box when the box between them takes no containment: %s', async (css) => {
+    await page.setContent(`<!doctype html><div style="overflow:hidden;height:20px"><div style="${css}">${styled('position:fixed;top:100px')}</div></div>`);
+    expect(await painted()).toBe(true);
+    await page.act(bySelector('button'), { kind: 'tap' });
+    expect(await title()).toBe('clicked');
+  });
+
+  it.each(PAINT_CONTAINMENTS)('taps the part of a target that shows in a box with %s and no overflow of its own', async (css) => {
+    await page.setContent(`<!doctype html><div style="${css};height:10px">${BUTTON}</div>`);
+    expect(await painted()).toBe(false);
+    await page.act(bySelector('button'), { kind: 'tap' });
+    expect(await title()).toBe('clicked');
+  });
+
+  it.each(PAINT_CONTAINMENTS)('refuses a tap on a target a box with %s clips away, whatever its overflow', async (css) => {
+    await page.setContent(`<!doctype html><div style="margin-top:100px;${css}">${ABOVE}</div>`);
+    expect(await painted()).toBe(false);
+    await expectClipped();
+  });
+
+  it.each([
+    ['an inline box', 'display:inline'],
+    ['a table row', 'display:table-row'],
+  ])('taps a target outside %s with contain: paint, which takes no containment', async (_name, display) => {
+    await page.setContent(`<!doctype html><div style="margin-top:100px"><div style="${display};contain:paint">${ABOVE}</div></div>`);
+    expect(await painted()).toBe(true);
+    await page.act(bySelector('button'), { kind: 'tap' });
+    expect(await title()).toBe('clicked');
+  });
+
+  it('refuses a tap on a target outside the box of a root with paint containment, whose overflow the viewport still takes', async () => {
+    await page.setContent(`<!doctype html><style>html { contain: paint; height: 100px }</style><div style="height:300px"></div>${BUTTON}`);
+    expect(await painted()).toBe(false);
+    await expectClipped();
+  });
+
+  it.each(['contain:paint', 'overflow:hidden', 'overflow:clip'])('taps the part of a target inside the padding edge of a box with %s, past its border', async (css) => {
+    await page.setContent(`<!doctype html><div style="${css};height:40px;border:30px solid silver">${styled('position:relative;top:-18px')}</div>`);
+    await page.act(bySelector('button'), { kind: 'tap' });
+    expect(await title()).toBe('clicked');
+  });
+
+  it.each(['contain:paint', 'overflow:hidden', 'overflow:clip'])('refuses a tap on a target wholly under the border of a box with %s', async (css) => {
+    await page.setContent(`<!doctype html><div style="${css};height:40px;border:30px solid silver">${styled('position:relative;top:-30px')}</div>`);
+    expect(await painted()).toBe(false);
+    await expectClipped();
+  });
+
+  it.each(['contain:paint', 'overflow:clip'])('taps a target outside a box with %s, inside its overflow-clip-margin', async (css) => {
+    await page.setContent(`<!doctype html><div style="margin-top:100px;${css};overflow-clip-margin:30px">${styled('position:relative;top:-28px')}</div>`);
+    expect(await painted()).toBe(true);
+    await page.act(bySelector('button'), { kind: 'tap' });
+    expect(await title()).toBe('clicked');
+  });
+
+  it.each([
+    ['past the overflow-clip-margin of a box with contain: paint', 'contain:paint;overflow-clip-margin:30px', 'top:-80px'],
+    ['inside the overflow-clip-margin of a box with overflow: hidden, which has no use for one', 'overflow:hidden;overflow-clip-margin:30px', 'top:-28px'],
+    ['in the padding of a box with contain: paint whose overflow-clip-margin names its content box', 'contain:paint;overflow-clip-margin:content-box;padding-top:40px', 'top:-32px'],
+  ])('refuses a tap on a target %s', async (_name, css, target) => {
+    await page.setContent(`<!doctype html><div style="margin-top:100px;${css}">${styled(`position:relative;${target}`)}</div>`);
+    expect(await painted()).toBe(false);
+    await expectClipped();
+  });
+
+  it('scrolls to and taps a target past the placeholder size of a content-visibility: auto box below the fold', async () => {
+    await page.setContent(`<!doctype html><div style="height:2000px"></div><div style="content-visibility:auto;contain-intrinsic-size:auto 50px"><div style="height:400px"></div>${BUTTON}</div><div style="height:600px"></div>`);
+    await page.act(bySelector('button'), { kind: 'tap' });
+    expect(await title()).toBe('clicked');
+  });
+
+  it('refuses a tap on a target a content-visibility: hidden ancestor skips, as not visible, and reads it hidden', async () => {
+    await page.setContent(`<!doctype html><div style="content-visibility:hidden;height:40px">${BUTTON}</div>`);
+    expect(await painted()).toBe(false);
+    expect((await page.locate(bySelector('button')))[0]?.states?.hidden).toBe(true);
+    await expectRefused('element is not visible');
   });
 
   it('refuses a tap on a target clipped by the positioned box around a display: contents element', async () => {
