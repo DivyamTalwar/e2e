@@ -12,7 +12,8 @@ const TIMEOUT_MS = Number(process.env['E2E_WEB_TEST_TIMEOUT_MS'] ?? 30_000);
  * browser processes, so their concurrency is bounded: oversubscribing CPUs
  * starves them into timeouts that are indistinguishable from product failures.
  * The integration suite runs once on Chromium and once on Firefox; a test
- * gets its browser from `testBrowser` (`tests/helpers/web-session.ts`). A
+ * gets its browser from `testBrowser` (`tests/helpers/web-session.ts`), and
+ * each project sets it, whatever `E2E_WEB_BROWSER` the shell exports. A
  * file in `tests/integration/chromium/` runs on Chromium only: it attaches
  * to Chrome over CDP, reads Chrome's own accessibility tree, or installs
  * Chromium itself.
@@ -42,7 +43,7 @@ export default defineConfig({
           pool: 'forks',
         },
       },
-      { test: { ...integration, name: 'integration' } },
+      { test: { ...integration, name: 'integration', env: { E2E_WEB_BROWSER: 'chromium' } } },
       {
         test: {
           ...integration,

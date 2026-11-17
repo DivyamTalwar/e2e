@@ -253,13 +253,23 @@ describe('BidiVideo', () => {
 
 });
 
-/** A Chromium recorder of `tab` on `fake` whose CDP session never opens, with an ffmpeg that is never reached. */
-function unstartable(fake: FakeBidi, tab: RecordedTab): BidiVideo {
-  fake.on('goog:cdp.getSession', { error: 'unknown error', message: 'no CDP session for this tab' });
-  return new BidiVideo(fake.connection, BROWSER_TRAITS.chromium, mkdtempSync(path.join(tmpdir(), 'e2e-video-test-')), {}, { E2E_FFMPEG_PATH: process.execPath }, tab);
-}
-
 describe('a segment that cannot start', () => {
+  let artifactsDir: string;
+
+  beforeEach(() => {
+    artifactsDir = mkdtempSync(path.join(tmpdir(), 'e2e-video-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(artifactsDir, { recursive: true, force: true });
+  });
+
+  /** A Chromium recorder of `tab` on `fake` whose CDP session never opens, with an ffmpeg that is never reached. */
+  function unstartable(fake: FakeBidi, tab: RecordedTab): BidiVideo {
+    fake.on('goog:cdp.getSession', { error: 'unknown error', message: 'no CDP session for this tab' });
+    return new BidiVideo(fake.connection, BROWSER_TRAITS.chromium, artifactsDir, {}, { E2E_FFMPEG_PATH: process.execPath }, tab);
+  }
+
   it('lets a tab open when its segment cannot start, and reports the lost segment from stop once', async () => {
     const video = unstartable(new FakeBidi(), recordedTab().tab);
     await start(video);

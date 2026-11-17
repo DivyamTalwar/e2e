@@ -5,12 +5,13 @@
  * an attempt-scoped lease in the middle of the restart.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { EngineHandle } from '@e2e-dev/core/engine';
 import { web, type BrowserProvider } from '../../../src/index.ts';
-import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { launchRemoteChrome, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
 import { cleanup, initInfo, operation } from '../../helpers/web-session.ts';
@@ -46,6 +47,8 @@ describe('a restart in a leased browser’s own context', () => {
   let app: FixtureApp;
   let chrome: RemoteChrome;
   let artifactsDir: string;
+  let engine: EngineHandle | undefined;
+  const run = { runId: 'run-restart', targetName: 'web', env: {}, log: () => undefined };
 
   beforeAll(async () => {
     app = await startFixtureApp();
@@ -54,9 +57,16 @@ describe('a restart in a leased browser’s own context', () => {
   }, 60_000);
 
   afterAll(async () => {
-    await app?.close();
-    if (chrome !== undefined) await closeRemoteChrome(chrome);
-    if (artifactsDir !== undefined) rmSync(artifactsDir, { recursive: true, force: true });
+    await tearDownRemote({
+      ends: [
+        () => engine?.endAttempt!(cleanup(10_000)),
+        () => engine?.dispose!(cleanup(10_000)),
+        () => engine?.finish!({ ...run, ...cleanup(10_000) }),
+      ],
+      chrome,
+      closes: [() => app?.close()],
+      directories: [artifactsDir],
+    });
   });
 
   it('never leaves the browser without a page, and reopens the app in the new one', async () => {
@@ -66,8 +76,7 @@ describe('a restart in a leased browser’s own context', () => {
       acquire: async () => ({ id: 'lease-1', cdpEndpoint: chrome.endpoint }),
       release: async () => undefined,
     };
-    const engine = web({ browser: provider });
-    const run = { runId: 'run-restart', targetName: 'web', env: {}, log: () => undefined };
+    engine = web({ browser: provider });
     const prepared = await engine.prepare!({ ...run, projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, slots: 1, signal: new AbortController().signal, headed: false });
     const pages = await watchPages(chrome.endpoint);
     try {
@@ -86,9 +95,6 @@ describe('a restart in a leased browser’s own context', () => {
       expect((await engine.observe!(step())).location).toBe(`${app.url}/state`);
     } finally {
       pages.close();
-      await engine.endAttempt!(cleanup(10_000));
-      await engine.dispose!(cleanup(10_000));
-      await engine.finish!({ ...run, ...cleanup(10_000) });
     }
   }, 60_000);
 });

@@ -6,14 +6,14 @@
  * the exact shape a hosted-browser engine (a per-run cloud session) uses.
  */
 
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@e2e-dev/core/engine';
 import { web } from '../../../src/index.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
-import { closeRemoteChrome, debuggerUrl, launchRemoteChrome, recordGoodbyes, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { closeRemoteChrome, debuggerUrl, launchRemoteChrome, recordGoodbyes, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
 import { byRole, cleanup, initInfo, operation } from '../../helpers/web-session.ts';
 
@@ -29,10 +29,7 @@ describe('web engine over CDP', () => {
   }, 60_000);
 
   afterAll(async () => {
-    // beforeAll may have failed part-way; tear down only what exists.
-    await app?.close();
-    if (chrome !== undefined) await closeRemoteChrome(chrome);
-    if (artifactsDir !== undefined) rmSync(artifactsDir, { recursive: true, force: true });
+    await tearDownRemote({ chrome, closes: [() => app?.close()], directories: [artifactsDir] });
   });
 
   afterEach(() => {

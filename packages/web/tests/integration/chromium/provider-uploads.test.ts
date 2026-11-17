@@ -5,13 +5,13 @@
  * files, names, types, and events a person picking them would give it.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { EngineHandle, JsonValue, OperationContext } from '@e2e-dev/core/engine';
 import { web as webEngine, type BrowserProvider } from '../../../src/index.ts';
-import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { launchRemoteChrome, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
 import { browserFixture, bySelector, cleanup, initInfo, operation as attemptOperation } from '../../helpers/web-session.ts';
@@ -72,11 +72,15 @@ describe('uploads to a provider\'s browser', () => {
   });
 
   afterAll(async () => {
-    await engine?.dispose!(cleanup(10_000));
-    await engine?.finish!({ runId: 'run-uploads', targetName: 'web', env: {}, log: () => undefined, ...cleanup(10_000) });
-    await closeRemoteChrome(chrome);
-    await app.close();
-    rmSync(dir, { recursive: true, force: true });
+    await tearDownRemote({
+      ends: [
+        () => engine?.dispose!(cleanup(10_000)),
+        () => engine?.finish!({ runId: 'run-uploads', targetName: 'web', env: {}, log: () => undefined, ...cleanup(10_000) }),
+      ],
+      chrome,
+      closes: [() => app?.close()],
+      directories: [dir],
+    });
   });
 
   afterEach(async () => {

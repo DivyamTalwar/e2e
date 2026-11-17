@@ -9,7 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { aroundCapture, heldByCapture } from '../../helpers/capture-hooks.ts';
-import { closeRemoteChrome, installedChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { installedChrome, launchRemoteChrome, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startWebSession, type WebSession } from '../../helpers/web-session.ts';
 
 /** A block that blinks forever beside a secure field, in a page that records whether each `pageshow` restored it from the cache. */
@@ -33,9 +33,7 @@ describe('a document that leaves masked on a browser that keeps it in its back-f
   }, 60_000);
 
   afterAll(async () => {
-    vi.restoreAllMocks();
-    await session?.close();
-    if (chrome !== undefined) await closeRemoteChrome(chrome);
+    await tearDownRemote({ ends: [() => vi.restoreAllMocks(), () => session?.close()], chrome });
   });
 
   it('comes back from the cache unmasked and animating', async () => {

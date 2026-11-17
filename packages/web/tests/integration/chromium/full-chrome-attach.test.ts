@@ -7,13 +7,13 @@
  * fails without it, naming the install command.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@e2e-dev/core/engine';
 import { attachBrowser, web } from '../../../src/index.ts';
-import { closeRemoteChrome, debuggerUrl, installedChrome, launchRemoteChrome, recordGoodbyes, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { debuggerUrl, installedChrome, launchRemoteChrome, recordGoodbyes, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
 import { byRole, cleanup, initInfo, operation } from '../../helpers/web-session.ts';
@@ -32,9 +32,7 @@ describe('attaching to the pinned full Chrome over CDP', () => {
   }, 60_000);
 
   afterAll(async () => {
-    if (chrome !== undefined) await closeRemoteChrome(chrome);
-    await app?.close();
-    if (artifactsDir !== undefined) rmSync(artifactsDir, { recursive: true, force: true });
+    await tearDownRemote({ chrome, closes: [() => app?.close()], directories: [artifactsDir] });
   });
 
   afterEach(() => {

@@ -23,6 +23,43 @@ export async function closeRemoteChrome(chrome: Omit<RemoteChrome, 'endpoint'>):
   rmSync(chrome.userDataDir, { recursive: true, force: true });
 }
 
+/** What a suite that hosts a Chrome tears down, in the order it goes. */
+export interface RemoteTeardown {
+  /** Ends what drives the Chrome (an attempt, an engine, a session), in order, while it still answers. */
+  readonly ends?: readonly (() => unknown)[];
+  /** The Chrome, closed once nothing drives it; undefined when its launch never finished. */
+  readonly chrome: Omit<RemoteChrome, 'endpoint'> | undefined;
+  /** Closes the servers the Chrome held connections to, in order, once it is gone. */
+  readonly closes?: readonly (() => unknown)[];
+  /** The directories the suite made, removed last; one never made is undefined. */
+  readonly directories?: readonly (string | undefined)[];
+}
+
+/**
+ * Tears down a suite that hosts a Chrome so that the Chrome is always
+ * closed: every step runs whatever the ones before it did, and what failed
+ * is thrown only once all ran, one failure as it is and several as an
+ * `AggregateError`.
+ */
+export async function tearDownRemote({ ends = [], chrome, closes = [], directories = [] }: RemoteTeardown): Promise<void> {
+  const failures: unknown[] = [];
+  const run = async (step: () => unknown): Promise<void> => {
+    try {
+      await step();
+    } catch (cause) {
+      failures.push(cause);
+    }
+  };
+  for (const end of ends) await run(end);
+  if (chrome !== undefined) await run(() => closeRemoteChrome(chrome));
+  for (const close of closes) await run(close);
+  for (const directory of directories) {
+    if (directory !== undefined) await run(() => rmSync(directory, { recursive: true, force: true }));
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, `${String(failures.length)} teardown steps failed`);
+}
+
 /** How a BiDi session ends: `session.end` detaches and leaves the browser to its host, `browser.close` ends the browser with it. */
 const GOODBYES: ReadonlySet<string> = new Set(['session.end', 'browser.close']);
 

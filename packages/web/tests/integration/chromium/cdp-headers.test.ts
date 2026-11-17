@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, it } from 'vitest';
 import { connectBidiOverCdp } from '../../../src/driver/launch.ts';
-import { closeRemoteChrome, launchRemoteChrome } from '../../helpers/cdp-host.ts';
+import { launchRemoteChrome, tearDownRemote } from '../../helpers/cdp-host.ts';
 
 /** A TCP listener exposes a numeric port rather than a pipe path. */
 function isTcpAddress(value: ReturnType<Server['address']>): value is AddressInfo {
@@ -57,8 +57,7 @@ it('sends the headers with the CDP discovery, and never with the page\'s request
       await browser.close();
     }
   } finally {
-    await close(server);
-    await closeRemoteChrome(remote);
+    await tearDownRemote({ chrome: remote, closes: [() => close(server)] });
   }
 });
 

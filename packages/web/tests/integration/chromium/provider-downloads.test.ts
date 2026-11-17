@@ -8,14 +8,14 @@
  * refuses the wait before its trigger runs.
  */
 
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeAll, afterAll, describe, expect, it } from 'vitest';
 import type { EngineHandle, OperationContext } from '@e2e-dev/core/engine';
 import { web as webEngine, type BrowserProvider, type BrowserProviderScope } from '../../../src/index.ts';
-import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { launchRemoteChrome, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
 import { browserFixture, bySelector, cleanup, initInfo, operation as attemptOperation } from '../../helpers/web-session.ts';
@@ -64,12 +64,17 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
   });
 
   afterEach(async () => {
-    await engine?.endAttempt!(cleanup(10_000));
-    await engine?.dispose!(cleanup(10_000));
-    await engine?.finish!({ runId: 'run-downloads', targetName: 'web', env: {}, log: () => undefined, ...cleanup(10_000) });
-    if (chrome !== undefined) await closeRemoteChrome(chrome);
-    if (artifactsDir !== undefined) rmSync(artifactsDir, { recursive: true, force: true });
-    if (remoteDisk !== undefined) rmSync(remoteDisk, { recursive: true, force: true });
+    const ending = { engine, chrome, directories: [artifactsDir, remoteDisk] };
+    engine = chrome = artifactsDir = remoteDisk = undefined;
+    await tearDownRemote({
+      ends: [
+        () => ending.engine?.endAttempt!(cleanup(10_000)),
+        () => ending.engine?.dispose!(cleanup(10_000)),
+        () => ending.engine?.finish!({ runId: 'run-downloads', targetName: 'web', env: {}, log: () => undefined, ...cleanup(10_000) }),
+      ],
+      chrome: ending.chrome,
+      directories: ending.directories,
+    });
   });
 
   it.each([1, 2])('saves %i files on the browser disk through one trigger', async (count) => {

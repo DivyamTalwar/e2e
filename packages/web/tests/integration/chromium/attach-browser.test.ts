@@ -9,7 +9,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { attachBrowser } from '../../../src/index.ts';
-import { closeRemoteChrome, launchRemoteChrome, recordGoodbyes, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { launchRemoteChrome, recordGoodbyes, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { startPageServer, type PageServer } from '../../helpers/web-session.ts';
 
@@ -33,9 +33,7 @@ describe('attachBrowser', () => {
   }, 60_000);
 
   afterAll(async () => {
-    await app?.close();
-    await server?.close();
-    if (chrome !== undefined) await closeRemoteChrome(chrome);
+    await tearDownRemote({ chrome, closes: [() => app?.close(), () => server?.close()] });
   });
 
   afterEach(() => {
