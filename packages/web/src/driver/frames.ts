@@ -127,8 +127,7 @@ export async function childDocuments(connection: BidiConnection, context: string
   ]);
   const shown = new Set(windows);
   const admitted = (tree?.contexts[0]?.children ?? []).filter((child) => shown.has(child.context) && admits(child.url)).map((child) => child.context);
-  const scripted = await Promise.all(admitted.map((child) => unlessStale(hasScriptContext(connection, child), false)));
-  const readable = new Set(admitted.filter((_child, index) => scripted[index]));
+  const readable = new Set(await scriptedContexts(connection, admitted));
   return windows.map((child) => (child !== undefined && readable.has(child) ? child : undefined));
 }
 
@@ -145,9 +144,14 @@ async function hasScriptContext(connection: BidiConnection, context: string): Pr
   return realms.some((realm) => realm.type === 'window' && realm.sandbox === undefined);
 }
 
-/** Those of `contexts` whose document a call can be made into (`hasScriptContext`), in their order. */
+/**
+ * Those of `contexts` whose document a call can be made into
+ * (`hasScriptContext`), in their order. A context that went away since it
+ * was listed (a frame the page removed, a tab that closed) has no document
+ * to call into, so it is left out like one with no script context.
+ */
 export async function scriptedContexts(connection: BidiConnection, contexts: readonly string[]): Promise<string[]> {
-  const scripted = await Promise.all(contexts.map((each) => hasScriptContext(connection, each)));
+  const scripted = await Promise.all(contexts.map((each) => unlessStale(hasScriptContext(connection, each), false)));
   return contexts.filter((_each, index) => scripted[index]);
 }
 

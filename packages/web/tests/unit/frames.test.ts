@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LocatorExpression, SemanticNode } from '@e2e-dev/core/engine';
 import { ContextTree } from '../../src/driver/context-tree.ts';
-import { childDocuments, FrameRegistry, inViewport, pageParts, resolveFrames, splitFrames, placeInFrame } from '../../src/driver/frames.ts';
+import { childDocuments, FrameRegistry, inViewport, pageParts, resolveFrames, scriptedContexts, splitFrames, placeInFrame } from '../../src/driver/frames.ts';
 import { project, type Projection } from '../../src/driver/projection.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
@@ -182,6 +182,33 @@ describe('childDocuments', () => {
   it('fails on an answer that is no gone frame', async () => {
     const fake = new FakeBidi().on('script.callFunction', { error: 'unknown error', message: 'renderer crashed' });
     await expect(childDocuments(fake.connection, 'top', [new ElementRef('frame')], () => true)).rejects.toThrow('renderer crashed');
+  });
+});
+
+describe('scriptedContexts', () => {
+  /** A peer that answers the realms of each context as `answers` has them: its own window realm, a sandbox realm alone, or an error. */
+  function realmsOf(answers: Record<string, 'own' | 'sandbox' | { readonly error: string; readonly message?: string }>): FakeBidi {
+    return new FakeBidi().on('script.getRealms', (params) => {
+      const context = String(params['context']);
+      const answer = answers[context]!;
+      if (typeof answer === 'object') return answer;
+      return { result: { realms: [{ type: 'window', realm: 'r', origin: 'http://app.test', context, ...(answer === 'sandbox' ? { sandbox: 'e2e-frames' } : {}) }] } };
+    });
+  }
+
+  it('lists the contexts that take a call, in their order, without one that has no script context of its own', async () => {
+    const fake = realmsOf({ top: 'own', empty: 'sandbox', frame: 'own' });
+    await expect(scriptedContexts(fake.connection, ['top', 'empty', 'frame'])).resolves.toEqual(['top', 'frame']);
+  });
+
+  it('leaves out a context that went away since it was listed, as the browser answers for a frame the page removed', async () => {
+    const fake = realmsOf({ top: 'own', removed: { error: 'no such frame', message: 'Context removed not found' }, frame: 'own' });
+    await expect(scriptedContexts(fake.connection, ['top', 'removed', 'frame'])).resolves.toEqual(['top', 'frame']);
+  });
+
+  it('fails on an answer that is no gone context', async () => {
+    const fake = realmsOf({ top: 'own', frame: { error: 'unknown error', message: 'renderer crashed' } });
+    await expect(scriptedContexts(fake.connection, ['top', 'frame'])).rejects.toThrow('renderer crashed');
   });
 });
 
