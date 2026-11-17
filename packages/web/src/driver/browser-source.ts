@@ -23,7 +23,7 @@ import {
 import type { LeasedBrowsers, LeaseRecording } from '../provider.ts';
 import { ContextTree } from './context-tree.ts';
 import type { RemoteDownloads } from './downloads.ts';
-import { cancelled, releaseQuietly } from '../errors.ts';
+import { abortError, releaseQuietly } from '../errors.ts';
 import { routeEvents, SESSION_EVENTS } from './events.ts';
 import { connectBidiOverCdp, launchBidiBrowser, type BidiBrowser } from './launch.ts';
 import type { BrowserName } from '../browsers.ts';
@@ -68,7 +68,7 @@ export interface BrowserSource {
   finish(info: EngineFinishInfo): Promise<void>;
   /** Records the worker's run, before any browser is opened. */
   init(info: EngineInitInfo): void;
-  /** Opens one browser, failing `CANCELLED` once `request.signal` aborts at any stage. */
+  /** Opens one browser, failing once `request.signal` aborts at any stage: `CANCELLED`, or the deadline it aborted with. */
   open(request: BrowserRequestContext): Promise<BidiBrowser>;
   /** Gives back what `open` took for the attempt, in `attempt` scope; safe when it took nothing. */
   endAttempt(context: EngineCleanupContext): Promise<void>;
@@ -185,7 +185,7 @@ export function leaseSource(leases: LeasedBrowsers): BrowserSource {
  * or headers that are not strings, are refused by the name of its source.
  */
 function attach(source: string, resolved: unknown, signal: AbortSignal): Promise<BidiBrowser> {
-  if (signal.aborted) throw cancelled('browser connect cancelled');
+  if (signal.aborted) throw abortError(signal, 'browser connect');
   const target = typeof resolved === 'string' ? { endpoint: resolved } : resolved;
   const endpoint = typeof target === 'object' && target !== null ? Reflect.get(target, 'endpoint') : undefined;
   if (typeof endpoint !== 'string' || endpoint.trim() === '') {
@@ -228,7 +228,7 @@ export class BrowserHandle {
         BROWSER_OPEN_TIMEOUT_MS,
         () => new EngineError('OPERATION_TIMEOUT', `the browser did not take its event subscription and list its open contexts within ${BROWSER_OPEN_TIMEOUT_MS}ms`, { retryable: false }),
       );
-      if (signal.aborted) throw cancelled('the browser was no longer wanted once it opened');
+      if (signal.aborted) throw abortError(signal, 'browser open');
     } catch (cause) {
       unroute();
       await releaseQuietly(browser.close());

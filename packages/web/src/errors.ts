@@ -27,14 +27,17 @@ export function invalidState(text: string): EngineError {
   return new EngineError('INVALID_STATE', text, { retryable: false });
 }
 
-/** Work given up on because its caller cancelled it or no longer wants it. */
-export function cancelled(text: string, cause?: unknown): EngineError {
-  return new EngineError('CANCELLED', text, { retryable: false, ...(cause === undefined ? {} : { cause }) });
-}
-
-/** The error `signal` aborted with when it is an engine-owned deadline, else a plain cancellation of `label`. */
+/**
+ * What work on `label` given up on fails with, read off the `signal` it ran
+ * under: the deadline itself when an engine-owned one ended it
+ * (`OPERATION_TIMEOUT`), else `CANCELLED`, for a caller that cancelled it or
+ * no longer wants it. The one way the driver reports either, so a deadline
+ * never reads as a cancellation.
+ */
 export function abortError(signal: AbortSignal, label: string): EngineError {
-  return signal.reason instanceof EngineError && signal.reason.code === 'OPERATION_TIMEOUT' ? signal.reason : cancelled(`${label} cancelled`);
+  return signal.reason instanceof EngineError && signal.reason.code === 'OPERATION_TIMEOUT'
+    ? signal.reason
+    : new EngineError('CANCELLED', `${label} cancelled`, { retryable: false });
 }
 
 /** A BiDi error response, with the protocol's error code kept for classification. */

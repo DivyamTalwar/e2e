@@ -23,7 +23,7 @@ import {
   withTimeout,
 } from '@e2e-dev/core/engine';
 import { SECURE_FIELD_SELECTOR, type RawNodeData, type RawObservedNode } from '../in-page/read-node.ts';
-import { cancelled, isStale, releaseQuietly, unlessStale } from '../errors.ts';
+import { abortError, isStale, releaseQuietly, unlessStale } from '../errors.ts';
 import { childDocuments, inViewport, pageParts, placeInFrame, resolveFrames, scriptedContexts, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
 import { computedStyle, domReady } from '../in-page/document.ts';
 import { maskSecureFields, unmaskSecureFields } from '../in-page/mask.ts';
@@ -103,9 +103,9 @@ async function observeTree(
   options: EngineObserveOptions | undefined,
 ): Promise<EngineSnapshot> {
   const captured = await captureTree(session, context, [], MAX_OBSERVED_NODES, deadline);
-  if (signal.aborted) throw cancelled('observe cancelled');
+  if (signal.aborted) throw abortError(signal, 'observe');
   const pixels = options?.pixels === true ? await maskedPixels(session, viewport, signal).then((value) => value, () => undefined) : undefined;
-  if (signal.aborted) throw cancelled('observe cancelled');
+  if (signal.aborted) throw abortError(signal, 'observe');
   session.refs.publish(captured.generation);
   return {
     location: await session.currentUrl(),

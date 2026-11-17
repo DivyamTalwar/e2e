@@ -25,7 +25,7 @@ import {
   type ProviderRecordContext,
   type ProviderRecording,
 } from '@e2e-dev/core/engine';
-import { abortError, cancelled, invalidState, message } from './errors.ts';
+import { abortError, invalidState, message } from './errors.ts';
 
 /**
  * How long a lease lives. `worker` (the default) is one browser per worker
@@ -497,7 +497,7 @@ export class LeasedBrowsers {
     const lease = await this.acquire({ runId: run.runId, targetName: run.targetName, slot: run.slot, slots: run.slots, env: run.env, signal, log: run.log });
     if (signal.aborted || this.tenure !== tenure) {
       await this.provider.release(lease, this.releaseContext(run, signal)).catch(discard);
-      throw cancelled(`browser lease from "${this.provider.name}" arrived after the worker gave up; released`);
+      throw abortError(signal, `browser lease from "${this.provider.name}"`);
     }
     this.current = { lease, owned: true };
     this.attached = true;
@@ -534,7 +534,7 @@ export class LeasedBrowsers {
     });
     if (context.signal.aborted || this.opened !== opened) {
       await this.provider.release(lease, this.releaseContext(run, context.signal)).catch(discard);
-      throw cancelled(`browser lease from "${this.provider.name}" arrived after the attempt ended; released`);
+      throw abortError(context.signal, `browser lease from "${this.provider.name}"`);
     }
     this.attempt = lease;
     return lease;
@@ -632,9 +632,7 @@ export class LeasedBrowsers {
     try {
       lease = await provider.acquire(request);
     } catch (cause) {
-      if (request.signal.aborted) {
-        throw cancelled(`browser lease from "${provider.name}" cancelled`, cause);
-      }
+      if (request.signal.aborted) throw abortError(request.signal, `browser lease from "${provider.name}"`);
       throw new EngineError('ENGINE_FAILURE', `browser provider "${provider.name}" could not lease a browser: ${message(cause)}`, { retryable: false, cause });
     }
     if (!isBrowserLease(lease)) {

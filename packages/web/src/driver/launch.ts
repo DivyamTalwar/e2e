@@ -14,7 +14,7 @@ import { EngineError, raceAbort, withTimeout } from '@e2e-dev/core/engine';
 import { BROWSER_TRAITS, type BrowserName, type BrowserTraits } from '../browsers.ts';
 import { endpointLine, spawnWatched, stopped, type Watchdog } from './browser-watchdog.ts';
 import { ChromiumCdp } from './cdp.ts';
-import { cancelled, message, releaseQuietly } from '../errors.ts';
+import { abortError, message, releaseQuietly } from '../errors.ts';
 import { chromiumArgs, firefoxArgs } from './launch-flags.ts';
 import { chromiumMapper } from './mapper-transport.ts';
 import type { CdpTarget, WebMedia } from '../options.ts';
@@ -41,7 +41,7 @@ export interface BidiLaunchOptions {
   readonly timeoutMs: number;
   /** The run's environment, which names the browsers cache the pinned build is in. */
   readonly env: Readonly<Record<string, string | undefined>>;
-  /** Kills the browser and fails the launch `CANCELLED` at any stage. */
+  /** Kills the browser and fails the launch at any stage: `CANCELLED`, or the deadline it aborted with. */
   readonly signal: AbortSignal;
   /** The media features the run sets for every page, for a browser that takes one of them only at launch. */
   readonly media: WebMedia;
@@ -76,12 +76,13 @@ const LAUNCHERS: Readonly<Record<BrowserName, Launcher>> = {
  * `options.timeoutMs`. The browser runs under a watchdog process
  * (`browser-watchdog.ts`) that kills it and removes its profile once this
  * process lets go of it, however this process ends. `signal` aborting at any
- * stage kills the browser and the mapper and fails the launch `CANCELLED`.
+ * stage kills the browser and the mapper and fails the launch `CANCELLED`,
+ * or with the deadline it aborted with (`abortError`).
  */
 export async function launchBidiBrowser(name: BrowserName, options: BidiLaunchOptions): Promise<BidiBrowser> {
   const { signal, timeoutMs } = options;
   const what = `BiDi ${name} launch`;
-  if (signal.aborted) throw cancelled(`${what} cancelled`);
+  if (signal.aborted) throw abortError(signal, what);
   const executable = browserExecutable(name, options.headed, options.env);
   const profile = mkdtempSync(path.join(os.tmpdir(), `e2e-bidi-${name}-`));
   const failure = (cause: unknown): EngineError => launchFailure(`${what} failed`, cause);
@@ -100,11 +101,12 @@ export async function launchBidiBrowser(name: BrowserName, options: BidiLaunchOp
  * `http://` endpoint that names one) through the mapper, the way a hosted
  * browser is reached. Closing ends the session and leaves the browser to its
  * host. `signal` aborting at any stage (the endpoint fetch, the mapper start,
- * the session) stops the attach and fails it `CANCELLED`.
+ * the session) stops the attach and fails it `CANCELLED`, or with the
+ * deadline it aborted with (`abortError`).
  */
 export async function connectBidiOverCdp(target: CdpTarget, timeoutMs: number, signal: AbortSignal): Promise<BidiBrowser> {
   const what = 'BiDi attach over CDP';
-  if (signal.aborted) throw cancelled(`${what} cancelled`);
+  if (signal.aborted) throw abortError(signal, what);
   return open({
     what,
     // A failed handshake can echo its credentials in altered forms, so with headers only the kind of failure is kept.
@@ -164,7 +166,7 @@ async function open(spec: BidiOpen): Promise<BidiBrowser> {
   } catch (cause) {
     connection?.close();
     if (owned !== undefined) await stopped(owned);
-    if (signal.aborted) throw cancelled(`${spec.what} cancelled`);
+    if (signal.aborted) throw abortError(signal, spec.what);
     throw spec.failure(cause);
   }
 }

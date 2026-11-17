@@ -27,7 +27,7 @@ import type { ConfiguredInitScripts } from '../init-scripts.ts';
 import { credentialOrigins, httpCredentials, ProtectedApp } from '../protected-app.ts';
 import type { WebBasicAuth, WebMedia, WebScreencastOptions } from '../options.ts';
 import { DispatchScope } from './input.ts';
-import { afterDispatch, cancelled, classify, invalidState, releaseQuietly } from '../errors.ts';
+import { abortError, afterDispatch, classify, invalidState, releaseQuietly } from '../errors.ts';
 import { BROWSER_OPEN_TIMEOUT_MS, BrowserHandle, type BrowserSource } from './browser-source.ts';
 import { TriggerFailure, withDeadline, type OperationBudget } from './budget.ts';
 import { traceScreen } from './observe.ts';
@@ -137,7 +137,7 @@ export class BidiSurface {
   private async browserFor(signal: AbortSignal, attempt?: EngineAttemptContext): Promise<BrowserHandle> {
     if (attempt === undefined && this.handle?.alive === true) return this.handle;
     const verb = this.options.source.opening;
-    if (signal.aborted) throw cancelled(`browser ${verb} cancelled`);
+    if (signal.aborted) throw abortError(signal, `browser ${verb}`);
     const acquiring = attempt === undefined ? (this.acquiring ?? this.acquire(undefined)) : this.acquire(attempt);
     try {
       return await raceAbort(acquiring.handle, signal, `browser ${verb}`);
@@ -151,8 +151,11 @@ export class BidiSurface {
    * first, so a launched browser whose mapper died leaves no process or
    * profile behind. The opening ends `CANCELLED` once the surface is
    * disposed, its attempt ends, or (in `attempt` scope) the attempt's signal
-   * aborts; a worker's opening is also bounded by `BROWSER_OPEN_TIMEOUT_MS`.
-   * It publishes the browser unless it was cancelled by then.
+   * aborts; a worker's opening is also bounded by `BROWSER_OPEN_TIMEOUT_MS`,
+   * and ends `OPERATION_TIMEOUT` at whichever stage that deadline finds it,
+   * however the stage itself failed on the abort (a resolver or a provider
+   * rejects with an error of its own). It publishes the browser unless
+   * either ended it by then.
    */
   private acquire(attempt: EngineAttemptContext | undefined): Acquisition {
     this.acquiring?.controller.abort();
@@ -167,11 +170,16 @@ export class BidiSurface {
     const acquisition: Acquisition = {
       controller,
       handle: (async () => {
-        if (stale !== undefined) await releaseQuietly(stale.close());
-        const browser = await this.options.source.open({ signal, attempt });
-        const handle = await BrowserHandle.open(browser, () => this.session, signal);
-        this.handle = handle;
-        return handle;
+        try {
+          if (stale !== undefined) await releaseQuietly(stale.close());
+          const browser = await this.options.source.open({ signal, attempt });
+          const handle = await BrowserHandle.open(browser, () => this.session, signal);
+          this.handle = handle;
+          return handle;
+        } catch (cause) {
+          if (signal.aborted) throw abortError(signal, `browser ${this.options.source.opening}`);
+          throw cause;
+        }
       })().finally(() => {
         clearTimeout(timer);
         if (this.acquiring === acquisition) this.acquiring = undefined;

@@ -9,7 +9,7 @@
 import type { Emulation } from 'webdriver-bidi-protocol';
 import { EngineError, obj } from '@e2e-dev/core/engine';
 import type { BrowserTraits } from '../browsers.ts';
-import { BidiError, cancelled, releaseQuietly } from '../errors.ts';
+import { abortError, BidiError, releaseQuietly } from '../errors.ts';
 import { CLOSED_SHADOW_ROOTS_INIT_SCRIPT } from '../in-page/closed-shadow.ts';
 import { HIT_INTERCEPTOR_INIT_SCRIPT } from '../in-page/hit-interceptor.ts';
 import { MODAL_ORDER_INIT_SCRIPT } from '../in-page/modal-dialogs.ts';
@@ -206,12 +206,12 @@ export class AttemptUserContext {
     const generation = ++this.generation;
     const { connection, settings, lifetime } = this.host;
     signal.throwIfAborted();
-    if (lifetime.aborted) throw cancelled('the attempt closed before its user context opened');
+    if (lifetime.aborted) throw abortError(lifetime, 'user context setup');
     const { userContext } = settings.userContext === 'fresh' ? await connection.send('browser.createUserContext', {}) : { userContext: DEFAULT_USER_CONTEXT };
     const preloads: string[] = [];
     const overtaken = (): boolean => signal.aborted || lifetime.aborted || generation !== this.generation;
     try {
-      if (overtaken()) throw cancelled('the attempt closed or gave up while its user context opened');
+      if (overtaken()) throw abortError(signal, 'user context setup');
       const scoped = { userContexts: [userContext] as [string] };
       const sources = [
         wrapScript(BUILTINS_INIT_SCRIPT),
@@ -236,7 +236,7 @@ export class AttemptUserContext {
       ]);
       const failed = steps.find((step) => step.status === 'rejected');
       if (failed !== undefined) throw failed.reason;
-      if (overtaken()) throw cancelled('the attempt closed or gave up while its user context opened');
+      if (overtaken()) throw abortError(signal, 'user context setup');
     } catch (cause) {
       await releaseQuietly(this.drop({ userContext, preloads }));
       throw cause;
