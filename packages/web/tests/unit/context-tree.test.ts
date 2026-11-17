@@ -4,30 +4,23 @@
  * closed frame, tab, or restarted page retired with every frame in it.
  */
 
-import type { BrowsingContext } from 'webdriver-bidi-protocol';
+import type { BrowsingContext, Network } from 'webdriver-bidi-protocol';
 import { describe, expect, it } from 'vitest';
 import { ContextTree } from '../../src/driver/context-tree.ts';
 import { routeEvents } from '../../src/driver/events.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
-import { FakeBidi } from '../helpers/bidi-fake.ts';
+import { contextInfo, FakeBidi, requestData } from '../helpers/bidi-fake.ts';
 
 /** A context's info, as `getTree` lists it and its events carry it. */
 function info(context: string, parent: string | null, children: BrowsingContext.Info[] | null = null): BrowsingContext.Info {
-  return { context, userContext: 'mine', parent, url: 'about:blank', children, clientWindow: 'w', originalOpener: null };
+  return contextInfo(context, { parent, children });
 }
 
 /** A request from `context` that no event ever finishes. */
-function request(context: string, id: string) {
-  return {
-    context,
-    isBlocked: false,
-    navigation: null,
-    redirectCount: 0,
-    timestamp: 0,
-    request: { request: id, url: `http://app.test/${id}`, method: 'GET', headers: [], cookies: [], headersSize: 0, bodySize: 0, timings: {} },
-  };
+function request(context: string, id: string): Network.BeforeRequestSentParameters {
+  return { context, isBlocked: false, navigation: null, redirectCount: 0, timestamp: 0, request: requestData(id, `http://app.test/${id}`) };
 }
 
 /**
@@ -93,8 +86,8 @@ describe('ContextTree', () => {
   it('forgets every frame of a closed context', () => {
     const contexts = new ContextTree();
     contexts.created('tab', 'mine', null);
-    contexts.created('frame', undefined, 'tab');
-    contexts.created('inner', undefined, 'frame');
+    contexts.created('frame', 'mine', 'tab');
+    contexts.created('inner', 'mine', 'frame');
     contexts.destroyed('frame');
     expect(contexts.owner('inner')).toBeUndefined();
     expect([...contexts.subtree('tab')]).toEqual(['tab']);

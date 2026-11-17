@@ -15,7 +15,7 @@ import type { UserContextMode } from '../../src/driver/user-context.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
 import { afterDispatch, BidiError, classify } from '../../src/errors.ts';
 import type { NodeRef } from '@e2e-dev/core/engine';
-import { FakeBidi, settle, type Reply, type SentCommand } from '../helpers/bidi-fake.ts';
+import { contextInfo, FakeBidi, type Reply, type SentCommand, settle } from '../helpers/bidi-fake.ts';
 import { gate } from '../helpers/gate.ts';
 import { callOf } from '../helpers/page-call.ts';
 import { ElementRef } from '../../src/driver/script.ts';
@@ -302,7 +302,7 @@ describe('BidiInput.send', () => {
     const shared = await sharedSession(fake);
     // The scripted browser gives the next tab the id of the one that closed, which no browser does: anything kept of the closed one would show in it.
     const reopened = (): Reply => {
-      fake.emit('browsingContext.contextCreated', { context: 'tab-2', userContext: 'mine', parent: null });
+      fake.emit('browsingContext.contextCreated', contextInfo('tab-2'));
       return { result: { context: 'tab-2' } };
     };
     fake.on('browsingContext.create', reopened);
@@ -608,14 +608,14 @@ async function sharedSession(fake: FakeBidi): Promise<BidiSession> {
     .on('network.addDataCollector', { result: { collector: 'c' } })
     .on('session.subscribe', { result: { subscription: 's' } })
     .on('network.addIntercept', () => ({ result: { intercept: `intercept-${String(++intercepts)}` } }))
-    .on('browsingContext.getTree', { result: { contexts: [{ context: 'tab', userContext: 'mine' }] } })
+    .on('browsingContext.getTree', { result: { contexts: [contextInfo('tab')] } })
     .on('browsingContext.create', () => {
-      const context = tabs.shift();
-      fake.emit('browsingContext.contextCreated', { context, userContext: 'mine', parent: null });
+      const context = tabs.shift()!;
+      fake.emit('browsingContext.contextCreated', contextInfo(context));
       return { result: { context } };
     })
     .on('browsingContext.close', (params) => {
-      fake.emit('browsingContext.contextDestroyed', { context: params['context'], userContext: 'mine', parent: null });
+      fake.emit('browsingContext.contextDestroyed', contextInfo(String(params['context'])));
       return { result: {} };
     });
   const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };

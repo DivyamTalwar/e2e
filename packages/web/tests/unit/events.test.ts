@@ -6,12 +6,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import type { BrowsingContext, Log } from 'webdriver-bidi-protocol';
 import type { AppLogEntry } from '@e2e-dev/core/engine';
 import { DialogRouter } from '../../src/driver/dialogs.ts';
 import { routeEvents } from '../../src/driver/events.ts';
 import { ContextTree } from '../../src/driver/context-tree.ts';
 import type { BidiSession } from '../../src/driver/session.ts';
-import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import { contextInfo, FakeBidi, navigationInfo, settle } from '../helpers/bidi-fake.ts';
 import { ErrorLatch } from '../../src/errors.ts';
 import { AttemptTabs } from '../../src/driver/tabs.ts';
 
@@ -51,7 +52,7 @@ async function attempt(owners: ContextTree, userContext: string) {
 }
 
 /** A user prompt event in `context`. */
-function prompt(context: string, type = 'confirm') {
+function prompt(context: string, type: BrowsingContext.UserPromptType = 'confirm'): BrowsingContext.UserPromptOpenedParameters {
   return { context, handler: 'ignore', message: 'Really delete everything?', type };
 }
 
@@ -61,7 +62,7 @@ describe('routeEvents', () => {
     const owners = new ContextTree();
     const { session } = await attempt(owners, 'mine');
     routeEvents(fake.connection, owners, () => session);
-    fake.emit('browsingContext.contextCreated', { context: 'tab', userContext: 'mine', parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
+    fake.emit('browsingContext.contextCreated', contextInfo('tab'));
     let seen = '';
     session.dialogs.add(async (dialog) => {
       seen = `${dialog.type}: ${dialog.message}`;
@@ -78,7 +79,7 @@ describe('routeEvents', () => {
     const owners = new ContextTree();
     const { session } = await attempt(owners, 'mine');
     routeEvents(fake.connection, owners, () => session);
-    fake.emit('browsingContext.contextCreated', { context: 'theirs', userContext: 'other', parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
+    fake.emit('browsingContext.contextCreated', contextInfo('theirs', { userContext: 'other' }));
     fake.emit('browsingContext.userPromptOpened', prompt('theirs'));
     await settle();
     expect(fake.commands('browsingContext.handleUserPrompt')).toEqual([]);
@@ -89,24 +90,24 @@ describe('routeEvents', () => {
     const owners = new ContextTree();
     const { session, latch } = await attempt(owners, 'mine');
     routeEvents(fake.connection, owners, () => session);
-    fake.emit('browsingContext.contextCreated', { context: 'tab', userContext: 'mine', parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
+    fake.emit('browsingContext.contextCreated', contextInfo('tab'));
     fake.emit('browsingContext.userPromptOpened', prompt('tab', 'alert'));
     await settle();
     expect(fake.commands('browsingContext.handleUserPrompt').map((command) => command.params)).toEqual([{ context: 'tab', accept: false }]);
     expect(() => latch.throwPending()).toThrow('unhandled alert dialog: Really delete everything?');
   });
 
-  it('gives a frame its parent’s owner, covers a tab the app opens, and logs only the attempt’s pages', async () => {
+  it('records a frame under its tab’s owner, covers a tab the app opens, and logs only the attempt’s pages', async () => {
     const fake = new FakeBidi();
     const owners = new ContextTree();
     const { session, log, added } = await attempt(owners, 'mine');
     const off = routeEvents(fake.connection, owners, () => session);
-    fake.emit('browsingContext.contextCreated', { context: 'tab', userContext: 'mine', parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
-    fake.emit('browsingContext.contextCreated', { context: 'frame', parent: 'tab', url: 'about:blank', children: null, clientWindow: 'w' });
-    fake.emit('browsingContext.contextCreated', { context: 'popup', userContext: 'mine', parent: null, originalOpener: 'tab', url: 'about:blank', children: null, clientWindow: 'w' });
+    fake.emit('browsingContext.contextCreated', contextInfo('tab'));
+    fake.emit('browsingContext.contextCreated', contextInfo('frame', { parent: 'tab' }));
+    fake.emit('browsingContext.contextCreated', contextInfo('popup', { originalOpener: 'tab' }));
     expect(owners.owner('frame')).toBe('mine');
     expect(added).toEqual(['popup']);
-    const entry = (context: string, text: string) => ({ type: 'console', level: 'error', text, timestamp: 0, method: 'error', args: [], source: { realm: 'r', context } });
+    const entry = (context: string, text: string): Log.ConsoleLogEntry => ({ type: 'console', level: 'error', text, timestamp: 0, method: 'error', args: [], source: { realm: 'r', context } });
     fake.emit('log.entryAdded', entry('frame', 'boom'));
     fake.emit('log.entryAdded', entry('elsewhere', 'not mine'));
     fake.emit('log.entryAdded', entry('tab', 'Failed to load resource: 404'));
@@ -120,9 +121,9 @@ describe('routeEvents', () => {
     const owners = new ContextTree();
     const { session, forgotten } = await attempt(owners, 'mine');
     routeEvents(fake.connection, owners, () => session);
-    for (const [context, userContext] of [['tab', 'mine'], ['old', 'replaced']]) {
-      fake.emit('browsingContext.contextCreated', { context, userContext, parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
-      fake.emit('browsingContext.contextDestroyed', { context, userContext, parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
+    for (const [context, userContext] of [['tab', 'mine'], ['old', 'replaced']] as const) {
+      fake.emit('browsingContext.contextCreated', contextInfo(context, { userContext }));
+      fake.emit('browsingContext.contextDestroyed', contextInfo(context, { userContext }));
     }
     expect(forgotten).toEqual(['tab', 'old']);
   });
@@ -135,12 +136,11 @@ describe('routeEvents', () => {
       result: { type: 'success', realm: 'r', result: { type: 'string', value: (params['target'] as { context: string }).context === 'frame' ? 'pay' : '' } },
     }));
     routeEvents(fake.connection, owners, () => session);
-    const created = (context: string, extra: Record<string, unknown> = {}) =>
-      fake.emit('browsingContext.contextCreated', { context, userContext: 'mine', parent: null, url: 'about:blank', children: null, clientWindow: 'w', originalOpener: null, ...extra });
-    const nav = (context: string, url: string, navigation = 'n') => ({ context, url, navigation, timestamp: 0 });
+    const created = (context: string, fields: Partial<BrowsingContext.Info> = {}) => fake.emit('browsingContext.contextCreated', contextInfo(context, fields));
+    const nav = navigationInfo;
     created('tab');
     created('scratch');
-    fake.emit('browsingContext.contextCreated', { context: 'frame', parent: 'tab', url: 'about:blank', children: null, clientWindow: 'w' });
+    fake.emit('browsingContext.contextCreated', contextInfo('frame', { parent: 'tab' }));
     state.navigations.inFlight = true;
     fake.emit('browsingContext.navigationCommitted', nav('tab', 'http://app.test/'));
     state.navigations.inFlight = false;
@@ -162,7 +162,7 @@ describe('routeEvents', () => {
     created('written', { originalOpener: 'tab' });
     fake.emit('browsingContext.domContentLoaded', nav('written', 'about:blank', 'w1'));
     created('blank', { originalOpener: 'tab' });
-    fake.emit('browsingContext.contextDestroyed', { context: 'blank', userContext: 'mine', parent: null, url: 'about:blank', children: null, clientWindow: 'w' });
+    fake.emit('browsingContext.contextDestroyed', contextInfo('blank', { originalOpener: 'tab' }));
     await settle();
     expect(lines).toEqual([
       'navigated to http://app.test/checkout',

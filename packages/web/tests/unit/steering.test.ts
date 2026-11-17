@@ -6,16 +6,16 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { BrowsingContext, Network } from 'webdriver-bidi-protocol';
+import type { Network } from 'webdriver-bidi-protocol';
 import { OwnNavigations } from '../../src/driver/own-navigations.ts';
 import type { BidiSession } from '../../src/driver/session.ts';
 import { goto } from '../../src/driver/steering.ts';
-import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import { FakeBidi, navigationInfo, requestData, responseData, settle } from '../helpers/bidi-fake.ts';
 
 const TARGET = 'http://app.test/export';
 
 /** The navigation to `TARGET` in the tab, as its events name it. */
-const NAVIGATION: BrowsingContext.NavigationInfo = { context: 'tab', navigation: 'n1', timestamp: 0, url: TARGET, userContext: 'mine' };
+const NAVIGATION = navigationInfo('tab', TARGET, 'n1');
 
 /** The parts of a session a navigation reads, its tab `tab` open on `fake`. */
 function session(fake: FakeBidi): BidiSession {
@@ -29,16 +29,7 @@ function session(fake: FakeBidi): BidiSession {
 
 /** The start of the navigation's response, with `status`. */
 function responseStarted(status: number): Network.ResponseStartedParameters {
-  const timings = { timeOrigin: 0, requestTime: 0, redirectStart: 0, redirectEnd: 0, fetchStart: 0, dnsStart: 0, dnsEnd: 0, connectStart: 0, connectEnd: 0, tlsStart: 0, requestStart: 0, responseStart: 0, responseEnd: 0 };
-  return {
-    context: 'tab',
-    isBlocked: false,
-    navigation: 'n1',
-    redirectCount: 0,
-    timestamp: 0,
-    request: { request: 'r1', url: TARGET, method: 'GET', headers: [], cookies: [], headersSize: 0, bodySize: 0, destination: 'document', initiatorType: null, timings },
-    response: { url: TARGET, protocol: 'http/1.1', status, statusText: '', fromCache: false, headers: [], mimeType: '', bytesReceived: 0, headersSize: 0, bodySize: 0, content: { size: 0 } },
-  };
+  return { context: 'tab', isBlocked: false, navigation: NAVIGATION.navigation, redirectCount: 0, timestamp: 0, request: requestData('r1', TARGET), response: responseData(TARGET, status) };
 }
 
 /**

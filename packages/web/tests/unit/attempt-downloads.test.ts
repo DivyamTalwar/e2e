@@ -11,7 +11,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ArtifactPaths } from '../../src/driver/artifact-paths.ts';
 import { AttemptDownloads, type RemoteDownloads } from '../../src/driver/downloads.ts';
-import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import { FakeBidi, navigationInfo, settle } from '../helpers/bidi-fake.ts';
 import { gate } from '../helpers/gate.ts';
 
 describe('AttemptDownloads.save', () => {
@@ -41,8 +41,9 @@ describe('AttemptDownloads.save', () => {
 
   /** The browser starts and completes one download of `name`, saved at `filepath` on its disk. */
   const download = (name: string, filepath: string): void => {
-    fake.emit('browsingContext.downloadWillBegin', { context: 'tab', download: name, suggestedFilename: name });
-    fake.emit('browsingContext.downloadEnd', { context: 'tab', download: name, status: 'complete', filepath });
+    const navigation = navigationInfo('tab', `http://app.test/${name}`);
+    fake.emit('browsingContext.downloadWillBegin', { ...navigation, download: name, suggestedFilename: name });
+    fake.emit('browsingContext.downloadEnd', { ...navigation, download: name, status: 'complete', filepath });
   };
 
   const budget = (timeoutMs: number) => ({ timeoutMs, signal: new AbortController().signal });

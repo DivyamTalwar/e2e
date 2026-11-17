@@ -14,7 +14,8 @@ import { AttemptNetwork } from '../../src/driver/network.ts';
 import type { NetworkRoute } from '../../src/driver/network-decisions.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
-import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import type { Network } from 'webdriver-bidi-protocol';
+import { FakeBidi, requestData, responseData, settle, type FakeEvent } from '../helpers/bidi-fake.ts';
 import { gate } from '../helpers/gate.ts';
 
 const SITE = 'http://app.test';
@@ -56,21 +57,27 @@ function network(
   return { net, failures, contexts, open, close, lifetime };
 }
 
-/** A `beforeRequestSent` event held by `intercepts`. */
-function request(id: string, url: string, intercepts: string[] = ['intercept-1']): Record<string, unknown> {
+/** A `beforeRequestSent` event held by `intercepts`, which a request nothing holds does not name. */
+function request(id: string, url: string, intercepts: string[] = ['intercept-1']): Network.BeforeRequestSentParameters {
+  const [first, ...rest] = intercepts;
   return {
     context: 'tab',
-    isBlocked: intercepts.length > 0,
+    isBlocked: first !== undefined,
     navigation: null,
     redirectCount: 0,
     timestamp: 0,
-    intercepts,
-    request: { request: id, url, method: 'GET', headers: [{ name: 'Accept', value: { type: 'string', value: '*/*' } }], cookies: [], headersSize: 0, bodySize: 0, timings: {} },
+    ...(first === undefined ? {} : { intercepts: [first, ...rest] }),
+    request: requestData(id, url, { headers: [{ name: 'Accept', value: { type: 'string', value: '*/*' } }] }),
   };
 }
 
+/** The event of a response with `status` to request `id` at `url`, which nothing holds unless `intercepts` do: with `fields` in its response. */
+function responded(id: string, url: string, status: number, fields: Partial<Network.ResponseData> = {}, intercepts: string[] = []): Network.ResponseStartedParameters {
+  return { ...request(id, url, intercepts), response: responseData(url, status, fields) };
+}
+
 /** The header that makes a 3xx response a redirect hop. */
-const LOCATION = [{ name: 'Location', value: { type: 'string', value: '/next' } }];
+const LOCATION: Network.Header[] = [{ name: 'Location', value: { type: 'string', value: '/next' } }];
 
 /** A route on the URL `pattern` for the tests. */
 function route(pattern: string, handle: NetworkRoute['handle']): NetworkRoute {
@@ -165,7 +172,7 @@ describe('AttemptNetwork', () => {
     await net.bind('user-1');
     await open('tab');
     expect(fake.commands('network.addIntercept').map((command) => command.params)).toContainEqual({ phases: ['authRequired'], contexts: ['tab'] });
-    const challenge = { ...request('r1', `${SITE}/private`), response: { status: 401 } };
+    const challenge = { ...request('r1', `${SITE}/private`), response: responseData(`${SITE}/private`, 401) };
     fake.emit('network.authRequired', challenge);
     fake.emit('network.authRequired', challenge);
     await settle();
@@ -181,7 +188,7 @@ describe('AttemptNetwork', () => {
     await net.bind('user-1');
     await open('tab');
     expect(fake.commands('network.addIntercept').map((command) => command.params)).toEqual([{ phases: ['authRequired'], contexts: ['tab'] }]);
-    fake.emit('network.authRequired', { ...request('r1', `${SITE}/private`), response: { status: 401 } });
+    fake.emit('network.authRequired', { ...request('r1', `${SITE}/private`), response: responseData(`${SITE}/private`, 401) });
     await settle();
     expect(fake.commands('network.continueWithAuth').map((command) => command.params)).toEqual([{ request: 'r1', action: 'cancel' }]);
   });
@@ -195,15 +202,15 @@ describe('AttemptNetwork', () => {
   });
 
   describe('a basic-auth challenge on each hop of a request', () => {
-    type Emitted = readonly [method: string, params: Record<string, unknown>];
+    type Emitted = FakeEvent;
     const first = `${SITE}/private`;
     const second = 'http://other.test/private';
     /** Hop `count` of the request starts at `url`, held by no intercept. */
     const sent = (url: string, count: number): Emitted => ['network.beforeRequestSent', { ...request('r', url, []), redirectCount: count }];
     /** A held challenge that names `url` as hop `count`. */
-    const challenged = (url: string, count: number): Emitted => ['network.authRequired', { ...request('r', url), redirectCount: count, response: { status: 401 } }];
+    const challenged = (url: string, count: number): Emitted => ['network.authRequired', { ...request('r', url), redirectCount: count, response: responseData(url, 401) }];
     /** The hop at `url` ends in a redirect. */
-    const redirected = (url: string): Emitted => ['network.responseCompleted', { ...request('r', url, []), response: { url, status: 302, headers: LOCATION } }];
+    const redirected = (url: string): Emitted => ['network.responseCompleted', responded('r', url, 302, { headers: LOCATION })];
 
     /**
      * Chromium announces each hop once and names the hop a challenge came
@@ -219,7 +226,7 @@ describe('AttemptNetwork', () => {
       const { net, open } = network(fake, { credentials: { username: 'ada', password: 'secret' }, credentialOrigins: [new URL(second).origin], browser });
       await net.bind('user-1');
       await open('tab');
-      for (const [method, params] of events) fake.emit(method, params);
+      fake.emitAll(events);
       await settle();
       expect(fake.commands('network.continueWithAuth').map((command) => command.params['action'])).toEqual(['provideCredentials', 'provideCredentials', 'cancel']);
     });
@@ -248,13 +255,13 @@ describe('AttemptNetwork', () => {
     };
     /** Hop `count` is announced again at `url`, after its challenge when one is raised, and what it was continued with. */
     const resent = (url: string, count: number): Promise<Record<string, unknown> | undefined> => {
-      if (challenged) fake.emit('network.authRequired', { ...request('r', `${SITE}/private`), response: { status: 401 } });
+      if (challenged) fake.emit('network.authRequired', { ...request('r', `${SITE}/private`), response: responseData(`${SITE}/private`, 401) });
       return announced(url, count);
     };
     const overridden = { request: 'r', headers: expect.arrayContaining([{ name: 'x-route', value: { type: 'string', value: 'routed' } }, { name: 'x-preview', value: { type: 'string', value: 'token' } }]) };
     expect(await announced(`${SITE}/private`, 0)).toEqual(overridden);
     expect(await resent(`${SITE}/private`, 0)).toEqual({ request: 'r' });
-    fake.emit('network.responseCompleted', { ...request('r', `${SITE}/private`, []), response: { url: `${SITE}/private`, status: 302, headers: LOCATION } });
+    fake.emit('network.responseCompleted', responded('r', `${SITE}/private`, 302, { headers: LOCATION }));
     expect(await announced(second, 1)).toEqual(overridden);
     expect(await resent(second, 1)).toEqual({ request: 'r' });
     expect(routed).toBe(1);
@@ -262,15 +269,15 @@ describe('AttemptNetwork', () => {
   });
 
   describe('a response wait on a request whose basic-auth challenge is held', () => {
-    type Emitted = readonly [method: string, params: Record<string, unknown>];
+    type Emitted = FakeEvent;
     const url = `${SITE}/private`;
     /** The request's hop starts, held by no intercept. */
     const sent: Emitted = ['network.beforeRequestSent', request('r', url, [])];
     /** A held challenge of the hop. */
-    const challenged: Emitted = ['network.authRequired', { ...request('r', url), response: { status: 401 } }];
+    const challenged: Emitted = ['network.authRequired', { ...request('r', url), response: responseData(url, 401) }];
     /** The hop's response as `event` reports it: a 401 names a `scheme` challenge. */
     const response = (event: 'responseStarted' | 'responseCompleted', status: number, scheme = 'Basic'): Emitted =>
-      [`network.${event}`, { ...request('r', url, []), response: { url, status, headers: [], ...(status === 401 ? { authChallenges: [{ scheme, realm: 'preview' }] } : {}) } }];
+      [`network.${event}`, responded('r', url, status, status === 401 ? { authChallenges: [{ scheme, realm: 'preview' }] } : {})];
 
     /** A wait for the request's response on `browser`, with `credentials` configured or not, and the status it resolved with so far. */
     async function waitOn(browser: BrowserName, credentials: boolean) {
@@ -284,7 +291,7 @@ describe('AttemptNetwork', () => {
       await settle();
       /** Emits `events` and lets the wait settle on them. */
       const emit = async (...events: Emitted[]): Promise<void> => {
-        for (const [method, params] of events) fake.emit(method, params);
+        fake.emitAll(events);
         await settle();
       };
       return { fake, waiting, resolved, emit };
@@ -340,10 +347,10 @@ describe('AttemptNetwork', () => {
       const ending = new AbortController();
       const waiting = net.waitForResponse(() => true, ending.signal);
       await settle();
-      for (const [method, params] of [sent, response('responseStarted', 401)]) fake.emit(method, params);
+      fake.emitAll([sent, response('responseStarted', 401)]);
       ending.abort();
       await expect(waiting).rejects.toThrow();
-      for (const [method, params] of [challenged, response('responseCompleted', 401)]) fake.emit(method, params);
+      fake.emitAll([challenged, response('responseCompleted', 401)]);
       await settle();
       expect(fake.commands('network.disownData').map((command) => command.params)).toEqual([{ dataType: 'response', collector: 'collector-1', request: 'r' }]);
     });
@@ -379,7 +386,7 @@ describe('AttemptNetwork', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(idle).toBe(false);
-    fake.emit('network.responseCompleted', { ...request('r1', `${SITE}/slow`, []), response: { url: `${SITE}/slow`, status: 200 } });
+    fake.emit('network.responseCompleted', responded('r1', `${SITE}/slow`, 200));
     await waiting;
     expect(Date.now() - started).toBeGreaterThanOrEqual(690);
   });
@@ -390,10 +397,9 @@ describe('AttemptNetwork', () => {
     await net.bind('user-1');
     const waiting = net.waitForResponse((url) => url.endsWith('/api/users'), AbortSignal.timeout(5_000));
     await settle();
-    const started = (id: string, url: string, context = 'tab') => ({
-      ...request(id, url, []),
+    const started = (id: string, url: string, context = 'tab'): Network.ResponseStartedParameters => ({
+      ...responded(id, url, 200, { headers: [{ name: 'Content-Type', value: { type: 'string', value: 'application/json' } }] }),
       context,
-      response: { url, status: 200, headers: [{ name: 'Content-Type', value: { type: 'string', value: 'application/json' } }] },
     });
     fake.emit('network.responseStarted', started('other', `${SITE}/other`));
     fake.emit('network.responseStarted', started('popup', `${SITE}/api/users`, 'popup'));
@@ -418,7 +424,7 @@ describe('AttemptNetwork', () => {
     await net.bind('user-1');
     const waiting = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
     await settle();
-    fake.emit('network.responseStarted', { ...request('cut', `${SITE}/cut`, []), response: { url: `${SITE}/cut`, status: 200, headers: [] } });
+    fake.emit('network.responseStarted', responded('cut', `${SITE}/cut`, 200));
     const response = await waiting;
     fake.emit('network.fetchError', { ...request('cut', `${SITE}/cut`, []), errorText: 'net::ERR_CONTENT_LENGTH_MISMATCH' });
     await expect(response.body()).rejects.toThrow('net::ERR_CONTENT_LENGTH_MISMATCH');
@@ -431,7 +437,7 @@ describe('AttemptNetwork', () => {
     await open('tab');
     const waiting = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
     await settle();
-    fake.emit('network.responseStarted', { ...request('gone', `${SITE}/gone`, []), response: { url: `${SITE}/gone`, status: 200, headers: [] } });
+    fake.emit('network.responseStarted', responded('gone', `${SITE}/gone`, 200));
     const response = await waiting;
     await close('tab');
     fake.emit('network.fetchError', { ...request('gone', `${SITE}/gone`, []), errorText: 'net::ERR_ABORTED' });
@@ -445,7 +451,7 @@ describe('AttemptNetwork', () => {
     const first = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
     const second = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
     await settle();
-    fake.emit('network.responseStarted', { ...request('r', `${SITE}/r`, []), response: { url: `${SITE}/r`, status: 200, headers: [] } });
+    fake.emit('network.responseStarted', responded('r', `${SITE}/r`, 200));
     await Promise.all([first, second]);
     expect(fake.commands('network.addDataCollector')).toHaveLength(1);
     await net.bind('user-2');
@@ -506,7 +512,7 @@ describe('AttemptNetwork', () => {
     const { net } = network(fake);
     await net.bind('user-1');
     const waiting = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
-    const event = { ...request('fast', `${SITE}/fast`, []), response: { url: `${SITE}/fast`, status: 200, headers: [] } };
+    const event = responded('fast', `${SITE}/fast`, 200);
     fake.emit('network.responseStarted', event);
     fake.emit('network.responseCompleted', event);
     const response = await waiting;
@@ -554,7 +560,7 @@ describe('AttemptNetwork', () => {
      * `beforeRequestSent` event, went through it. `before` runs between the
      * request being held and the fetch.
      */
-    async function fetched(fake: FakeBidi, options: Parameters<typeof network>[1], held: (origin: string) => Record<string, unknown>, before: (net: AttemptNetwork) => Promise<void> = async () => undefined) {
+    async function fetched(fake: FakeBidi, options: Parameters<typeof network>[1], held: (origin: string) => Network.BeforeRequestSentParameters, before: (net: AttemptNetwork) => Promise<void> = async () => undefined) {
       received.length = 0;
       const created = network(fake, { site: origin, ...options });
       await created.net.bind('user-1');
@@ -578,8 +584,9 @@ describe('AttemptNetwork', () => {
       const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'a=1' } } });
       const { outcome } = await fetched(fake, { headers: true }, (site) => {
         const posted = request('post', `${site}/form`);
-        const cookies = [{ name: 'sid', value: { type: 'string', value: 'old' } }, { name: 'lang', value: { type: 'base64', value: Buffer.from('en').toString('base64') } }];
-        return { ...posted, request: { ...(posted['request'] as object), method: 'POST', bodySize: 3, cookies } };
+        const cookie = (name: string, value: Network.BytesValue): Network.Cookie => ({ name, value, domain: new URL(site).hostname, path: '/', size: 0, httpOnly: false, secure: false, sameSite: 'lax' });
+        const cookies = [cookie('sid', { type: 'string', value: 'old' }), cookie('lang', { type: 'base64', value: Buffer.from('en').toString('base64') })];
+        return { ...posted, request: { ...posted.request, method: 'POST', bodySize: 3, cookies } };
       });
       expect(outcome).toMatchObject({ status: 200, body: 'upstream', headers: { 'content-type': 'text/plain', 'set-cookie': 'sid=fresh; Path=/; HttpOnly\ntheme=dark' } });
       expect(received).toEqual([{ url: '/form', method: 'POST', headers: expect.objectContaining({ accept: '*/*', cookie: 'sid=old; lang=en', 'x-preview': 'token' }), body: 'a=1' }]);
@@ -615,7 +622,7 @@ describe('AttemptNetwork', () => {
       const fake = new FakeBidi().on('network.getData', () => ({ error: 'no such network data', message: 'evicted' }));
       const { outcome } = await fetched(fake, {}, (site) => {
         const posted = request('post', `${site}/upload`);
-        return { ...posted, request: { ...(posted['request'] as object), method: 'POST', bodySize: 30_000_000 } };
+        return { ...posted, request: { ...posted.request, method: 'POST', bodySize: 30_000_000 } };
       });
       expect(outcome.failure).toMatchObject({ code: 'ACTION_FAILED', message: 'route.fetch: the browser kept none of the request body (too large or streamed), so the request cannot be replayed' });
       expect(received).toEqual([]);
@@ -623,9 +630,9 @@ describe('AttemptNetwork', () => {
 
     describe('of a held navigation that posts a form', () => {
       const fake = (): FakeBidi => new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'a=1' } } });
-      const submission = (site: string): Record<string, unknown> => {
+      const submission = (site: string): Network.BeforeRequestSentParameters => {
         const posted = request('post', `${site}/form`);
-        return { ...posted, navigation: 'nav-1', request: { ...(posted['request'] as object), method: 'POST', bodySize: 3 } };
+        return { ...posted, navigation: 'nav-1', request: { ...posted.request, method: 'POST', bodySize: 3 } };
       };
 
       it('refuses on a browser that reports no body for it, with that reason, without asking for the body', async () => {
@@ -723,8 +730,8 @@ describe('AttemptNetwork', () => {
     /** The `x-preview` header and the route's own on a redirect hop's continue, or undefined when it went on untouched. */
     async function hop(fake: FakeBidi, id: string, url: string, count: number, carried: Record<string, string>): Promise<Record<string, string> | undefined> {
       const base = request(id, url);
-      const headers = Object.entries({ Accept: '*/*', ...carried }).map(([name, value]) => ({ name, value: { type: 'string', value } }));
-      fake.emit('network.beforeRequestSent', { ...base, redirectCount: count, request: { ...(base['request'] as object), headers } });
+      const headers = Object.entries({ Accept: '*/*', ...carried }).map(([name, value]): Network.Header => ({ name, value: { type: 'string', value } }));
+      fake.emit('network.beforeRequestSent', { ...base, redirectCount: count, request: { ...base.request, headers } });
       await settle();
       await settle();
       const sent = fake.commands('network.continueRequest').at(-1)?.params;
@@ -770,8 +777,8 @@ describe('AttemptNetwork', () => {
         await decisions.continue({ headers: { ...held.headers, 'x-route': 'routed' } });
       }));
       const posted = request('r', `${SITE}/form`);
-      const headers = [{ name: 'Accept', value: { type: 'string', value: '*/*' } }, { name: 'Content-Type', value: { type: 'string', value: 'application/x-www-form-urlencoded' } }];
-      fake.emit('network.beforeRequestSent', { ...posted, request: { ...(posted['request'] as object), method, bodySize: 3, headers } });
+      const headers: Network.Header[] = [{ name: 'Accept', value: { type: 'string', value: '*/*' } }, { name: 'Content-Type', value: { type: 'string', value: 'application/x-www-form-urlencoded' } }];
+      fake.emit('network.beforeRequestSent', { ...posted, request: { ...posted.request, method, bodySize: 3, headers } });
       await settle();
       await settle();
       expect(fake.commands('network.continueRequest').at(-1)?.params['headers']).toContainEqual({ name: 'content-type', value: { type: 'string', value: 'application/x-www-form-urlencoded' } });
@@ -886,7 +893,7 @@ describe('AttemptNetwork', () => {
       await net.bind('user-1');
       const waiting = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
       await settle();
-      fake.emit('network.responseStarted', { ...request('r', `${SITE}/r`, []), response: { url: `${SITE}/r`, status: 200, headers: [] } });
+      fake.emit('network.responseStarted', responded('r', `${SITE}/r`, 200));
       return { fake, net, response: await waiting };
     }
 
@@ -943,7 +950,7 @@ describe('AttemptNetwork', () => {
       headers: [{ name: 'accept', value: { type: 'string', value: '*/*' } }, { name: 'x-preview', value: { type: 'string', value: 'token' } }],
     }]);
     const waiting = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
-    fake.emit('network.responseStarted', { ...request('r', `${SITE}/r`, []), response: { url: `${SITE}/r`, status: 200, headers: [] } });
+    fake.emit('network.responseStarted', responded('r', `${SITE}/r`, 200));
     await expect(waiting).resolves.toMatchObject({ url: `${SITE}/r`, status: 200 });
   });
 
@@ -987,10 +994,10 @@ describe('AttemptNetwork', () => {
       await net.bind('user-1');
       await open('tab');
       fake.emit('network.beforeRequestSent', request('r', `${SITE}/private`, []));
-      fake.emit('network.authRequired', { ...request('r', `${SITE}/private`), response: { status: 401 } });
-      fake.emit('network.responseCompleted', { ...request('r', `${SITE}/private`, []), response: { url: `${SITE}/private`, status: 302, headers: LOCATION } });
+      fake.emit('network.authRequired', { ...request('r', `${SITE}/private`), response: responseData(`${SITE}/private`, 401) });
+      fake.emit('network.responseCompleted', responded('r', `${SITE}/private`, 302, { headers: LOCATION }));
       net.retire('tab');
-      fake.emit('network.authRequired', { ...request('r', `${SITE}/private`), response: { status: 401 } });
+      fake.emit('network.authRequired', { ...request('r', `${SITE}/private`), response: responseData(`${SITE}/private`, 401) });
       await settle();
       expect(fake.commands('network.continueWithAuth').map((command) => command.params['action'])).toEqual(['provideCredentials', 'provideCredentials']);
     });
@@ -1006,7 +1013,7 @@ describe('AttemptNetwork', () => {
       fake.emit('network.beforeRequestSent', request('r', 'https://external.test/start'));
       await settle();
       await settle();
-      fake.emit('network.responseCompleted', { ...request('r', 'https://external.test/start', []), response: { url: 'https://external.test/start', status: 302, headers: LOCATION } });
+      fake.emit('network.responseCompleted', responded('r', 'https://external.test/start', 302, { headers: LOCATION }));
       net.retire('tab');
       fake.emit('network.beforeRequestSent', { ...request('r', 'https://external.test/again'), redirectCount: 1 });
       await settle();
@@ -1029,8 +1036,8 @@ describe('AttemptNetwork', () => {
       for (const id of ['last', 'hop']) fake.emit('network.beforeRequestSent', request(id, start));
       await settle();
       await settle();
-      fake.emit('network.responseCompleted', { ...request('last', start, []), response: { url: start, status, headers } });
-      fake.emit('network.responseCompleted', { ...request('hop', start, []), response: { url: start, status: 302, headers: LOCATION } });
+      fake.emit('network.responseCompleted', responded('last', start, status, { headers }));
+      fake.emit('network.responseCompleted', responded('hop', start, 302, { headers: LOCATION }));
       await settle();
       expect(fake.commands('network.disownData').map((command) => command.params)).toEqual([{ dataType: 'response', collector: 'collector-1', request: 'last' }]);
       for (const id of ['last', 'hop']) fake.emit('network.beforeRequestSent', { ...request(id, 'https://external.test/next'), redirectCount: 1 });
@@ -1048,7 +1055,7 @@ describe('AttemptNetwork', () => {
       await net.addRoute(route('**', async (_held, decisions) => {
         await decisions.fulfill({ status: 200, headers: {}, body: 'fulfilled' });
       }));
-      const response = (id: string) => ({ ...request(id, `${SITE}/a`, []), response: { url: `${SITE}/a`, status: 200, headers: [] } });
+      const response = (id: string) => responded(id, `${SITE}/a`, 200);
       const first = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
       await settle();
       fake.emit('network.beforeRequestSent', request('r', `${SITE}/a`));
@@ -1078,12 +1085,12 @@ describe('AttemptNetwork', () => {
       }));
       /** Request `id` is fulfilled with the redirect and followed to the page it names. */
       const follow = async (id: string): Promise<void> => {
-        const moved = { ...request(id, `${SITE}/moved`, []), response: { url: `${SITE}/moved`, status: 302, headers: LOCATION } };
-        const landed = { ...request(id, `${SITE}/next`, []), redirectCount: 1, response: { url: `${SITE}/next`, status: 200, headers: [] } };
+        const moved = responded(id, `${SITE}/moved`, 302, { headers: LOCATION });
+        const landed = { ...responded(id, `${SITE}/next`, 200), redirectCount: 1 };
         fake.emit('network.beforeRequestSent', request(id, `${SITE}/moved`));
         await settle();
         await settle();
-        if (reported) for (const event of ['network.responseStarted', 'network.responseCompleted']) fake.emit(event, moved);
+        if (reported) for (const event of ['network.responseStarted', 'network.responseCompleted'] as const) fake.emit(event, moved);
         fake.emit('network.beforeRequestSent', { ...request(id, `${SITE}/next`), redirectCount: 1 });
         fake.emit('network.responseStarted', landed);
         fake.emit('network.responseCompleted', landed);
@@ -1166,11 +1173,11 @@ describe('AttemptNetwork', () => {
     await net.bind('user-1');
     const waiting = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
     await settle();
-    const headers = [
+    const headers: Network.Header[] = [
       { name: 'Set-Cookie', value: { type: 'string', value: 'sid=secret; HttpOnly' } },
       { name: 'Content-Type', value: { type: 'string', value: 'text/plain' } },
     ];
-    fake.emit('network.responseStarted', { ...request('r', `${SITE}/login`, []), response: { url: `${SITE}/login`, status: 200, headers } });
+    fake.emit('network.responseStarted', responded('r', `${SITE}/login`, 200, { headers }));
     expect((await waiting).headers).toEqual({ 'content-type': 'text/plain' });
   });
 
@@ -1212,7 +1219,7 @@ describe('AttemptNetwork', () => {
       const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'read' } } });
       const { net } = network(fake);
       await net.bind('user-1');
-      const done = (id: string, status = 200) => ({ ...request(id, `${SITE}/${id}`, []), response: { url: `${SITE}/${id}`, status, headers: status === 302 ? LOCATION : [] } });
+      const done = (id: string, status = 200) => responded(id, `${SITE}/${id}`, status, { headers: status === 302 ? LOCATION : [] });
       fake.emit('network.responseCompleted', done('asset'));
       fake.emit('network.responseCompleted', done('hop', 302));
       const waiting = net.waitForResponse((url) => url.endsWith('/waited'), AbortSignal.timeout(5_000));
@@ -1233,7 +1240,7 @@ describe('AttemptNetwork', () => {
       const first = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
       const second = net.waitForResponse(() => true, AbortSignal.timeout(5_000));
       await settle();
-      const event = { ...request('r', `${SITE}/r`, []), response: { url: `${SITE}/r`, status: 200, headers: [] } };
+      const event = responded('r', `${SITE}/r`, 200);
       fake.emit('network.responseStarted', event);
       fake.emit('network.responseCompleted', event);
       const bodies = await Promise.all([first, second].map(async (wait) => String(await (await wait).body())));
@@ -1249,10 +1256,10 @@ describe('AttemptNetwork', () => {
       await open('tab');
       await net.addRoute(route('**/api', async (_held, decisions) => decisions.continue({})));
       const posted = request('post', `${SITE}/form`);
-      const post = { ...posted, request: { ...(posted['request'] as object), method: 'POST', bodySize: 3 } };
+      const post = { ...posted, request: { ...posted.request, method: 'POST', bodySize: 3 } };
       fake.emit('network.beforeRequestSent', post);
       await settle();
-      fake.emit('network.responseCompleted', { ...post, response: { url: `${SITE}/form`, status: 200, headers: [] } });
+      fake.emit('network.responseCompleted', { ...post, response: responseData(`${SITE}/form`, 200) });
       await settle();
       expect(fake.commands('network.disownData').map((command) => command.params)).toContainEqual({ dataType: 'request', collector: 'collector-1', request: 'post' });
     });
@@ -1264,14 +1271,14 @@ describe('AttemptNetwork', () => {
       await open('tab');
       await net.addRoute(route('**/api', async (_held, decisions) => decisions.continue({})));
       const posted = request('post', `${SITE}/form`);
-      const post = { ...posted, request: { ...(posted['request'] as object), method: 'POST', bodySize: 3 } };
+      const post = { ...posted, request: { ...posted.request, method: 'POST', bodySize: 3 } };
       fake.emit('network.beforeRequestSent', post);
       await settle();
-      fake.emit('network.responseCompleted', { ...post, response: { url: `${SITE}/form`, status: 303, headers: [{ name: 'Location', value: { type: 'string', value: '/done' } }] } });
+      fake.emit('network.responseCompleted', { ...post, response: responseData(`${SITE}/form`, 303, { headers: [{ name: 'Location', value: { type: 'string', value: '/done' } }] }) });
       const followed = { ...request('post', `${SITE}/done`), redirectCount: 1 };
       fake.emit('network.beforeRequestSent', followed);
       await settle();
-      fake.emit('network.responseCompleted', { ...followed, response: { url: `${SITE}/done`, status: 200, headers: [] } });
+      fake.emit('network.responseCompleted', { ...followed, response: responseData(`${SITE}/done`, 200) });
       await settle();
       expect(fake.commands('network.disownData').map((command) => command.params)).toContainEqual({ dataType: 'request', collector: 'collector-1', request: 'post' });
     });
