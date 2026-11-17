@@ -103,9 +103,48 @@ export function createDom(key: string) {
     element.getClientRects().length > 0 ? element : ([...element.querySelectorAll('*')].find((child) => child.getClientRects().length > 0) ?? element.parentElement);
 
   /**
+   * Whether the style turns a containment on (CSS Containment 2): a
+   * `contain` other than `none`, a `content-visibility` other than
+   * `visible`, or a `container-type` of `size` or `inline-size`. Read off
+   * the style alone: one the element's kind of box would not take counts too.
+   */
+  const contained = (style: CSSStyleDeclaration): boolean =>
+    style.contain !== 'none' || style.contentVisibility !== 'visible' || style.containerType.includes('size');
+
+  /**
+   * Whether the viewport takes the element's `overflow`, which leaves the
+   * element a used value of `visible` (CSS Overflow 3, "Overflow viewport
+   * propagation"): the root element's, and in its place that of the first
+   * child of an `<html>` root that is a `<body>` not `display: none`, while
+   * the root's is `visible` on both axes and neither of the two has a
+   * containment (`contained`).
+   */
+  const viewportTakesOverflow = (element: Element): boolean => {
+    const root = document.documentElement;
+    if (element === root) return true;
+    if (!(root instanceof HTMLHtmlElement) || element.parentNode !== root) return false;
+    const rootStyle = getComputedStyle(root);
+    if (rootStyle.overflowX !== 'visible' || rootStyle.overflowY !== 'visible' || contained(rootStyle)) return false;
+    const body = [...root.children].find((child) => child instanceof HTMLBodyElement && getComputedStyle(child).display !== 'none');
+    return body === element && !contained(getComputedStyle(element));
+  };
+
+  /**
+   * The axes on which the element clips what overflows its box: those its
+   * used `overflow` is not `visible` on. Neither for a `display: contents`
+   * element, which lays out no box to clip to, nor for one whose `overflow`
+   * the viewport takes (`viewportTakesOverflow`).
+   */
+  const clips = (element: Element): { x: boolean; y: boolean } => {
+    const style = getComputedStyle(element);
+    if (style.display === 'contents' || viewportTakesOverflow(element)) return { x: false, y: false };
+    return { x: style.overflowX !== 'visible', y: style.overflowY !== 'visible' };
+  };
+
+  /**
    * What shows of `rect`, a box of `element`: what the viewport and every
-   * flat-tree ancestor that clips its overflow leave of it; null when under
-   * a pixel does.
+   * flat-tree ancestor that clips its overflow (`clips`) leave of it; null
+   * when under a pixel does.
    */
   const clipped = (element: Element, rect: DOMRect): Area | null => {
     const { width, height } = viewport();
@@ -114,18 +153,20 @@ export function createDom(key: string) {
     let right = Math.min(rect.right, width);
     let bottom = Math.min(rect.bottom, height);
     let position = getComputedStyle(element).position;
-    for (let at = parentOf(element); at !== null && at !== document.documentElement; at = parentOf(at)) {
-      const clip = getComputedStyle(at);
-      const transformed = clip.transform !== 'none' || clip.filter !== 'none' || clip.perspective !== 'none' || clip.contain.includes('paint') || clip.contain.includes('layout');
+    for (let at = parentOf(element); at !== null; at = parentOf(at)) {
+      const style = getComputedStyle(at);
+      const transformed = style.transform !== 'none' || style.filter !== 'none' || style.perspective !== 'none' || style.contain.includes('paint') || style.contain.includes('layout');
       if (position === 'fixed' && !transformed) continue;
-      if (position === 'absolute' && !transformed && clip.position === 'static') continue;
-      position = clip.position;
+      if (position === 'absolute' && !transformed && style.position === 'static') continue;
+      position = style.position;
+      const axes = clips(at);
+      if (!axes.x && !axes.y) continue;
       const bounds = at.getBoundingClientRect();
-      if (clip.overflowX !== 'visible') {
+      if (axes.x) {
         left = Math.max(left, bounds.left);
         right = Math.min(right, bounds.right);
       }
-      if (clip.overflowY !== 'visible') {
+      if (axes.y) {
         top = Math.max(top, bounds.top);
         bottom = Math.min(bottom, bounds.bottom);
       }
@@ -239,7 +280,7 @@ export function createDom(key: string) {
     target.dispatchEvent(new EventClass('change', { bubbles: true }));
   };
 
-  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, keepEvent, fireEdit };
+  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, clips, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, keepEvent, fireEdit };
 }
 
 /** The shared DOM helpers, as a page function takes them. */

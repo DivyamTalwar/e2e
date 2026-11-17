@@ -139,15 +139,16 @@ export function labelStandIn(node: Element): Outcome<{ label: HTMLLabelElement |
 /**
  * Scrolls an element into view as Playwright's `scrollIntoViewIfNeeded`
  * does: once it holds still for a frame, and only when some of it is out of
- * the viewport or a scrolling ancestor (to its nearest edge there), one
- * around its shadow host or the slot it is assigned to included. In the
- * viewport each axis follows Chromium's center-if-needed, which Playwright's
- * rect scroll uses: a box wholly out is centred, a box partly out goes to
- * its closest edge, start unless it is smaller than the view and past its
- * end or larger and short of it. Any element with a box counts, a zero-sized or
- * `visibility: hidden` one included; a `display: contents` element counts by
- * the boxes of its contents. Not yet while nothing lays out a box (it may
- * appear) or the box moves.
+ * the viewport or an ancestor that clips its overflow (`clips` in `dom.ts`;
+ * to its nearest edge there), one around its shadow host or the slot it is
+ * assigned to included. In the viewport each axis follows Chromium's
+ * center-if-needed, which Playwright's rect scroll uses: a box wholly out is
+ * centred, a box partly out goes to its closest edge, start unless it is
+ * smaller than the view and past its end or larger and short of it. Any
+ * element with a box counts, a zero-sized or `visibility: hidden` one
+ * included; a `display: contents` element counts by the boxes of its
+ * contents. Not yet while nothing lays out a box (it may appear) or the box
+ * moves.
  */
 export const scrollIntoViewIfNeeded = withDom(async (dom, element: Element): Promise<Outcome> => {
   if (!element.isConnected) return { kind: 'detached' };
@@ -164,8 +165,9 @@ export const scrollIntoViewIfNeeded = withDom(async (dom, element: Element): Pro
   const outside = (area: { left: number; top: number; right: number; bottom: number }): boolean =>
     rect.left < area.left || rect.top < area.top || rect.right > area.right || rect.bottom > area.bottom;
   let container = false;
-  for (let at = dom.parentOf(element); !container && at !== null && at !== document.documentElement; at = dom.parentOf(at)) {
-    if (getComputedStyle(at).overflow !== 'visible') container = outside(at.getBoundingClientRect());
+  for (let at = dom.parentOf(element); !container && at !== null; at = dom.parentOf(at)) {
+    const axes = dom.clips(at);
+    if (axes.x || axes.y) container = outside(at.getBoundingClientRect());
   }
   const { width, height } = dom.viewport();
   if (container || outside({ left: 0, top: 0, right: width, bottom: height })) {
