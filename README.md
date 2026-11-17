@@ -48,6 +48,25 @@ To see a finished setup in your stack, open
 Vite, Next.js, Astro, Angular, Expo, SwiftUI, Jetpack Compose, Kotlin Multiplatform,
 Flutter, and .NET MAUI, each a standalone project with a passing suite.
 
+## MCP server
+
+`npx e2e mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
+server over stdio. It gives a coding agent such as Claude Code, Codex, or
+Cursor a live session on your app, on web, iOS, or Android: the agent sees
+the screen, acts on it, gets back the test line that repeats each action, and
+runs your suite. The server needs no model.
+
+```json
+{
+  "mcpServers": {
+    "e2e": { "command": "npx", "args": ["e2e", "mcp"] }
+  }
+}
+```
+
+See the [MCP server docs](https://e2e.com/docs/mcp-server) for setup and
+every tool.
+
 ## Packages
 
 ### Core
