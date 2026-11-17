@@ -139,8 +139,8 @@ export function labelStandIn(node: Element): Outcome<{ label: HTMLLabelElement |
 /**
  * Scrolls an element into view as Playwright's `scrollIntoViewIfNeeded`
  * does: once it holds still for a frame, and only when some of it is out of
- * the viewport or an ancestor that clips its overflow (`clips` in `dom.ts`;
- * to its nearest edge there), one around its shadow host or the slot it is
+ * the viewport or an ancestor that clips it (`clippers` in `dom.ts`; to its
+ * nearest edge there), one around its shadow host or the slot it is
  * assigned to included. In the viewport each axis follows Chromium's
  * center-if-needed, which Playwright's rect scroll uses: a box wholly out is
  * centred, a box partly out goes to its closest edge, start unless it is
@@ -164,11 +164,7 @@ export const scrollIntoViewIfNeeded = withDom(async (dom, element: Element): Pro
   const rect = held.box;
   const outside = (area: { left: number; top: number; right: number; bottom: number }): boolean =>
     rect.left < area.left || rect.top < area.top || rect.right > area.right || rect.bottom > area.bottom;
-  let container = false;
-  for (let at = dom.parentOf(element); !container && at !== null; at = dom.parentOf(at)) {
-    const axes = dom.clips(at);
-    if (axes.x || axes.y) container = outside(at.getBoundingClientRect());
-  }
+  const container = dom.clippers(element).some((clipper) => outside(clipper.bounds));
   const { width, height } = dom.viewport();
   if (container || outside({ left: 0, top: 0, right: width, bottom: height })) {
     const axis = (start: number, end: number, view: number): ScrollLogicalPosition => {

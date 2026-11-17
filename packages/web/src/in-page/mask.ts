@@ -84,7 +84,7 @@ export const maskSecureFields = withDom((dom, selector: string, token: string): 
   };
   const layerOf = (field: Element): Element | null => {
     for (let at: Element | null = field; at !== null; at = dom.parentOf(at)) {
-      if (at.matches(':modal, :popover-open, :fullscreen')) return dom.turned(at) ? null : at;
+      if (dom.inTopLayer(at)) return dom.turned(at) ? null : at;
     }
     return null;
   };
@@ -183,7 +183,7 @@ export const unmaskSecureFields = withDom((dom, token: string): boolean => {
     return style.display !== 'none' && style.visibility === 'visible' && style.opacity === '1';
   };
   const placed = ({ container, host }: Mask['hosts'][number]): boolean =>
-    (container === null ? host.matches(':popover-open') : host.parentNode === container && container.matches(':modal, :popover-open, :fullscreen')) && painted(host);
+    (container === null ? host.matches(':popover-open') : host.parentNode === container && dom.inTopLayer(container)) && painted(host);
   const covers = ({ field, box }: Mask['boxes'][number]): boolean => {
     const target = field.getBoundingClientRect();
     const drawn = box.getBoundingClientRect();

@@ -1,8 +1,11 @@
 /**
  * Which ancestors clip a node. The viewport takes the root's `overflow` and,
  * by CSS Overflow 3's viewport propagation, the `<body>`'s, so neither clips
- * to its own box; a `display: contents` element has no box to clip to.
- * Everything else with an `overflow` other than `visible` clips.
+ * to its own box; a `display: contents` element has no box to clip to, and
+ * none a positioned node could be laid out against. A top-layer element (a
+ * modal dialog, an open popover, a fullscreen element) is laid out against
+ * the viewport, so nothing around it clips what it holds. Everything else
+ * with an `overflow` other than `visible` clips what is laid out in it.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -25,6 +28,12 @@ const BELOW = `<div style="height:2000px"></div>${BUTTON}<div style="height:600p
 
 /** A button drawn above its parent's box, where no scroll of the parent brings it. */
 const ABOVE = BUTTON.replace('style="', 'style="position:relative;top:-80px;');
+
+/** The button with `css` before its size. */
+const styled = (css: string): string => BUTTON.replace('style="', `style="${css};`);
+
+/** How far the button's top is from where a centred button's would be. */
+const offCentre = (): Promise<number> => page.browser.evaluate(() => document.querySelector('button')!.getBoundingClientRect().top - (innerHeight - 24) / 2);
 
 const title = (): Promise<string> => page.browser.evaluate(() => document.title);
 
@@ -106,13 +115,90 @@ describe('clip containers', () => {
     expect(await title()).toBe('clicked');
   });
 
+  it.each([
+    ['a modal dialog under a transformed ancestor', `<div style="transform:translateX(0);overflow:hidden;height:40px"><dialog>${BUTTON}</dialog></div>`, 'document.querySelector("dialog").showModal()'],
+    ['an open popover under a positioned ancestor', `<div style="position:relative;overflow:hidden;height:40px"><div popover style="position:absolute;inset:auto;top:80px">${BUTTON}</div></div>`, 'document.querySelector("[popover]").showPopover()'],
+    [
+      'an open popover inside a modal dialog that clips its own content',
+      `<dialog style="overflow:hidden;height:40px"><div popover style="position:absolute;inset:auto;top:10px;left:10px">${BUTTON}</div></dialog>`,
+      'document.querySelector("dialog").showModal(); document.querySelector("[popover]").showPopover()',
+    ],
+  ])('taps a target in a top-layer element past an overflow: hidden ancestor, which does not clip it: %s', async (_name, html, open) => {
+    await page.setContent(`<!doctype html>${html}<script>${open}</script>`);
+    expect(await painted()).toBe(true);
+    await page.act(bySelector('button'), { kind: 'tap' });
+    expect(await title()).toBe('clicked');
+  });
+
+  it.each([
+    ['a modal dialog', `<dialog style="overflow:hidden">${ABOVE}</dialog>`, 'document.querySelector("dialog").showModal()'],
+    ['an open popover', `<div popover style="overflow:hidden">${ABOVE}</div>`, 'document.querySelector("[popover]").showPopover()'],
+  ])('refuses a tap on a target a top-layer element clips by its own overflow: %s', async (_name, html, open) => {
+    await page.setContent(`<!doctype html>${html}<script>${open}</script>`);
+    expect(await painted()).toBe(false);
+    await expectClipped();
+  });
+
+  it.each([
+    ['position: relative, under an absolute target', 'position:relative', 'position:absolute;top:100px'],
+    ['a transform, under a fixed target', 'transform:translateX(0)', 'position:fixed;top:100px'],
+  ])('taps a target past an overflow: hidden box that a display: contents ancestor does not lay it out against: %s', async (_name, contents, target) => {
+    await page.setContent(`<!doctype html><div style="overflow:hidden;height:20px"><div style="display:contents;${contents}">${styled(target)}</div></div>`);
+    expect(await painted()).toBe(true);
+    await page.act(bySelector('button'), { kind: 'tap' });
+    expect(await title()).toBe('clicked');
+  });
+
+  it('refuses a tap on a target clipped by the positioned box around a display: contents element', async () => {
+    await page.setContent(`<!doctype html><div style="margin-top:100px;position:relative;overflow:hidden;height:20px"><div style="display:contents">${styled('position:absolute;top:-80px')}</div></div>`);
+    expect(await painted()).toBe(false);
+    await expectClipped();
+  });
+
+  it('refuses a tap on a display: contents target with a position of its own, clipped by the box its text is laid out in', async () => {
+    await page.setContent(`<!doctype html><div style="margin-top:100px;overflow:hidden;height:20px"><div style="margin-top:-80px;height:24px">${styled('display:contents;position:absolute')}</div></div>`);
+    expect(await painted()).toBe(false);
+    await expectClipped();
+  });
+
   it('centres a node it scrolls into view, with and without an overflow on the body that the viewport takes', async () => {
     const tops: number[] = [];
     for (const css of ['', 'html, body { height: 100%; margin: 0 } body { overflow-x: hidden }']) {
       await page.setContent(`<!doctype html><style>body { margin: 0 } ${css}</style>${BELOW}`);
       await page.act(bySelector('button'), { kind: 'scrollIntoView' });
-      tops.push(await page.browser.evaluate(() => document.querySelector('button')!.getBoundingClientRect().top - (innerHeight - 24) / 2));
+      tops.push(await offCentre());
     }
     expect(tops).toEqual([0, 0]);
+  });
+
+  it.each([
+    ['in an open popover', `<div popover style="position:absolute;inset:auto;top:2000px;margin:0;padding:0;border:0">${BUTTON}</div>`, 'document.querySelector("[popover]").showPopover()'],
+    ['absolute, under a display: contents element with position: relative', `<div style="display:contents;position:relative">${styled('position:absolute;top:2000px')}</div>`, ''],
+    ['absolute, with no positioned ancestor', styled('position:absolute;top:2000px'), ''],
+  ])('centres a node it scrolls into view past an overflow: hidden ancestor that does not clip it: %s', async (_name, html, open) => {
+    await page.setContent(`<!doctype html><style>body { margin: 0 }</style><div style="overflow:hidden;height:40px">${html}</div><div style="height:4000px"></div><script>${open}</script>`);
+    await page.act(bySelector('button'), { kind: 'scrollIntoView' });
+    expect(await offCentre()).toBe(0);
+  });
+
+  it('scrolls a node to the nearest edge of the positioned overflow: hidden box that clips it', async () => {
+    await page.setContent(`<!doctype html><style>body { margin: 0 }</style><div style="position:relative;overflow:hidden;height:100px">${styled('position:absolute;top:300px')}</div>`);
+    await page.act(bySelector('button'), { kind: 'scrollIntoView' });
+    expect(await page.browser.evaluate(() => document.querySelector('button')!.getBoundingClientRect().bottom)).toBe(100);
+  });
+
+  it('taps a target in a fullscreen element past an overflow: hidden ancestor, which does not clip it', async () => {
+    await page.setContent(`<!doctype html><div style="transform:translateX(0);overflow:hidden;height:40px">
+      <span id="enter" onclick="document.getElementById('stage').requestFullscreen()">Enter</span>
+      <div id="stage" style="background:white">${styled('position:relative;top:200px')}</div>
+    </div>
+    <script>window.entered = new Promise((resolve) => document.addEventListener('fullscreenchange', resolve, { once: true }));</script>`);
+    await page.act(bySelector('#enter'), { kind: 'tap' });
+    await page.browser.evaluate('window.entered.then(() => null)');
+    expect(await page.browser.evaluate(() => document.fullscreenElement?.id ?? null)).toBe('stage');
+    expect(await painted()).toBe(true);
+    await page.act(bySelector('button'), { kind: 'tap' });
+    expect(await title()).toBe('clicked');
+    await page.browser.evaluate(() => document.exitFullscreen().then(() => null));
   });
 });

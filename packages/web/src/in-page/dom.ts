@@ -131,22 +131,50 @@ export function createDom(key: string) {
     return body === element && !contained(getComputedStyle(element));
   };
 
+  /** Whether the element is in the top layer: a modal dialog, an open popover, or a fullscreen element. */
+  const inTopLayer = (element: Element): boolean => element.matches(':modal, :popover-open, :fullscreen');
+
   /**
-   * The axes on which the element clips what overflows its box: those its
-   * used `overflow` is not `visible` on. Neither for a `display: contents`
-   * element, which lays out no box to clip to, nor for one whose `overflow`
-   * the viewport takes (`viewportTakesOverflow`).
+   * The flat-tree parent whose box the element's own is laid out under;
+   * none for a top-layer element (`inTopLayer`), which is laid out against
+   * the viewport whatever holds it in the document.
    */
-  const clips = (element: Element): { x: boolean; y: boolean } => {
-    const style = getComputedStyle(element);
-    if (style.display === 'contents' || viewportTakesOverflow(element)) return { x: false, y: false };
-    return { x: style.overflowX !== 'visible', y: style.overflowY !== 'visible' };
+  const layoutParentOf = (element: Element): Element | null => (inTopLayer(element) ? null : parentOf(element));
+
+  /**
+   * The ancestors that clip the element's boxes, innermost first, each as
+   * its box and the axes it clips on: those its used `overflow` is not
+   * `visible` on. They are the flat-tree ancestors the element is laid out
+   * in, up to the top-layer element that holds it (`layoutParentOf`): one a
+   * `fixed` or `absolute` box is not laid out against clips nothing of it,
+   * nor does a `display: contents` one, which lays out no box to clip to or
+   * to lay a box out against, whatever its `position` or `transform`, nor
+   * one whose `overflow` the viewport takes (`viewportTakesOverflow`). A
+   * `display: contents` element's own boxes are its contents', laid out in
+   * its parent whatever its `position`.
+   */
+  const clippers = (element: Element): { bounds: DOMRect; x: boolean; y: boolean }[] => {
+    const found: { bounds: DOMRect; x: boolean; y: boolean }[] = [];
+    const own = getComputedStyle(element);
+    let position = own.display === 'contents' ? 'static' : own.position;
+    for (let at = layoutParentOf(element); at !== null; at = layoutParentOf(at)) {
+      const style = getComputedStyle(at);
+      if (style.display === 'contents') continue;
+      const transformed = style.transform !== 'none' || style.filter !== 'none' || style.perspective !== 'none' || style.contain.includes('paint') || style.contain.includes('layout');
+      if (position === 'fixed' && !transformed) continue;
+      if (position === 'absolute' && !transformed && style.position === 'static') continue;
+      position = style.position;
+      if (viewportTakesOverflow(at)) continue;
+      const [x, y] = [style.overflowX !== 'visible', style.overflowY !== 'visible'];
+      if (x || y) found.push({ bounds: at.getBoundingClientRect(), x, y });
+    }
+    return found;
   };
 
   /**
    * What shows of `rect`, a box of `element`: what the viewport and every
-   * flat-tree ancestor that clips its overflow (`clips`) leave of it; null
-   * when under a pixel does.
+   * ancestor that clips the element (`clippers`) leave of it; null when
+   * under a pixel does.
    */
   const clipped = (element: Element, rect: DOMRect): Area | null => {
     const { width, height } = viewport();
@@ -154,21 +182,12 @@ export function createDom(key: string) {
     let top = Math.max(rect.top, 0);
     let right = Math.min(rect.right, width);
     let bottom = Math.min(rect.bottom, height);
-    let position = getComputedStyle(element).position;
-    for (let at = parentOf(element); at !== null; at = parentOf(at)) {
-      const style = getComputedStyle(at);
-      const transformed = style.transform !== 'none' || style.filter !== 'none' || style.perspective !== 'none' || style.contain.includes('paint') || style.contain.includes('layout');
-      if (position === 'fixed' && !transformed) continue;
-      if (position === 'absolute' && !transformed && style.position === 'static') continue;
-      position = style.position;
-      const axes = clips(at);
-      if (!axes.x && !axes.y) continue;
-      const bounds = at.getBoundingClientRect();
-      if (axes.x) {
+    for (const { bounds, x, y } of clippers(element)) {
+      if (x) {
         left = Math.max(left, bounds.left);
         right = Math.min(right, bounds.right);
       }
-      if (axes.y) {
+      if (y) {
         top = Math.max(top, bounds.top);
         bottom = Math.min(bottom, bounds.bottom);
       }
@@ -282,7 +301,7 @@ export function createDom(key: string) {
     target.dispatchEvent(new EventClass('change', { bubbles: true }));
   };
 
-  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, clips, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, keepEvent, fireEdit };
+  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, inTopLayer, clippers, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, keepEvent, fireEdit };
 }
 
 /** The shared DOM helpers, as a page function takes them. */
