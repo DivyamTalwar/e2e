@@ -137,6 +137,9 @@ interface BidiOpen {
   readonly signal: AbortSignal;
 }
 
+/** How long a closing session waits for the browser to answer its goodbye before the connection is dropped anyway. */
+const GOODBYE_MS = 2_000;
+
 /**
  * Connects to a browser and opens its BiDi session, the tail of a launch and
  * of an attach. A failure or `signal` aborting at any stage closes the
@@ -155,7 +158,7 @@ async function open(spec: BidiOpen): Promise<BidiBrowser> {
       connection: opened,
       exclusive: owned !== undefined,
       close: async () => {
-        await Promise.race([releaseQuietly(opened.send(owned === undefined ? 'session.end' : 'browser.close', {})), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+        await releaseQuietly(withTimeout(opened.send(owned === undefined ? 'session.end' : 'browser.close', {}), GOODBYE_MS, () => new Error('the browser did not answer its goodbye')));
         opened.close();
         if (owned !== undefined) await stopped(owned);
       },
