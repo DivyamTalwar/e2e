@@ -130,8 +130,10 @@ await expect(screen).toHaveScreenshot('dashboard.png', {
 | `maskColor` | `#ff00ff` | Color of the mask boxes |
 | `timeout` | `assertionTimeout` | Assertion budget in milliseconds |
 
-On the web, e2e stops animations and hides the text caret. On iOS and
-Android, it holds the status bar fixed, so the clock and battery match on
+On the web, e2e hides the text caret. It does not stop animations, and a
+screen that keeps moving fails: turn the app's animations off first, such as
+with `web({ reducedMotion: 'reduce' })` in an app that honors it. On iOS and
+Android, e2e holds the status bar fixed, so the clock and battery match on
 every run.
 
 e2e masks secure fields in every screenshot, after a secret fill too. The

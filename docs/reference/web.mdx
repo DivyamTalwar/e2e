@@ -609,6 +609,9 @@ It does not follow redirects, which could take it past the navigation rule.
   character, and `\` escapes the next. `unroute` and `waitForResponse` take
   the same patterns.
 - A route survives `app.restart()`, `app.clearState()`, and session restore.
+- A stylesheet or an image that an earlier page of the attempt loaded can
+  come from the browser's cache, with no request for a route to see. Add the
+  route before the page opens.
 - Routes run newest first.
 - The handler must decide exactly once, with `fulfill`, `continue`,
   `fallback`, or `abort`, each described on `WebRoute` below.
@@ -909,8 +912,8 @@ await screen.getByRole('textbox', 'Verification code').fill(code);
   cookies and storage, and makes it active. Navigate it with `goto`.
 - A tab whose opener closed before the tab loaded is listed too.
 - The screencast records the active tab, one video segment per change. A tab
-  that closes itself keeps no segment, since its page closes before the
-  recording can be saved. A provider's own recording covers every tab.
+  that closes itself loses its segment when its page closes before the
+  recording is saved. A provider's own recording covers every tab.
 
 ```ts
 /** One tab of the browser the attempt drives. */

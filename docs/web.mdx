@@ -217,9 +217,9 @@ corner:
 { name: 'window', engine: web({ viewport: null }), app }
 ```
 
-A local headed launch opens a small window. A hosted browser uses the
-window size you requested from the service. `browser.setViewport` still
-works.
+A local headed launch opens the browser's default window. A hosted browser
+uses the window size you requested from the service. `browser.setViewport`
+still works.
 
 ### Resize inside a test
 
@@ -283,7 +283,8 @@ and run it with `--config`.
 ### Limits
 
 A narrow viewport tests responsive layout only. The browser is still a
-desktop browser: scale factor 1, desktop pointer, and its usual user agent.
+desktop browser: the display's scale factor (1 in a headless run), desktop
+pointer, and its usual user agent.
 It doesn't emulate touch. To test on a simulator or emulator, use the
 [mobile engine](/mobile). For dark mode and reduced motion, see
 [Emulate dark mode and reduced motion](/browser#emulate-dark-mode-and-reduced-motion).
