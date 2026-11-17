@@ -108,6 +108,8 @@ describe('the 3xx response that ends a request', () => {
   });
 
   it('goes idle after every 3xx that ended a request, followed or not', async () => {
+    // Requests are counted from the first idle wait on, so one comes before the fetches: Chromium listens to none until then.
+    await browser.goto(page, { waitUntil: 'networkidle' });
     for (const status of [...FOLLOWED, ...NOT_FOLLOWED]) await fetched(`/status/${String(status)}`);
     expect(await browser.evaluate(() => fetch('/status/302', { redirect: 'manual' }).then((reply) => reply.type))).toBe('opaqueredirect');
     expect(landed).toBe(FOLLOWED.length);
