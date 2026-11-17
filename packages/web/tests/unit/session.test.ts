@@ -149,7 +149,7 @@ describe('BidiInput.send', () => {
       .on('script.callFunction', () => ({ result: { type: 'success', realm: 'r', result: shown ? { type: 'undefined' } : { type: 'boolean', value: false } } }));
     const held = await session(fake, 'firefox');
     await held.input.send(clickSources(5, 5));
-    await held.input.send([typeSource('a')]);
+    await held.input.send([typeSource(['a'])]);
     expect(fake.commands('browsingContext.activate').map((command) => command.params)).toEqual([{ context: 'tab' }]);
     expect(fake.commands('input.performActions')).toHaveLength(2);
   });

@@ -175,7 +175,7 @@ export async function typeInto(session: BidiSession, text: string, signal: Abort
   let contexts: readonly string[] | undefined;
   for (const run of runs) {
     if (run.keys) {
-      await session.input.send([typeSource(run.graphemes.join(''))], signal);
+      await session.input.send([typeSource(run.graphemes)], signal);
       continue;
     }
     contexts ??= await session.callableDocuments(session.requireContext());

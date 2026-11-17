@@ -14,9 +14,9 @@ describe('input sources', () => {
     ]);
   });
 
-  it('types one grapheme per key, a newline as Enter', () => {
-    expect(typeSource('a👍🏽\n').actions.map((action) => (action.type === 'pause' ? '' : action.value))).toEqual([
-      'a', 'a', '👍🏽', '👍🏽', '', '',
+  it('presses one key per grapheme it is given, a newline as Enter', () => {
+    expect(typeSource(['a', '👍🏽', '\n', '\r\n']).actions.map((action) => (action.type === 'pause' ? '' : action.value))).toEqual([
+      'a', 'a', '👍🏽', '👍🏽', '', '', '', '',
     ]);
   });
 

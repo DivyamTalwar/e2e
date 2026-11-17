@@ -7,12 +7,11 @@ import { KEYS, keyValue, modifierValue } from './keyboard.ts';
 /** Enter's WebDriver value, which a typed newline presses. */
 const ENTER = keyValue(KEYS.get('Enter')!, false)!;
 
-/** The key source that types `text` one grapheme at a time, as a person would; a newline is Enter. */
-export function typeSource(text: string): Input.KeySourceActions {
-  const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+/** The key source that types `graphemes`, one key press each, as a person would; a newline is Enter. */
+export function typeSource(graphemes: readonly string[]): Input.KeySourceActions {
   const actions: Input.KeySourceAction[] = [];
-  for (const { segment } of segmenter.segment(text)) {
-    const value = segment === '\n' || segment === '\r\n' ? ENTER : segment;
+  for (const grapheme of graphemes) {
+    const value = grapheme === '\n' || grapheme === '\r\n' ? ENTER : grapheme;
     actions.push({ type: 'keyDown', value }, { type: 'keyUp', value });
   }
   return { type: 'key', id: 'keyboard', actions };
