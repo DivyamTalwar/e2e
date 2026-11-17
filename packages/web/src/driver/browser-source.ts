@@ -89,7 +89,7 @@ const NOTHING = {
   downloads: (): undefined => undefined,
 };
 
-/** A browser launched on this machine from the pinned build `prepare` installs into the run's browsers cache. */
+/** A browser launched on this machine from the pinned build `prepare` installs into the run's browsers cache, with the `media` the run sets for every page. */
 export function launchSource(browser: BrowserName, media: WebMedia): BrowserSource {
   let run: { readonly headed: boolean; readonly env: Readonly<Record<string, string | undefined>> } | undefined;
   return {
@@ -107,7 +107,7 @@ export function launchSource(browser: BrowserName, media: WebMedia): BrowserSour
     },
     open: ({ signal }) => {
       if (run === undefined) throw new EngineError('ENGINE_FAILURE', 'the browser was asked for before init', { retryable: false });
-      return launchBidiBrowser(browser, { headed: run.headed, env: run.env, timeoutMs: BROWSER_OPEN_TIMEOUT_MS, signal, firefoxPrefs: firefoxMediaPrefs(media) });
+      return launchBidiBrowser(browser, { headed: run.headed, env: run.env, timeoutMs: BROWSER_OPEN_TIMEOUT_MS, signal, media });
     },
   };
 }
@@ -196,15 +196,6 @@ function attach(source: string, resolved: unknown, signal: AbortSignal): Promise
     throw new EngineError('ENGINE_FAILURE', `${source} resolved CDP headers that are not a record of strings`, { retryable: false });
   }
   return connectBidiOverCdp({ endpoint, ...(headers === undefined ? {} : { headers: headers as Readonly<Record<string, string>> }) }, BROWSER_OPEN_TIMEOUT_MS, signal);
-}
-
-/**
- * The Firefox preference that sets reduced motion for every page, which
- * Firefox's BiDi media override leaves out. The color scheme goes through the
- * override alone, so `emulateMedia({ colorScheme: 'no-preference' })` clears it.
- */
-function firefoxMediaPrefs(media: WebMedia): Record<string, number> {
-  return media.reducedMotion === undefined ? {} : { 'ui.prefersReducedMotion': media.reducedMotion === 'reduce' ? 1 : 0 };
 }
 
 /**

@@ -17,7 +17,7 @@ import { ChromiumCdp } from './cdp.ts';
 import { cancelled, releaseQuietly } from '../errors.ts';
 import { chromiumArgs, firefoxArgs } from './launch-flags.ts';
 import { chromiumMapper } from './mapper-transport.ts';
-import type { CdpTarget } from '../options.ts';
+import type { CdpTarget, WebMedia } from '../options.ts';
 import { BidiConnection, type BidiTransport, webSocketTransport } from './connection.ts';
 import { browserExecutable } from '../install/provision.ts';
 
@@ -43,8 +43,8 @@ export interface BidiLaunchOptions {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** Kills the browser and fails the launch `CANCELLED` at any stage. */
   readonly signal: AbortSignal;
-  /** Firefox preferences for this launch, beside the driver's own. */
-  readonly firefoxPrefs?: Readonly<Record<string, string | number | boolean>>;
+  /** The media features the run sets for every page, for a browser that takes one of them only at launch. */
+  readonly media?: WebMedia;
 }
 
 const FIREFOX_ENDPOINT = /WebDriver BiDi listening on (ws:\/\/\S+)/;
@@ -65,7 +65,7 @@ const LAUNCHERS: Readonly<Record<BrowserName, Launcher>> = {
     transport: (watchdog, timeoutMs, signal) => chromiumMapper(endpointLine(watchdog, CHROMIUM_ENDPOINT, timeoutMs).then((url) => ({ url })), timeoutMs, signal),
   },
   firefox: {
-    args: (profile, options) => firefoxArgs(profile, options.headed, options.firefoxPrefs),
+    args: (profile, options) => firefoxArgs(profile, options.headed, options.media),
     transport: (watchdog, timeoutMs, signal) =>
       raceAbort(async () => webSocketTransport(`${await endpointLine(watchdog, FIREFOX_ENDPOINT, timeoutMs)}/session`, timeoutMs), signal, 'BiDi firefox launch'),
   },

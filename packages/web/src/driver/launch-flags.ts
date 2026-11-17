@@ -6,6 +6,7 @@
 
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
+import type { WebMedia } from '../options.ts';
 
 /**
  * The Chromium switches and disabled features an automated run launches
@@ -192,11 +193,17 @@ export function chromiumArgs(profile: string, headed: boolean): string[] {
 }
 
 /**
- * Writes the driver's preferences, then `prefs`, into `profile`, and returns
- * the arguments Firefox launches with on it, its BiDi endpoint on a free port.
+ * Writes the driver's preferences into `profile`, and returns the arguments
+ * Firefox launches with on it, its BiDi endpoint on a free port. The reduced
+ * motion `media` asks for is one of the preferences, set for every page:
+ * Firefox's BiDi media override leaves it out. The color scheme goes through
+ * the override alone, so `emulateMedia({ colorScheme: 'no-preference' })`
+ * clears it.
  */
-export function firefoxArgs(profile: string, headed: boolean, prefs: Readonly<Record<string, string | number | boolean>> | undefined): string[] {
-  const lines = Object.entries({ ...FIREFOX_PREFS, ...prefs }).map(([key, value]) => `user_pref(${JSON.stringify(key)}, ${JSON.stringify(value)});`);
+export function firefoxArgs(profile: string, headed: boolean, media: WebMedia | undefined): string[] {
+  const reducedMotion = media?.reducedMotion;
+  const prefs = { ...FIREFOX_PREFS, ...(reducedMotion === undefined ? {} : { 'ui.prefersReducedMotion': reducedMotion === 'reduce' ? 1 : 0 }) };
+  const lines = Object.entries(prefs).map(([key, value]) => `user_pref(${JSON.stringify(key)}, ${JSON.stringify(value)});`);
   writeFileSync(path.join(profile, 'user.js'), `${lines.join('\n')}\n`);
   return [
     '--remote-debugging-port=0',
