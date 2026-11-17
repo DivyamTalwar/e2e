@@ -200,8 +200,8 @@ export function chromiumArgs(profile: string, headed: boolean): string[] {
  * the override alone, so `emulateMedia({ colorScheme: 'no-preference' })`
  * clears it.
  */
-export function firefoxArgs(profile: string, headed: boolean, media: WebMedia | undefined): string[] {
-  const reducedMotion = media?.reducedMotion;
+export function firefoxArgs(profile: string, headed: boolean, media: WebMedia): string[] {
+  const reducedMotion = media.reducedMotion;
   const prefs = { ...FIREFOX_PREFS, ...(reducedMotion === undefined ? {} : { 'ui.prefersReducedMotion': reducedMotion === 'reduce' ? 1 : 0 }) };
   const lines = Object.entries(prefs).map(([key, value]) => `user_pref(${JSON.stringify(key)}, ${JSON.stringify(value)});`);
   writeFileSync(path.join(profile, 'user.js'), `${lines.join('\n')}\n`);

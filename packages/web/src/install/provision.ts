@@ -9,6 +9,7 @@ import path from 'node:path';
 import { InfrastructureError, type EngineDoctorCheck } from '@e2e-dev/core/engine';
 import { browserPlatform, executablePath, installBuild, PINS, type BrowserPlatform, type BuildName } from './builds.ts';
 import type { BrowserName } from '../browsers.ts';
+import { message } from '../errors.ts';
 import { mirrorOrigin } from './download.ts';
 import { cancelledCheck, withCacheLock, type LockContext, type LockOwner } from './lock.ts';
 
@@ -120,7 +121,7 @@ export async function installBuilds(cacheDir: string, builds: readonly PinnedBui
         await build.install(owner);
       } catch (cause) {
         cancelledCheck(context.signal);
-        throw new InfrastructureError('BROWSER_INSTALL_FAILED', `could not install ${build.label}: ${cause instanceof Error ? cause.message : String(cause)}; ${build.recovery}`, { cause });
+        throw new InfrastructureError('BROWSER_INSTALL_FAILED', `could not install ${build.label}: ${message(cause)}; ${build.recovery}`, { cause });
       }
     }
   });

@@ -85,9 +85,11 @@ export class BidiVideo implements AttemptVideo {
    * no tab shown it only arms. Fails, leaving the recorder disarmed, when
    * Chromium gets no ffmpeg to encode with (it downloads one on first use)
    * or the segment cannot start. A start that finishes after `signal`
-   * aborted is stopped again and fails.
+   * aborted is stopped again and fails. A `stop` that lands while the start
+   * still looks for ffmpeg wins: the start records and arms nothing.
    */
   async start(signal: AbortSignal): Promise<void> {
+    const generation = this.generation;
     let record: SegmentStart;
     if (this.traits.screencast === 'bidi') {
       record = (context, size, absolute) => this.bidiSegment(context, size, absolute);
@@ -95,9 +97,8 @@ export class BidiVideo implements AttemptVideo {
       const ffmpeg = this.ffmpeg ??= await ensureFfmpeg({ ...this.env });
       record = (context, size, absolute) => this.cdpSegment(ffmpeg, context, size, absolute);
     }
-    const generation = this.generation;
     const context = this.tab.shown();
-    if (this.current === undefined && context !== undefined) await this.tracked(this.begin(context, record, true));
+    if (generation === this.generation && this.current === undefined && context !== undefined) await this.tracked(this.begin(context, record, true));
     if (generation === this.generation) this.armed = record;
     if (signal.aborted) {
       await releaseQuietly(this.stop());

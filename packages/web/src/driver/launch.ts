@@ -44,7 +44,7 @@ export interface BidiLaunchOptions {
   /** Kills the browser and fails the launch `CANCELLED` at any stage. */
   readonly signal: AbortSignal;
   /** The media features the run sets for every page, for a browser that takes one of them only at launch. */
-  readonly media?: WebMedia;
+  readonly media: WebMedia;
 }
 
 const FIREFOX_ENDPOINT = /WebDriver BiDi listening on (ws:\/\/\S+)/;

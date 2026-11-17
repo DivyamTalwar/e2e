@@ -2,6 +2,7 @@
 
 import os from 'node:os';
 import { BROWSER_NAMES, isBrowserName, type BrowserName } from './browsers.ts';
+import { message } from './errors.ts';
 import { ensureFfmpeg } from './install/ffmpeg.ts';
 import { installBrowsers } from './install/provision.ts';
 import { installSystemDeps } from './install/system-deps.ts';
@@ -96,7 +97,7 @@ async function runInstall(names: readonly InstallName[], { withDeps, headed }: {
     return signalCode ?? 0;
   } catch (cause) {
     if (signalCode !== undefined) return signalCode;
-    log(cause instanceof Error ? cause.message : String(cause));
+    log(message(cause));
     return 1;
   } finally {
     for (const remove of handlers) remove();

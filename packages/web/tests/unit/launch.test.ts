@@ -24,14 +24,14 @@ function alive(pid: number): boolean {
 describe('launchBidiBrowser', () => {
   it('looks the build up in the browsers cache the run environment names', async () => {
     const cache = path.join(os.tmpdir(), 'e2e-no-such-browsers-cache');
-    await expect(launchBidiBrowser('chromium', { headed: false, timeoutMs: 10_000, env: { E2E_BROWSERS_PATH: cache }, signal: new AbortController().signal })).rejects.toMatchObject({
+    await expect(launchBidiBrowser('chromium', { headed: false, timeoutMs: 10_000, env: { E2E_BROWSERS_PATH: cache }, signal: new AbortController().signal, media: {} })).rejects.toMatchObject({
       code: 'ENGINE_FAILURE',
       message: expect.stringContaining(cache),
     });
   });
 
   it('fails CANCELLED without starting anything once its signal aborted', async () => {
-    await expect(launchBidiBrowser('chromium', { headed: false, timeoutMs: 10_000, env: {}, signal: AbortSignal.abort() })).rejects.toMatchObject({ code: 'CANCELLED' });
+    await expect(launchBidiBrowser('chromium', { headed: false, timeoutMs: 10_000, env: {}, signal: AbortSignal.abort(), media: {} })).rejects.toMatchObject({ code: 'CANCELLED' });
   });
 });
 

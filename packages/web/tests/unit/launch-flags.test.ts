@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 /** The preference lines `firefoxArgs` writes into a fresh profile for `media`. */
-function preferences(media: WebMedia | undefined): string[] {
+function preferences(media: WebMedia): string[] {
   const profile = mkdtempSync(path.join(os.tmpdir(), 'e2e-launch-flags-'));
   profiles.push(profile);
   expect(firefoxArgs(profile, false, media)).toEqual(expect.arrayContaining(['--profile', profile, '--headless']));
@@ -31,10 +31,9 @@ describe('firefoxArgs', () => {
   });
 
   it('leaves reduced motion to the browser when the launch asks for none, and the color scheme to the media override', () => {
-    const own = preferences(undefined);
+    const own = preferences({});
     expect(own).toContain('user_pref("remote.retry-on-abort", false);');
     expect(own.filter((line) => line.includes('prefersReducedMotion'))).toEqual([]);
-    expect(preferences({})).toEqual(own);
     expect(preferences({ colorScheme: 'dark' })).toEqual(own);
   });
 });

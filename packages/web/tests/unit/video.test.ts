@@ -279,4 +279,16 @@ describe('a segment that cannot start', () => {
     expect(fake.commands('goog:cdp.getSession')).toHaveLength(tried);
     await expect(video.stop()).resolves.toEqual([]);
   });
+
+  it('records and arms nothing when a stop lands while its start still looks for ffmpeg', async () => {
+    const fake = new FakeBidi();
+    const shown = recordedTab();
+    shown.state.shown = 'tab';
+    const video = unstartable(fake, shown.tab);
+    const starting = start(video);
+    await expect(video.stop()).resolves.toEqual([]);
+    await expect(starting).resolves.toBeUndefined();
+    await video.contextOpened('tab-2');
+    expect(fake.commands('goog:cdp.getSession')).toHaveLength(0);
+  });
 });
