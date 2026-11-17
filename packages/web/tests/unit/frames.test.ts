@@ -6,14 +6,13 @@
 
 import { describe, expect, it } from 'vitest';
 import type { LocatorExpression, SemanticNode } from '@e2e-dev/core/engine';
-import { ContextTree } from '../../src/driver/context-tree.ts';
 import { childDocuments, FrameRegistry, inViewport, pageParts, resolveFrames, scriptedContexts, splitFrames, placeInFrame } from '../../src/driver/frames.ts';
 import { project, type Projection } from '../../src/driver/projection.ts';
-import { BidiSession } from '../../src/driver/session.ts';
+import type { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS } from '../../src/browsers.ts';
-import { ProtectedApp } from '../../src/protected-app.ts';
 import type { FrameBox } from '../../src/in-page/create-readers.ts';
 import { FakeBidi } from '../helpers/bidi-fake.ts';
+import { unopened } from '../helpers/session-fake.ts';
 import { ElementRef } from '../../src/driver/script.ts';
 
 /** An exact string pattern. */
@@ -72,9 +71,7 @@ async function frames(iframes: Record<string, ScriptedFrame[]>): Promise<{ fake:
     .on('browser.createUserContext', { result: { userContext: 'mine' } })
     .on('network.addDataCollector', { result: { collector: 'c' } })
     .on('browsingContext.create', { result: { context: 'top' } });
-  const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };
-  const attempt = { protectedApp: new ProtectedApp(new Set(), undefined, undefined) };
-  const session = new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS.chromium } as never, settings as never, attempt as never, new ContextTree());
+  const session = unopened(fake, 'chromium', 'fresh', { settings: { viewport: null } });
   await session.openUserContext(new AbortController().signal);
   await session.ensureContext();
   return { fake, session };

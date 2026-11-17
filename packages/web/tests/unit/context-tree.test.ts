@@ -7,11 +7,9 @@
 import type { BrowsingContext, Network } from 'webdriver-bidi-protocol';
 import { describe, expect, it } from 'vitest';
 import { ContextTree } from '../../src/driver/context-tree.ts';
-import { routeEvents } from '../../src/driver/events.ts';
-import { BidiSession } from '../../src/driver/session.ts';
-import { BROWSER_TRAITS } from '../../src/browsers.ts';
-import { ProtectedApp } from '../../src/protected-app.ts';
+import type { BidiSession } from '../../src/driver/session.ts';
 import { contextInfo, FakeBidi, requestData } from '../helpers/bidi-fake.ts';
+import { unopened } from '../helpers/session-fake.ts';
 
 /** A context's info, as `getTree` lists it and its events carry it. */
 function info(context: string, parent: string | null, children: BrowsingContext.Info[] | null = null): BrowsingContext.Info {
@@ -45,10 +43,7 @@ async function attempt(fake: FakeBidi) {
       fake.emit('browsingContext.contextDestroyed', info(String(params['context']), null));
       return { result: {} };
     });
-  const contexts = new ContextTree();
-  const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };
-  const session = new BidiSession({ connection: fake.connection, exclusive: true, traits: BROWSER_TRAITS.chromium } as never, settings as never, { protectedApp: new ProtectedApp(new Set(), undefined, undefined) } as never, contexts);
-  routeEvents(fake.connection, contexts, () => session);
+  const session = unopened(fake, 'chromium', 'fresh', { settings: { viewport: null }, routed: true });
   await session.openUserContext(new AbortController().signal);
   await session.ensureContext();
   fake.emit('browsingContext.contextCreated', info('frame', 'tab'));
