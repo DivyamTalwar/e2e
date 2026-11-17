@@ -219,13 +219,6 @@ getByDisplayValue(value: TextMatch, options?: TextMatchOptions): Locator;
 await screen.getByDisplayValue('ada@example.test').clear();
 ```
 
-<Note>
-In the web engine a `getByDisplayValue` locator cannot be the scope of a
-child query or a `has` filter; both fail with `UNSUPPORTED_CAPABILITY`.
-Playwright has no selector for a control's current value, so the engine
-filters candidates after the fact.
-</Note>
-
 #### `getByTestId`
 
 Matches the node's `testId`.
@@ -329,12 +322,12 @@ or(other: Locator): Locator;
 when both match different nodes, an action throws `LOCATOR_AMBIGUOUS`.
 Add `first()` if either will do. Both locators must come from the same
 screen and attempt. On web, both need identical literal frame-selector
-chains; display-value branches cannot be composed.
+chains.
 
 | Throws | When |
 | --- | --- |
 | `INVALID_LOCATOR` | `other` is not a runner locator, or belongs to another screen or attempt. |
-| `UNSUPPORTED_CAPABILITY` | Web branches have different frame-selector chains, or a branch is a display-value query. |
+| `UNSUPPORTED_CAPABILITY` | Web branches have different frame-selector chains. |
 
 #### `first`
 

@@ -251,8 +251,7 @@ substring; a `RegExp` matches as written.
   key (`visible`) or an empty `filter({})` is `INVALID_LOCATOR`. `a.or(b)`
   matches either, still strict: add `first()` when both may match. Both
   locators must come from the same screen and attempt. Web branches need
-  identical literal frame-selector chains; display-value branches cannot be
-  composed.
+  identical literal frame-selector chains.
 - `visible: true` drops nodes the page hides (a closed drawer) before the
   exactly-one rule. Visibility is what renders, as `toBeVisible()` reads it:
   an `aria-hidden` spinner that paints is visible, so `toBeHidden()` waits

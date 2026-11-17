@@ -459,6 +459,8 @@ describe('web engine lifecycle', () => {
         expect(lacking.map((node) => node.text)).toEqual([expect.stringMatching(/^Third/), expect.stringMatching(/^Other/)]);
         // The heading holds no control, so the same filter leaves it out.
         expect(await engine.locate!({ kind: 'filter', source: byRole('heading'), has: shared }, operation('dv1'))).toEqual([]);
+        // And as either branch of an or: the controls of both values, in document order.
+        expect(names(await engine.locate!({ kind: 'union', left: edited, right: shared }, operation('dv1')))).toEqual(['First', 'Second', 'Third']);
       });
     });
 
