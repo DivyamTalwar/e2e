@@ -1,4 +1,8 @@
-/** Page function results across the BiDi wire: JSON as is, nodes and windows as references, anything else kept as unreadable. */
+/**
+ * Page functions across the BiDi wire: results as JSON, nodes and windows as
+ * references, anything else kept as unreadable, and a function passed a node
+ * run only in that node's document.
+ */
 
 import { describe, expect, it } from 'vitest';
 import { validateJsonValue } from '@e2e-dev/core/engine';
@@ -10,7 +14,48 @@ function returning(result: unknown) {
   return new FakeBidi().on('script.callFunction', { result: { type: 'success', realm: 'r', result } });
 }
 
+/** A node as the check of a call's nodes reads it. */
+interface PageNode {
+  readonly ownerDocument: object | null;
+}
+
+/**
+ * A peer that runs each page function it is sent as a page showing `shown`
+ * would, with the nodes its arguments name by shared id, and answers with
+ * the string the function returns.
+ */
+function pageShowing(shown: PageNode, nodes: Readonly<Record<string, PageNode>>): FakeBidi {
+  const revive = (value: { sharedId?: string; type?: string; value?: unknown }): unknown => {
+    if (value.sharedId !== undefined) return nodes[value.sharedId];
+    if (value.type === 'array') return (value.value as never[]).map(revive);
+    if (value.type === 'object') return Object.fromEntries((value.value as [string, never][]).map(([key, entry]) => [key, revive(entry)]));
+    return value.value;
+  };
+  return new FakeBidi().on('script.callFunction', (params) => {
+    const fn = (new Function('document', `return (${String(params['functionDeclaration'])});`) as (document: PageNode) => (...args: unknown[]) => string)(shown);
+    return { result: { type: 'success', realm: 'r', result: { type: 'string', value: fn(...(params['arguments'] as never[]).map(revive)) } } };
+  });
+}
+
 describe('callFunction', () => {
+  it('sends a function passed no node as it is', async () => {
+    const fake = returning({ type: 'null' });
+    await callFunction(fake.connection, 'tab', '(a, b) => null', [1, { among: ['two'] }]);
+    expect(fake.commands('script.callFunction')[0]!.params['functionDeclaration']).toBe('(a, b) => null');
+  });
+
+  it('runs a function only in the document of every node it is passed, and fails one passed a node of another document as the browser refuses a node', async () => {
+    const shown = { ownerDocument: null, ran: 0 };
+    const fake = pageShowing(shown, { here: { ownerDocument: shown }, gone: { ownerDocument: { ownerDocument: null } }, document: shown });
+    const count = '() => { document.ran += 1; return "ran"; }';
+    await expect(callFunction(fake.connection, 'tab', count, [new ElementRef('here'), { among: [1, new ElementRef('here')] }, new ElementRef('document')])).resolves.toBe('ran');
+    expect(shown.ran).toBe(1);
+    for (const args of [[new ElementRef('gone')], [new ElementRef('here'), { among: [1, new ElementRef('gone')] }]]) {
+      await expect(callFunction(fake.connection, 'tab', count, args)).rejects.toMatchObject({ name: 'BidiError', error: 'no such node' });
+    }
+    expect(shown.ran).toBe(1);
+  });
+
   it('reads nodes and windows as references, and keeps an own __proto__ key', async () => {
     const fake = returning({
       type: 'object',

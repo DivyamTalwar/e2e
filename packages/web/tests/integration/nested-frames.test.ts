@@ -279,7 +279,7 @@ describe('a position inside a framed node', () => {
       expect({ x, y }).toEqual({ x: frame.rect!.x, y: frame.rect!.y });
       const declarations = calls.mock.calls.filter(([method]) => method === 'script.callFunction').map(([, params]) => (params as { functionDeclaration: string }).functionDeclaration);
       expect(declarations.filter((declaration) => declaration === readerCall('tree'))).toHaveLength(2);
-      expect(declarations).not.toContain(readerCall('frameBox'));
+      expect(declarations.filter((declaration) => declaration.includes(readerCall('frameBox')))).toEqual([]);
     } finally {
       vi.restoreAllMocks();
     }

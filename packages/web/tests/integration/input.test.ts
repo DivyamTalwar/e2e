@@ -28,6 +28,12 @@ import { elementAttached, fill, focus, selectOption } from '../../src/in-page/ed
 
 const send = BidiConnection.prototype.send;
 
+/** The browsing context of `params` when they are a call of the page function `fn`, which the driver sends behind a check of the nodes it passes. */
+function callOf(fn: { toString(): string }, params: object): string | undefined {
+  const call = params as { functionDeclaration?: unknown; target?: { context?: string } };
+  return typeof call.functionDeclaration === 'string' && call.functionDeclaration.includes(fn.toString()) ? call.target?.context : undefined;
+}
+
 /**
  * Has the page run `change` just before the driver's next call of the page
  * function `fn`, as an app that changes between a check of the driver's and
@@ -36,10 +42,10 @@ const send = BidiConnection.prototype.send;
 function beforeNext(fn: { toString(): string }, change: string): void {
   let changed = false;
   vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(function (this: BidiConnection, method, params) {
-    const call = params as { functionDeclaration?: unknown; target?: { context?: string } };
-    if (changed || call.functionDeclaration !== fn.toString()) return send.call(this, method, params);
+    const context = changed ? undefined : callOf(fn, params);
+    if (context === undefined) return send.call(this, method, params);
     changed = true;
-    return callFunction(this, call.target!.context!, `() => { ${change} }`).then(() => send.call(this, method, params));
+    return callFunction(this, context, `() => { ${change} }`).then(() => send.call(this, method, params));
   });
 }
 
@@ -51,10 +57,10 @@ function beforeNext(fn: { toString(): string }, change: string): void {
 function navigatedBeforeNext(fn: { toString(): string }, url: string): void {
   let navigated = false;
   vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(function (this: BidiConnection, method, params) {
-    const call = params as { functionDeclaration?: unknown; target?: { context?: string } };
-    if (navigated || call.functionDeclaration !== fn.toString()) return send.call(this, method, params);
+    const context = navigated ? undefined : callOf(fn, params);
+    if (context === undefined) return send.call(this, method, params);
     navigated = true;
-    return send.call(this, 'browsingContext.navigate', { context: call.target!.context!, url, wait: 'complete' }).then(() => send.call(this, method, params));
+    return send.call(this, 'browsingContext.navigate', { context, url, wait: 'complete' }).then(() => send.call(this, method, params));
   });
 }
 
@@ -383,6 +389,28 @@ describe('input', () => {
     });
     await expect(page.engine.perform!(old!.ref, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
     await expect(page.engine.perform!(old!.ref, { kind: 'focus' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    expect(await page.browser.evaluate('document.getElementById("kept").value')).toBe('');
+  });
+
+  it('fails a press, a focus, a fill, and a tap on an observed node of a frame whose document a navigation replaced as stale, and sends its key to nothing', async () => {
+    const framed = page.serve('/framed-before', '<input aria-label=field><button>go</button>');
+    const after = page.serve('/framed-after', '<p>after</p>');
+    await page.setContent(`<input id=kept><iframe id=f src=${JSON.stringify(framed)}></iframe>`);
+    await page.waitForFrames();
+    const nodes = await page.nodes();
+    const field = nodes.find((node) => node.name === 'field')!.ref;
+    const go = nodes.find((node) => node.name === 'go')!.ref;
+    await page.browser.evaluate((url: string) => {
+      document.querySelector('iframe')!.src = url;
+      document.getElementById('kept')!.focus();
+      return null;
+    }, after);
+    await expect.poll(() => page.browser.frameLocator('#f').locator('p').count(), { timeout: 10_000 }).toBe(1);
+    const stale = { code: 'NODE_STALE', retryable: true };
+    await expect(page.engine.perform!(field, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject(stale);
+    await expect(page.engine.perform!(field, { kind: 'focus' }, page.op())).rejects.toMatchObject(stale);
+    await expect(page.engine.perform!(field, { kind: 'fill', value: 'x', sensitive: false }, page.op())).rejects.toMatchObject(stale);
+    await expect(page.engine.perform!(go, { kind: 'tap' }, page.op())).rejects.toMatchObject(stale);
     expect(await page.browser.evaluate('document.getElementById("kept").value')).toBe('');
   });
 

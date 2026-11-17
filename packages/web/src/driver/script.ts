@@ -2,7 +2,7 @@
 
 import type { Script } from 'webdriver-bidi-protocol';
 import { EngineError } from '@e2e-dev/core/engine';
-import { ScriptError } from '../errors.ts';
+import { BidiError, ScriptError } from '../errors.ts';
 import type { BidiConnection } from './connection.ts';
 
 /**
@@ -58,7 +58,9 @@ export interface CallOptions {
 /**
  * Calls `fn` in the context's main world (or the sandbox `options` names)
  * with `args` and resolves with its return value. A page exception rejects
- * as a `ScriptError` the caller classifies.
+ * as a `ScriptError` the caller classifies. A function passed a node runs
+ * only in that node's document (`inOwnDocument`): for a node of another one
+ * the call fails as the browser's own refusal of a node, `no such node`.
  */
 export async function callFunction(
   connection: BidiConnection,
@@ -67,8 +69,10 @@ export async function callFunction(
   args: readonly PageArgument[] = [],
   options: CallOptions = {},
 ): Promise<PageValue> {
+  const source = typeof fn === 'string' ? fn : fn.toString();
+  const nodes = nodePaths(args);
   const result = await connection.send('script.callFunction', {
-    functionDeclaration: typeof fn === 'string' ? fn : fn.toString(),
+    functionDeclaration: nodes.length === 0 ? source : inOwnDocument(source, nodes),
     target: options.sandbox === undefined ? { context } : { context, sandbox: options.sandbox },
     arguments: args.map(toLocalValue),
     awaitPromise: options.awaitPromise ?? false,
@@ -76,7 +80,41 @@ export async function callFunction(
     serializationOptions: { maxDomDepth: 0, maxObjectDepth: options.maxObjectDepth === undefined ? 2 : options.maxObjectDepth, includeShadowTree: 'none' },
   });
   if (result.type === 'exception') throw new ScriptError(result.exceptionDetails.text);
-  return fromRemoteValue(result.result);
+  const value = fromRemoteValue(result.result);
+  if (nodes.length > 0 && value === FOREIGN_NODE) throw new BidiError('script.callFunction', 'no such node', 'the node is of a document its browsing context no longer shows');
+  return value;
+}
+
+/** What a call answers in place of its function's result when a node it was passed is of another document than the one it ran in. */
+const FOREIGN_NODE = 'e2e:node-of-another-document';
+
+/** The keys that lead from `value`, a call's arguments or a value among them at `path`, to each node it holds. */
+function nodePaths(value: PageArgument, path: readonly string[] = []): string[][] {
+  if (value instanceof ElementRef) return [[...path]];
+  if (value === null || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, entry]) => nodePaths(entry, [...path, key]));
+}
+
+/**
+ * `source` as a function that runs only when every node it is passed
+ * (`nodes`, each the keys that lead to one) is of the document it runs in,
+ * and answers `FOREIGN_NODE` otherwise. A shared id names a node for as long
+ * as the node lives, which can be longer than its document shows: Firefox
+ * refuses one only once its browsing context changed, so after a navigation
+ * within the site, or of a frame, it still passes the node of the document
+ * that went away, connected and unseen, where Chromium refuses it. The
+ * function would read that document, or focus nothing in it.
+ */
+function inOwnDocument(source: string, nodes: readonly (readonly string[])[]): string {
+  return `(...args) => {
+  const nodes = ${JSON.stringify(nodes)};
+  for (let at = 0; at < nodes.length; at += 1) {
+    let node = args;
+    for (let key = 0; key < nodes[at].length; key += 1) node = node[nodes[at][key]];
+    if ((node.ownerDocument ?? node) !== document) return ${JSON.stringify(FOREIGN_NODE)};
+  }
+  return (${source})(...args);
+}`;
 }
 
 /** One argument as a BiDi local value. */
