@@ -7,7 +7,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LocatorExpression } from '@e2e-dev/core/engine';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { byRole, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 /** Wraps `source` in `frame` scopes, outermost first, as a `browser.frameLocator` chain does. */
 function withinFrames(selectors: readonly string[], source: LocatorExpression): LocatorExpression {
@@ -18,10 +18,7 @@ function withinFrames(selectors: readonly string[], source: LocatorExpression): 
 }
 
 const BUTTON: LocatorExpression = { kind: 'selector', selector: 'button' };
-const ROLE_BUTTON: LocatorExpression = {
-  kind: 'query',
-  query: { kind: 'role', value: { kind: 'string', value: 'button', exact: true } },
-};
+const ROLE_BUTTON = byRole('button');
 const VISIBLE_BUTTON: LocatorExpression = {
   kind: 'query',
   query: { kind: 'role', value: { kind: 'string', value: 'button', exact: true }, visible: true },

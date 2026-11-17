@@ -1,16 +1,11 @@
 /** Computed node properties come from real elements, including frames and shadow roots. */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ComputedStyleProperty, SemanticNode } from '@e2e-dev/core/engine';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { byRole, flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 /** Finds a listed node by its accessible name. */
 function named(tree: SemanticNode, name: string): SemanticNode | undefined {
-  if (tree.name === name) return tree;
-  for (const child of tree.children ?? []) {
-    const found = named(child, name);
-    if (found !== undefined) return found;
-  }
-  return undefined;
+  return flatten(tree).find((node) => node.name === name);
 }
 
 describe('computed node style', () => {
@@ -76,7 +71,7 @@ describe('computed node style', () => {
 
   it('refuses a locator ref, since style targets are observation refs', async () => {
     await page.setContent('<button>Located</button>');
-    const [located] = await page.locate({ kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'button', exact: true } } });
+    const [located] = await page.locate(byRole('button'));
     await expect(page.engine.readStyle!(located!.ref, ['color'], page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: false });
   });
 

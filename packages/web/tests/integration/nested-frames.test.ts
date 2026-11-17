@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LocatorExpression } from '@e2e-dev/core/engine';
 import { BidiConnection } from '../../src/driver/connection.ts';
 import { readerCall } from '../../src/in-page/readers.ts';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { byRole, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 /** Escapes HTML for a double-quoted attribute value, so a document can carry a nested `srcdoc`. */
 function attribute(html: string): string {
@@ -38,20 +38,8 @@ const HOST_DOCUMENT =
   TWIN_FRAME +
   `<iframe id="outer" title="outer" srcdoc="${attribute(OUTER_DOCUMENT)}"></iframe>`;
 
-/** A role query for the one button named `name`. */
-function buttonNamed(name: string): LocatorExpression {
-  return {
-    kind: 'query',
-    query: {
-      kind: 'role',
-      value: { kind: 'string', value: 'button', exact: true },
-      name: { kind: 'string', value: name, exact: true },
-    },
-  };
-}
-
-const INNER_BUTTON = buttonNamed('Inner button');
-const DEEP_BUTTON = buttonNamed('Deep button');
+const INNER_BUTTON = byRole('button', 'Inner button');
+const DEEP_BUTTON = byRole('button', 'Deep button');
 
 describe('nested frame locators', () => {
   let page: WebSession;
@@ -86,8 +74,7 @@ describe('nested frame locators', () => {
 
   it('reports a located node\'s box in the top-level viewport, past each frame\'s border and padding', async () => {
     // The inner document's one button, whatever an earlier test renamed it to.
-    const button: LocatorExpression = { kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'button', exact: true } } };
-    const [node] = await locate(withinFrames(['#outer', '#inner'], button));
+    const [node] = await locate(withinFrames(['#outer', '#inner'], byRole('button')));
     // The same element's box, measured through both frames' borders and padding.
     const expected = (await page.browser.evaluate(() => {
       let x = 0;
@@ -159,8 +146,8 @@ describe('a cross-site frame', () => {
     const inner = page.serve('/cross-site-button', '<button onclick="this.textContent = \'Clicked\'">Press</button>').replace('127.0.0.1', 'localhost');
     await page.setContent(`<iframe id="site" src="${inner}"></iframe>`);
     await page.waitForFrames();
-    await page.act(withinFrames(['#site'], buttonNamed('Press')), { kind: 'tap' });
-    expect(await page.locate(withinFrames(['#site'], buttonNamed('Clicked')))).toHaveLength(1);
+    await page.act(withinFrames(['#site'], byRole('button', 'Press')), { kind: 'tap' });
+    expect(await page.locate(withinFrames(['#site'], byRole('button', 'Clicked')))).toHaveLength(1);
   });
 });
 
@@ -198,15 +185,15 @@ describe('a frame located through before its document loaded', () => {
 
   /** Taps the frame's button once it loaded, and reads that the page took the tap. */
   async function tapInFrame(): Promise<void> {
-    await expect.poll(async () => (await page.locate(withinFrames(['#late'], buttonNamed('Press')))).length).toBe(1);
-    await page.act(withinFrames(['#late'], buttonNamed('Press')), { kind: 'tap' });
-    expect(await page.locate(withinFrames(['#late'], buttonNamed('Clicked')))).toHaveLength(1);
+    await expect.poll(async () => (await page.locate(withinFrames(['#late'], byRole('button', 'Press')))).length).toBe(1);
+    await page.act(withinFrames(['#late'], byRole('button', 'Press')), { kind: 'tap' });
+    expect(await page.locate(withinFrames(['#late'], byRole('button', 'Clicked')))).toHaveLength(1);
   }
 
   it('still takes a tap the engine sees land', async () => {
     const release = await appendLateFrame('/late-frame');
     // The frame shows its first, empty document. Whatever this locate answers, it leaves that document's own world alone.
-    await page.engine.locate!(withinFrames(['#late'], buttonNamed('Press')), page.op(500)).catch(() => undefined);
+    await page.engine.locate!(withinFrames(['#late'], byRole('button', 'Press')), page.op(500)).catch(() => undefined);
     release();
     await tapInFrame();
   });

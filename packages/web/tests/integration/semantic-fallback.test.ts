@@ -7,16 +7,10 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SemanticNode } from '@e2e-dev/core/engine';
 import { readerCall } from '../../src/in-page/readers.ts';
 import { decodePng } from '../helpers/png.ts';
-import { byTestId, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { byTestId, flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
-
-/** Every semantic ref, including nested documents. */
-function nodes(node: SemanticNode): SemanticNode[] {
-  return [node, ...(node.children ?? []).flatMap(nodes)];
-}
 
 /** Holds every tree read's reply until `release` runs; the read itself runs in the page. */
 function stallTreeReads(): { release: () => void } {
@@ -98,7 +92,7 @@ describe('masked fallback after a stalled semantic reader', () => {
     });
     await page.waitForFrames();
     const fresh = await page.engine.observe!(operation);
-    const observed = nodes(fresh.root);
+    const observed = flatten(fresh.root);
     const ids = observed.map((node) => node.ref.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(located).toBeDefined();

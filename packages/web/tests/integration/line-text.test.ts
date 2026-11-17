@@ -7,7 +7,7 @@
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import type { SemanticNode } from '@e2e-dev/core/engine';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 let page: WebSession;
 
@@ -22,14 +22,7 @@ afterAll(async () => {
 /** Every node of one observation of `html`, in document order. */
 async function observe(html: string): Promise<SemanticNode[]> {
   await page.setContent(html);
-  const { root } = await page.observe();
-  const out: SemanticNode[] = [];
-  const visit = (node: SemanticNode): void => {
-    out.push(node);
-    for (const child of node.children ?? []) visit(child);
-  };
-  for (const child of root.children ?? []) visit(child);
-  return out;
+  return flatten((await page.observe()).root).slice(1);
 }
 
 /** The nodes as `role "name" text`, the parts a model reads. */

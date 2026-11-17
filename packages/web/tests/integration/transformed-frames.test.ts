@@ -7,7 +7,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LocatorExpression } from '@e2e-dev/core/engine';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { byRole, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 /** Escapes HTML for a double-quoted attribute value, so a document can carry a nested `srcdoc`. */
 function attribute(html: string): string {
@@ -20,8 +20,7 @@ const TARGET = `<style>body { margin: 0 } button { margin: 30px 0 0 40px; width:
 
 /** The target button, by its name. */
 function button(name: string, frames: readonly string[]): LocatorExpression {
-  const query: LocatorExpression = { kind: 'query', query: { kind: 'role', value: { kind: 'string', value: 'button', exact: true }, name: { kind: 'string', value: name, exact: true } } };
-  return frames.reduceRight<LocatorExpression>((inner, selector) => ({ kind: 'frame', selector, source: inner }), query);
+  return frames.reduceRight<LocatorExpression>((inner, selector) => ({ kind: 'frame', selector, source: inner }), byRole('button', name));
 }
 
 describe('taps in turned frames', () => {

@@ -17,6 +17,7 @@ import { CLOSED_SHADOW_ROOTS_INIT_SCRIPT, CLOSED_SHADOW_ROOTS_KEY } from '../../
 import { MODAL_ORDER_INIT_SCRIPT } from '../../src/in-page/modal-dialogs.ts';
 import { SECURE_FIELD_SELECTOR, type RawObservedNode } from '../../src/in-page/read-node.ts';
 import { openBidiPage, type BidiPage } from '../helpers/bidi-page.ts';
+import { flatten } from '../helpers/web-session.ts';
 import { assembleTree } from '../../src/driver/observe.ts';
 
 /** One field on which the engine and an oracle read a node differently. */
@@ -105,12 +106,6 @@ const STATES = ['checked', 'disabled', 'expanded', 'selected', 'pressed'] as con
 
 /** The attribute each published element carries its node id in. */
 export const MARKER = 'data-e2e-crosscheck';
-
-function flatten(node: SemanticNode, out: SemanticNode[] = []): SemanticNode[] {
-  out.push(node);
-  for (const child of node.children ?? []) flatten(child, out);
-  return out;
-}
 
 function normalize(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
