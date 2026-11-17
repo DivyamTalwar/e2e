@@ -1,6 +1,7 @@
 /**
  * What becomes of a request one of a user context's intercepts holds: a
- * redirect hop goes on with what its first hop was continued with, a CORS
+ * redirect hop goes on with what its first hop was continued with, a hop
+ * the browser sends again with credentials goes on as it is, a CORS
  * preflight is answered while routes are set, a blank-served tab gets a
  * blank document, and every other request runs the test's routes to one
  * decision (`network.continueRequest`, `provideResponse`, or `failRequest`),
@@ -140,14 +141,18 @@ export class RequestDecisions {
   /**
    * Decides a held request as Playwright does. One with no `record` is not
    * the attempt's (another user context's, or of no frame) and goes on
-   * untouched. Of the attempt's own, a redirect hop goes on with what its
-   * first hop was continued with, a CORS preflight is answered while routes
-   * are set, a request of a `blank`-served tab gets a blank page, and the
-   * rest go through the routes.
+   * untouched. So does a hop whose challenge was answered with credentials:
+   * Firefox announces it again when it sends it with them, carrying what it
+   * was continued with the first time, and deciding it again would run a
+   * route twice for one request and apply header overrides that leave the
+   * credentials out. Of the attempt's others, a redirect hop goes on with
+   * what its first hop was continued with, a CORS preflight is answered
+   * while routes are set, a request of a `blank`-served tab gets a blank
+   * page, and the rest go through the routes.
    */
   decide(event: BidiEventParams<'network.beforeRequestSent'>, record: DecisionRecord | undefined, blank: boolean): void {
     const request = event.request.request;
-    if (record === undefined) {
+    if (record === undefined || record.challenge === 'answered') {
       this.pass(request);
       return;
     }

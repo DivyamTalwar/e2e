@@ -12,7 +12,7 @@
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -36,7 +36,7 @@ async function boot(
 }
 
 /** The engine's `browser` fixture for the open attempt. */
-function browserOf(engine: EngineHandle, app: FixtureApp): Browser {
+function browserOf(engine: EngineHandle, app: Pick<FixtureApp, 'url'>): Browser {
   return browserFixture(engine, { baseUrl: app.url, site: new URL(app.url).hostname });
 }
 
@@ -55,19 +55,21 @@ async function headingAt(engine: EngineHandle, attemptId: string, url: string): 
   return nodes[0]?.name ?? '';
 }
 
+/** The fixture's credential as the `Authorization` header a browser answers a Basic challenge with. */
+const AUTHORIZATION = `Basic ${Buffer.from(`${PROTECTED_CREDENTIAL.username}:${PROTECTED_CREDENTIAL.password}`).toString('base64')}`;
+
 /**
  * A gate that challenges every request for the fixture's credential. With
  * it, `/hop?to=<url>` answers a redirect to `to`, `/locked` challenges
  * again whatever was sent, and any other path answers a page headed
- * `Through`. `asked` counts the requests it got, by path.
+ * `Through`. `asked` keeps the headers of the requests it got, by path.
  */
-function startGate(): Promise<Pick<FixtureApp, 'url' | 'close'> & { readonly asked: Map<string, number> }> {
-  const authorization = `Basic ${Buffer.from(`${PROTECTED_CREDENTIAL.username}:${PROTECTED_CREDENTIAL.password}`).toString('base64')}`;
-  const asked = new Map<string, number>();
+function startGate(): Promise<Pick<FixtureApp, 'url' | 'close'> & { readonly asked: Map<string, IncomingHttpHeaders[]> }> {
+  const asked = new Map<string, IncomingHttpHeaders[]>();
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://gate.test');
-    asked.set(url.pathname, (asked.get(url.pathname) ?? 0) + 1);
-    if (request.headers.authorization !== authorization || url.pathname === '/locked') {
+    asked.set(url.pathname, [...(asked.get(url.pathname) ?? []), request.headers]);
+    if (request.headers.authorization !== AUTHORIZATION || url.pathname === '/locked') {
       response.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'www-authenticate': 'Basic realm="gate"' });
       response.end('<!doctype html><title>Gate</title><h1>Unauthorized</h1>');
       return;
@@ -299,7 +301,35 @@ describe('web({ headers, basicAuth })', () => {
       await engine.session!.reset!(operation('b3'));
       // The redirect's target refuses the credentials: asked bare, then with them, and its second challenge is the 401.
       expect(await headingAt(engine, 'b3', through(`${listed}/locked`))).toBe('Unauthorized');
-      expect(gate.asked.get('/locked')).toBe(2);
+      expect(gate.asked.get('/locked')).toHaveLength(2);
+    } finally {
+      await shutdown(engine);
+      await gate.close();
+    }
+  });
+
+  it('runs a route once for a request whose challenge is answered, and sends it again with the route\'s headers and the credentials', async () => {
+    const gate = await startGate();
+    const through = (target: string): string => `${gate.url}/hop?to=${encodeURIComponent(target)}`;
+    const engine = web({ basicAuth: PROTECTED_CREDENTIAL, credentialOrigins: [gate.url.replace('127.0.0.1', 'localhost')] });
+    try {
+      await boot(engine, gate, artifactsDir, 'b4');
+      const routed: string[] = [];
+      // The override names no authorization header, on the first hop or on the hop the redirect leads to.
+      await browserOf(engine, gate).route(/\/(landing|hop)/, async (route) => {
+        routed.push(new URL(route.request.url).pathname);
+        await route.continue({ headers: { 'x-route': 'routed' } });
+      });
+      const sent = (pathname: string) => gate.asked.get(pathname)?.map((headers) => [headers['x-route'], headers.authorization]);
+      expect(await headingAt(engine, 'b4', `${gate.url}/landing`)).toBe('Through');
+      expect(routed).toEqual(['/landing']);
+      expect(sent('/landing')).toEqual([['routed', undefined], ['routed', AUTHORIZATION]]);
+      await engine.session!.reset!(operation('b4'));
+      gate.asked.clear();
+      // The hop a redirect leads to is challenged at another credential origin, and is never routed.
+      expect(await headingAt(engine, 'b4', through(`${gate.url.replace('127.0.0.1', 'localhost')}/landing`))).toBe('Through');
+      expect(routed).toEqual(['/landing', '/hop']);
+      expect(sent('/landing')).toEqual([['routed', undefined], ['routed', AUTHORIZATION]]);
     } finally {
       await shutdown(engine);
       await gate.close();
