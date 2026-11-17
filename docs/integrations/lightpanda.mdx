@@ -1,7 +1,7 @@
 ---
 title: Lightpanda
 sidebarTitle: Lightpanda
-description: Run web targets in Lightpanda, the open-source headless browser, with the lightpanda() browser provider from @e2e-dev/lightpanda.
+description: The lightpanda() browser provider from @e2e-dev/lightpanda starts Lightpanda servers. The web engine cannot open a page in them yet.
 "og:image": "https://e2e.com/docs/images/og/integrations/lightpanda.png?v=b97a3ebae4"
 "twitter:image": "https://e2e.com/docs/images/og/integrations/lightpanda.png?v=b97a3ebae4"
 ---
@@ -12,8 +12,7 @@ fraction of Chrome's memory, and speaks the Chrome DevTools Protocol.
 `lightpanda()` from `@e2e-dev/lightpanda` is a
 [browser provider](/browser#hosted-browsers) for it: each worker slot gets
 its own `lightpanda serve`, started on a free port when the run starts and
-stopped when it ends. Tests and CI stay the same; the config changes only
-in the target's `browser`.
+stopped when it ends.
 
 <Note>
 The web engine cannot open a page in Lightpanda. A test that opens one times
@@ -120,11 +119,6 @@ external stylesheets, no iframes. `loadResources` opts into each, as
 web({ browser: lightpanda({ loadResources: ['stylesheet', 'iframe'] }) })
 ```
 
-Inline styles, `<style>` blocks, and the `hidden` attribute already decide
-visibility; `stylesheet` makes an external file's rules count too, so a
-node a linked stylesheet hides is hidden to a query. `image` fetches image
-headers so `load` and `error` reflect the real status.
-
 ## What works
 
 Only what needs no page works. On a Lightpanda nightly from November 2026
@@ -143,14 +137,9 @@ and [agent step](/agent-steps) needs a page.
 
 | Feature | What happens | Why |
 | ------- | ------------ | --- |
-| Opening a page: `app.open`, `browser.goto` | The call never returns. The test fails when its [`timeout`](/reference/config#timeout) ends, with `TEST_TIMEOUT` or `ACTION_FAILED`. | The engine waits for the new page on a browser-level CDP session. Lightpanda sends `Target.attachedToTarget` without that session's id, so the engine never sees the page. |
+| Opening a page: `app.open`, `browser.goto` | The call never returns. The test fails when its [`timeout`](/reference/config#timeout) ends, with `TEST_TIMEOUT` or `ACTION_FAILED`. | Lightpanda does not report a new page the way the engine reads it. |
 | [Sessions](/authentication) (`test.setup` with `session.save`, `session:` on a test) | The setup times out the same way, and e2e skips each test that uses its session. | The setup cannot open a page. |
 | [Downloads](/browser#download-a-file) | `browser.waitForDownload` throws `UNSUPPORTED_CAPABILITY`. | The provider serves no [downloads](/browser#downloads-on-the-provider). |
 
-A Lightpanda release that sends the event on that session is not enough.
-With the event patched in, queries and assertions run, but an action on a
-located node (`tap`, `fill`, `check`, `selectOption`) still fails.
-Lightpanda's CDP returns a DOM node without the id the engine needs to pass
-the node back to the page.
-
-Run the suite on a Chromium target instead.
+A fix needs changes in Lightpanda. Run the suite on a Chromium target
+instead.

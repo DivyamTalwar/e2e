@@ -5,9 +5,10 @@
 **Breaking:** the web engine drives Chromium and Firefox over WebDriver BiDi and no longer uses Playwright. Tests, fixtures, and `web()` options stay the same, except:
 
 - WebKit is gone: `web({ browser: 'webkit' })` is `INVALID_CONFIG`.
+- Lightpanda no longer works: with `lightpanda()` or `connect` to a Lightpanda server, a test that opens a page times out. Run those targets on `chromium`.
 - `surfaceOf` and `PlaywrightLiveSurface` are removed, so there is no raw Playwright `Page` or `BrowserContext` to reach for.
 - `browser.locator` takes CSS and XPath, alone or in `>>` chains: no `text=`, `nth=`, or other Playwright engines. Chain `nth()` and screen queries instead.
-- `getByRole` reads the roles and names the snapshot shows: `getByRole('textbox')` also finds a `contenteditable` host, and a control with only an icon is found by its `title`. A query that matched one node before can now match two.
+- `getByRole('textbox')` also finds a `contenteditable` host, and `getByRole` finds a control with only an icon by its `title`. A query that matched one node before can now match two.
 - `connect.reconnectEndpoint` and `BrowserLease.reconnectEndpoint` are removed, and `reconnectEndpoint` in `connect` is `INVALID_CONFIG`: a dropped connection fails the attempt, and the next attempt attaches again through `cdpEndpoint`.
 - With a `scope: 'attempt'` browser provider, `headers`, `basicAuth`, `userAgent`, `locale`, and `timezoneId` are no longer `INVALID_CONFIG`. `app.clearState()` still throws `UNSUPPORTED_CAPABILITY` there, and a test that uses a saved session still fails collection with `COLLECTION_ERROR`: the attempt runs in the fresh browser's own context.
 - `setInputFiles` on a browser provider's browser sends the files' bytes to the page, up to 50 MB in all; a directory there throws `UNSUPPORTED_CAPABILITY`, and so does a download on a provider without `downloads`.

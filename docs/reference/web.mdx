@@ -88,8 +88,7 @@ web({ browser: 'firefox' }); // default: 'chromium'
 - A `BrowserProvider` leases hosted browsers instead, one per worker slot for
   the run, or one per attempt with `scope: 'attempt'`. The engine drives
   each one as chromium over CDP, whether it is Chromium or another CDP
-  server such as [Lightpanda](/integrations/lightpanda) or
-  [Moli](/integrations/moli).
+  server such as [Moli](/integrations/moli).
 - With `scope: 'attempt'`, each attempt runs in the leased browser's own
   context. `app.clearState()` throws `UNSUPPORTED_CAPABILITY`, and a test
   that uses a saved session fails collection with `COLLECTION_ERROR`.
@@ -383,7 +382,7 @@ export type WebInitScript = string | { readonly path: string } | (() => unknown)
 - What belongs to the browser covers every tab: `cookies`, `setCookies`,
   `clearCookies`, `route`, `unroute`, `unrouteAll`, `onDialog`, and
   `addInitScript`.
-- `setViewport` sizes the active tab and every tab opened after it.
+- `setViewport` sizes the active tab and every tab that becomes active after it.
 - [`emulateMedia`](#media-emulation) changes media on all open and future tabs.
 - A tab the app opens, from a `target="_blank"` link or `window.open`,
   opens in the background: the active tab stays where it was until

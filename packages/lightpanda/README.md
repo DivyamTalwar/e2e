@@ -2,8 +2,8 @@
 
 [Lightpanda](https://lightpanda.io), the open-source headless browser, for
 [`e2e`](https://www.npmjs.com/package/e2e): `web({ browser: lightpanda() })`
-runs a web target in a `lightpanda serve` the provider starts for each
-worker slot and stops with the run.
+starts a `lightpanda serve` for each worker slot and stops it with the run.
+The web engine cannot open a page in it yet.
 
 ## Install
 
@@ -31,8 +31,7 @@ or `lightpanda` on `PATH`, `~/.lightpanda`, or `~/.local/bin`.
 `stylesheet`; `args` adds any other `serve` flag. A server already running,
 such as the Docker image in CI, is a `web({ connect })` target instead.
 
-The web engine cannot open a page in Lightpanda: a test that opens one
-times out. The reason is at
+A test that opens a page times out. See
 [e2e.com/docs/integrations/lightpanda](https://e2e.com/docs/integrations/lightpanda#what-does-not-work).
 
 ## License

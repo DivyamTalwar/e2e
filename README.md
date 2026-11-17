@@ -66,7 +66,7 @@ Flutter, and .NET MAUI, each a standalone project with a passing suite.
 | --- | --- |
 | [`@e2e-dev/browser-run`](https://www.npmjs.com/package/@e2e-dev/browser-run) | Cloudflare Browser Run hosted Chromium for the web engine. |
 | [`@e2e-dev/kernel`](https://www.npmjs.com/package/@e2e-dev/kernel) | Kernel hosted browsers for the web engine. |
-| [`@e2e-dev/lightpanda`](https://www.npmjs.com/package/@e2e-dev/lightpanda) | Lightpanda, the open-source headless browser, started per run for the web engine. |
+| [`@e2e-dev/lightpanda`](https://www.npmjs.com/package/@e2e-dev/lightpanda) | Lightpanda, the open-source headless browser, started per run for the web engine. The engine cannot open a page in it yet. |
 | [`@e2e-dev/moli`](https://www.npmjs.com/package/@e2e-dev/moli) | Local Moli browsers with on-demand layout and screenshots, started per worker slot for the web engine. |
 | [`@e2e-dev/smol`](https://www.npmjs.com/package/@e2e-dev/smol) | smol machines browsers for the web engine: by default, each attempt branches a warm Chromium microVM. |
 | [`@e2e-dev/testmu`](https://www.npmjs.com/package/@e2e-dev/testmu) | TestMu AI (formerly LambdaTest) hosted Android emulators, iOS simulators, and real devices for the mobile engine, and hosted Chrome and Edge for the web engine. |
