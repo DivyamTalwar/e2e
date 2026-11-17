@@ -400,14 +400,14 @@ describe('input', () => {
     await page.setContent(field);
     const [located] = await page.locate(bySelector('#i'));
     navigatedBeforeNext(focus, page.serve('/replaced-before-focus', field));
-    // Firefox sends a call again to the document that replaced the one it ran in, so its refusal may follow a focus that ran.
+    // Firefox sends a call again that it sent to a tab's or frame's first, empty document, so its refusal may follow a focus that ran.
     await expect(page.engine.perform!(located!.ref, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject(
       onFirefox ? { code: 'ACTION_MAY_HAVE_COMMITTED', retryable: false } : { code: 'NODE_STALE', retryable: true },
     );
     expect(await page.browser.evaluate('[location.pathname, document.getElementById("i").value]')).toEqual(['/replaced-before-focus', '']);
   });
 
-  it('reports a press whose focus handler navigated to another site and then blocked as possibly committed on Firefox, which answers it for the document that came after', async () => {
+  it('reports a press whose focus handler navigated to another site and then blocked as possibly committed on Firefox, which replaces the document under the handler', async () => {
     let release = (): void => undefined;
     let handled = 0;
     const held = new Promise<void>((resolve) => {
@@ -430,8 +430,8 @@ describe('input', () => {
     const press = page.engine.perform!(field!.ref, { kind: 'press', key: 'x' }, page.op());
     await held;
     try {
-      // The handler ran, and Firefox then answers the focus for the document the navigation led to, which refuses the node.
-      if (onFirefox) await expect(press).rejects.toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED' });
+      // The handler ran, and Firefox fails the focus the moment the navigation takes its document away; Chromium keeps the document until the handler returns.
+      if (onFirefox) await expect(press).rejects.toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED', message: expect.stringContaining('no such frame') });
     } finally {
       release();
     }

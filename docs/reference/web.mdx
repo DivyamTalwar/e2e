@@ -362,6 +362,7 @@ export type WebInitScript = string | { readonly path: string } | (() => unknown)
 | On Firefox, a drag that starts an HTML5 drag (a `draggable` element) throws `UNSUPPORTED_CAPABILITY` | [Firefox bug 1515879](https://bugzilla.mozilla.org/show_bug.cgi?id=1515879): Firefox drops it nowhere. Pointer drags work. |
 | `route.continue({ url })` throws `UNSUPPORTED_CAPABILITY` on Firefox | [Firefox bug 2014825](https://bugzilla.mozilla.org/show_bug.cgi?id=2014825): the page's load of a rewritten URL fails. Use `route.fulfill`. |
 | On Firefox, `waitForResponse` never resolves for a request that `route.fulfill` answers with a redirect | Firefox reports no response for it. Wait for the URL the redirect leads to. |
+| On Firefox, a `browser.evaluate` can run more than once: one still running when a tab from `browser.newTab()` loads its first page, or one that starts while a navigation to another site commits | Firefox sends a command again when the empty document it went to (a new tab's first, the one a new site's process starts with) is replaced by a page. Wait for the page first, as with `waitForURL`. |
 | With a browser provider, `setInputFiles` sends the files' bytes to the page, up to 50 MB in all, and throws `UNSUPPORTED_CAPABILITY` for a directory; downloads throw it when the provider serves none | The browser's filesystem is another machine's. |
 | A saved session throws `UNSUPPORTED_CAPABILITY` for an IndexedDB value that is not JSON or a `Date` | A `Blob` or class instance can't be restored. |
 

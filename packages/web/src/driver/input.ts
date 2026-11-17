@@ -15,7 +15,7 @@ import { codeOfValue, MODIFIER_CODES, pressStroke, strokeSource, type KeyStroke,
 import type { BrowserTraits } from '../browsers.ts';
 import { nextFrame } from '../in-page/document.ts';
 import type { BidiConnection } from './connection.ts';
-import { BidiError } from '../errors.ts';
+import { BidiError, unlessStale } from '../errors.ts';
 import { callFunction } from './script.ts';
 
 /** A key held down, and how: a BiDi key action with its value, which its release repeats, or a CDP key event, which only CDP releases. */
@@ -324,14 +324,16 @@ export class BidiInput {
    * document a navigation just moved into a new content process has shown
    * nothing yet, so input sent before its first frame reaches no page. A
    * hidden tab is brought to the front and the frame it renders there is
-   * awaited. Its answer is no gate: a tab still hidden at the front is the
-   * shown tab of a minimized window, which renders no frame and still takes
-   * the input, so refusing it would fail every pointer action there.
+   * awaited, as is the frame of the document that replaced one a navigation
+   * took away under the wait. Its answer is no gate: a tab still hidden at
+   * the front is the shown tab of a minimized window, which renders no frame
+   * and still takes the input, so refusing it would fail every pointer
+   * action there.
    */
   private async framePresented(): Promise<void> {
     const { connection } = this.target;
     const context = this.target.context();
-    if (await callFunction(connection, context, nextFrame, [], { awaitPromise: true }) === true) return;
+    if (await unlessStale(callFunction(connection, context, nextFrame, [], { awaitPromise: true }), false) === true) return;
     await connection.send('browsingContext.activate', { context });
     await callFunction(connection, context, nextFrame, [], { awaitPromise: true });
   }

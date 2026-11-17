@@ -165,6 +165,29 @@ describe('BidiInput.send', () => {
     expect(held.input.dispatches).toBe(1);
   });
 
+  it('waits for the frame of the document that replaced one a navigation took away under the wait, before Firefox pointer input', async () => {
+    const fake = new FakeBidi().on('input.performActions', { result: {} });
+    const held = await session(fake, 'firefox');
+    const waits: Reply[] = [
+      { error: 'no such frame', message: 'DiscardedBrowsingContextError: Actor \'MessageHandlerFrame\' destroyed before query \'MessageHandlerFrameParent:sendCommand\' was resolved' },
+      { result: { type: 'success', realm: 'r', result: { type: 'boolean', value: true } } },
+    ];
+    fake.on('script.callFunction', () => waits.shift()!);
+    await held.input.send(clickSources(5, 5));
+    expect(waits).toEqual([]);
+    expect(fake.commands('input.performActions')).toHaveLength(1);
+  });
+
+  it('sends no Firefox pointer input to a tab that closed under the wait for its frame, as never dispatched', async () => {
+    const fake = new FakeBidi().on('input.performActions', { result: {} });
+    const held = await session(fake, 'firefox');
+    const gone: Reply = { error: 'no such frame', message: 'Browsing Context with id tab not found' };
+    fake.on('script.callFunction', gone).on('browsingContext.activate', gone);
+    await expect(held.input.send(clickSources(5, 5))).rejects.toMatchObject({ error: 'no such frame' });
+    expect(fake.commands('input.performActions')).toEqual([]);
+    expect(held.input.dispatches).toBe(0);
+  });
+
   it('takes input the page suppressed back from the operation that sent it, and never from the attempt', async () => {
     let fail = false;
     const fake = new FakeBidi().on('input.performActions', () => (fail ? { error: 'unknown error', message: 'gone' } : { result: {} }));
@@ -425,7 +448,7 @@ describe('a press on a node', () => {
     expect(scope.dispatched).toBe(true);
   });
 
-  it('keeps a focus Firefox refused the node of counted: Firefox sends a call again to the document that replaced the one it ran in', async () => {
+  it('keeps a focus Firefox refused the node of counted: Firefox sends a call again that it sent to a first, empty document', async () => {
     const { fake, scope, failure } = await press('firefox', { error: 'no such node', message: 'The node with the reference e is not known' });
     expect(failure).toMatchObject({ error: 'no such node' });
     expect(fake.commands('input.performActions')).toEqual([]);

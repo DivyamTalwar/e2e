@@ -52,9 +52,11 @@ export interface BrowserTraits {
   readonly pointerWaitsForFrame: boolean;
   /**
    * Whether the browser sends a page call again, to the document that
-   * replaced the one it was running in (Firefox's `remote.retry-on-abort`).
-   * Its refusal of an element then tells nothing of the call: the function
-   * may have run in the document that went away.
+   * replaced the one it was running in. Firefox does for a call it sent to a
+   * first, empty document (a new tab's, a frame's), also without
+   * `remote.retry-on-abort`, which the driver launches it without. Its
+   * refusal of an element then tells nothing of the call: the function may
+   * have run in the document that went away.
    */
   readonly resendsPageCalls: boolean;
   /** The permission names a target's `app.permissions` may grant. */

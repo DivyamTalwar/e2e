@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Browser } from '../../src/index.ts';
-import { startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 describe('browser.evaluate error boundaries', () => {
   let session: WebSession;
@@ -56,6 +56,25 @@ describe('browser.evaluate error boundaries', () => {
     await evaluating;
     await session.engine.session![replace]!(session.op());
     expect(await rejected).toMatchObject({ code: 'ENGINE_FAILURE' });
+  });
+
+  it('runs code once whose page navigated away under it: an engine fault, and a timeout on Firefox, which keeps the page in its back-forward cache and never answers', async () => {
+    let ran = 0;
+    session.serve('/ran', (_request, response) => {
+      ran += 1;
+      response.end();
+    });
+    const next = session.serve('/next', '<title>Next</title>');
+    const failure = await browser.evaluate(async (url: string) => {
+      const call = new XMLHttpRequest();
+      call.open('GET', '/ran', false);
+      call.send();
+      location.href = url;
+      await new Promise(() => undefined);
+      return null;
+    }, next).then(() => undefined, (cause: unknown) => cause);
+    expect(failure).toMatchObject(onFirefox ? { code: 'ACTION_FAILED', cause: expect.objectContaining({ code: 'OPERATION_TIMEOUT' }) } : { code: 'ENGINE_FAILURE' });
+    expect(ran).toBe(1);
   });
 
   it('preserves JSON results, explicit arguments, and zero-argument invocation', async () => {

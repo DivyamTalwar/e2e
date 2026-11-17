@@ -159,6 +159,15 @@ const FIREFOX_PREFS: Readonly<Record<string, string | number | boolean>> = {
   // Mouse actions too: the parent process routes them into an out-of-process (cross-site) frame, which a mouse
   // event synthesized in the top document's process never reaches.
   'remote.events.async.mouse.enabled': true,
+  /**
+   * A command whose document a navigation replaced under it fails (`no such
+   * frame`), as it does on Chromium. By default Firefox sends it again to
+   * the document that replaced it, up to 10 times, so a page function or a
+   * key ran once more there. One sent to a first, empty document (a new
+   * tab's, a frame's, the one a navigation to another site starts its
+   * process with) is sent again whatever this says.
+   */
+  'remote.retry-on-abort': false,
 };
 
 /** The arguments Chromium launches with on `profile`: the driver's switches, and its DevTools endpoint on a free port. */
