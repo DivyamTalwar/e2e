@@ -87,8 +87,7 @@ web({ browser: 'firefox' }); // default: 'chromium'
   has the builds.
 - A `BrowserProvider` leases hosted browsers instead, one per worker slot for
   the run, or one per attempt with `scope: 'attempt'`. The engine drives
-  each one as chromium over CDP, whether it is Chromium or another CDP
-  server such as [Moli](/integrations/moli).
+  each one as chromium over CDP.
 - With `scope: 'attempt'`, each attempt runs in the leased browser's own
   context. `app.clearState()` throws `UNSUPPORTED_CAPABILITY`, and a test
   that uses a saved session fails collection with `COLLECTION_ERROR`.

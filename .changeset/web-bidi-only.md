@@ -6,6 +6,7 @@
 
 - WebKit is gone: `web({ browser: 'webkit' })` is `INVALID_CONFIG`.
 - Lightpanda no longer works: with `lightpanda()` or `connect` to a Lightpanda server, a test that opens a page times out. Run those targets on `chromium`.
+- Moli reads a page but cannot act on it: with `moli()` or `connect` to a Moli server, an action on an element fails with `ACTION_FAILED` or `LOCATOR_NOT_FOUND`, and a screenshot throws `ENGINE_FAILURE`. Run those tests on `chromium`.
 - `surfaceOf` and `PlaywrightLiveSurface` are removed, so there is no raw Playwright `Page` or `BrowserContext` to reach for.
 - `browser.locator` takes CSS and XPath, alone or in `>>` chains: no `text=`, `nth=`, or other Playwright engines. Chain `nth()` and screen queries instead.
 - `getByRole('textbox')` also finds a `contenteditable` host, and `getByRole` finds a control with only an icon by its `title`. A query that matched one node before can now match two.
