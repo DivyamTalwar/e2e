@@ -6,7 +6,8 @@
  * pointer target outside the viewport is refused as never sent, a tap
  * cancelled while it aims leaves no click watch behind, a click the app
  * dispatched itself is left to the app while the driver's own arrives
- * trusted, and a ref reused after input, the hover of a swallowed click
+ * trusted, a fill fires its events with the `Event` the page started
+ * with, and a ref reused after input, the hover of a swallowed click
  * included, checks its locator again.
  */
 
@@ -233,6 +234,16 @@ describe('input', () => {
     const [covered] = await page.locate(bySelector('#b'));
     await expect(page.engine.perform!(covered!.ref, { kind: 'tap' }, page.op(2_000))).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('<div#cover> intercepts pointer events') });
     await expect(page.engine.perform!(twin!.ref, { kind: 'tap' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', message: expect.stringContaining('now matches 2 elements') });
+  });
+
+  it('fires the events of a fill with the Event constructor the page had before it replaced it', async () => {
+    await page.setContent(`<input id=i type=range max=10><script>
+      window.log = [];
+      for (const type of ['input', 'change']) i.addEventListener(type, (event) => log.push(type + ':' + event.target.value));
+      window.Event = function () { throw new Error('the page replaced Event'); };
+    </script>`);
+    await page.act(bySelector('#i'), { kind: 'fill', value: '7', sensitive: false });
+    expect(await log()).toEqual(['input:7', 'change:7']);
   });
 
   it('counts a fill the field took and then refused as input, so a ref reused after it is checked again', async () => {

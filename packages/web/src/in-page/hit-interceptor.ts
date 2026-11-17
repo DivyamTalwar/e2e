@@ -12,12 +12,12 @@ type HitWatch = { readonly target: Element; verdict: Outcome | undefined };
 /**
  * Installs the capture listeners the click watch (`armHitInterceptor`)
  * decides through (they do nothing until a watch is armed), and keeps the
- * page's own `Event` constructor for the driver's edits, which a page may
- * replace later. What adds the listeners is kept for the watch to call each
- * time it is armed (`listen`).
+ * page's own `Event` constructor for the driver's edits (`dom.keepEvent`).
+ * What adds the listeners is kept for the watch to call each time it is
+ * armed (`listen`).
  */
 const installHitInterceptor = withDom((dom): void => {
-  Reflect.set(globalThis, Symbol.for('e2e.bidi.Event'), Event);
+  dom.keepEvent();
   const contains = (target: Element, x: number, y: number): boolean => {
     const hit = dom.hitAt(x, y);
     return hit !== null && dom.reaches(hit, target);

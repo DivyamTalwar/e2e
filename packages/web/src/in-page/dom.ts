@@ -227,15 +227,23 @@ export function createDom(key: string) {
     return active === element || ((element as HTMLElement).isContentEditable && active !== null && active.contains(element));
   };
 
-  /** Fires the `input` and `change` an edit of `target` ends with, built with the page's own `Event` as the click watch's preload kept it, which a page may replace later. */
+  /** Where `keepEvent` keeps the page's own `Event` constructor for `fireEdit`. */
+  const eventKey = 'e2e.bidi.Event';
+
+  /** Keeps the page's own `Event` constructor, which a page may replace later; the click watch's preload calls it before the page's scripts run. */
+  const keepEvent = (): void => {
+    Reflect.set(globalThis, Symbol.for(eventKey), Event);
+  };
+
+  /** Fires the `input` and `change` an edit of `target` ends with, built with the page's own `Event` as `keepEvent` kept it, else as the page has it now. */
   const fireEdit = (target: Element): void => {
-    const kept: typeof Event | undefined = Reflect.get(globalThis, Symbol.for('e2e.bidi.Event'));
+    const kept: typeof Event | undefined = Reflect.get(globalThis, Symbol.for(eventKey));
     const EventClass = kept ?? Event;
     target.dispatchEvent(new EventClass('input', { bubbles: true, composed: true }));
     target.dispatchEvent(new EventClass('change', { bubbles: true }));
   };
 
-  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, fireEdit };
+  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, clipped, visibleArea, scrollIfClipped, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, keepEvent, fireEdit };
 }
 
 /** The shared DOM helpers, as a page function takes them. */
