@@ -2,14 +2,28 @@
 
 import { withDom } from './dom.ts';
 
-/** What one masking changed in the document, kept under its token until `unmaskSecureFields` undoes it. */
+/** One masking of the document, kept under its token until it is taken off: what `unmaskSecureFields` proves the cover by, and the two steps that take it off. */
 type Mask = {
   readonly hosts: { container: Element | null; host: HTMLElement }[];
-  readonly caret: CSSStyleSheet;
-  readonly sheeted: (Document | ShadowRoot)[];
   readonly boxes: { field: Element; rect: DOMRect; box: HTMLElement }[];
   readonly selector: string;
   readonly cancelled: Animation[];
+  /** Takes the cover off: the hosts, the caret's stylesheet, and this record. */
+  readonly uncover: () => void;
+  /**
+   * Plays again each animation the masking cancelled, unless a capture that
+   * overlaps this one still holds the document: that one takes them over
+   * and plays them when it lets go. A CSS animation the page dropped
+   * meanwhile stays cancelled: its target no longer computes its name (a
+   * class removed, the element out of the document), so the browser let go
+   * of it, and played again it would run as a script animation no style
+   * could stop. A script animation the page cancelled itself during the
+   * capture reads the same as one the mask cancelled, and plays again; so
+   * does a CSS animation the browser dropped from a target that still
+   * computes its name (one hidden with `display: none`, or whose animation
+   * the page started over).
+   */
+  readonly replay: () => void;
 };
 
 /**
@@ -37,6 +51,12 @@ type Mask = {
  * caret color it starts in a field that transitions `all` is finished with
  * the rest: a transition's value outranks the sheet's `!important`, and the
  * caret would fade through the screenshot.
+ *
+ * A document that leaves while masked takes its own masking off and plays
+ * its animations again, on `pagehide`: the driver's unmask then reaches the
+ * document that replaced it, which holds no such token, and Firefox would
+ * keep this one masked in its back-forward cache and show it so again on
+ * the way back.
  */
 export const maskSecureFields = withDom((dom, selector: string, token: string): number => {
   const sheeted = dom.roots();
@@ -108,37 +128,56 @@ export const maskSecureFields = withDom((dom, selector: string, token: string): 
   }
   const kept: Map<string, Mask> | undefined = Reflect.get(globalThis, Symbol.for('e2e.bidi.mask'));
   const masks = kept ?? new Map<string, Mask>();
-  masks.set(token, { hosts: [...hosts].map(([container, { host }]) => ({ container, host })), caret, sheeted, boxes, selector, cancelled });
+  const uncover = (): void => {
+    removeEventListener('pagehide', leave);
+    masks.delete(token);
+    for (const { host } of hosts.values()) host.remove();
+    for (const root of sheeted) root.adoptedStyleSheets = root.adoptedStyleSheets.filter((sheet) => sheet !== caret);
+  };
+  const dropped = (animation: Animation): boolean =>
+    animation instanceof CSSAnimation && animation.effect instanceof KeyframeEffect && animation.effect.target !== null
+    && !getComputedStyle(animation.effect.target, animation.effect.pseudoElement).animationName.split(', ').includes(CSS.escape(animation.animationName));
+  const replay = (): void => {
+    const overlapping: Mask | undefined = masks.values().next().value;
+    if (overlapping !== undefined) {
+      overlapping.cancelled.push(...cancelled);
+      return;
+    }
+    for (const animation of cancelled) {
+      if (dropped(animation)) continue;
+      try {
+        animation.play();
+      } catch {
+        // play() refuses an animation with no end that plays backwards.
+      }
+    }
+  };
+  const leave = (): void => {
+    uncover();
+    replay();
+  };
+  addEventListener('pagehide', leave);
+  masks.set(token, { hosts: [...hosts].map(([container, { host }]) => ({ container, host })), boxes, selector, cancelled, uncover, replay });
   Reflect.set(globalThis, Symbol.for('e2e.bidi.mask'), masks);
   return boxes.length;
 });
 
 /**
- * Removes what `maskSecureFields` added. Returns whether the screenshot taken
- * between the two showed no secure field: this document holds the masking
- * under `token`, every host still where it was put (the popover still open,
- * each other host still inside its top-layer element) and painted opaque,
- * every box drawn over the whole of its field, every covered field where its
- * box was, and no visible secure field
- * appeared that no box covers.
+ * Takes off what `maskSecureFields` put on. Returns whether the screenshot
+ * taken between the two showed no secure field: this document holds the
+ * masking under `token`, every host still where it was put (the popover
+ * still open, each other host still inside its top-layer element) and
+ * painted opaque, every box drawn over the whole of its field, every
+ * covered field where its box was, and no visible secure field appeared
+ * that no box covers.
  *
- * Last, once every field was read where it rested, it plays again each
- * animation `maskSecureFields` cancelled, unless a capture that overlaps
- * this one still holds the document: that one takes them over and plays
- * them when it lets go. A CSS animation the page dropped meanwhile stays
- * cancelled: its target no longer computes its name (a class removed, the
- * element out of the document), so the browser let go of it, and played
- * again it would run as a script animation no style could stop. A script
- * animation the page cancelled itself during the capture reads the same as
- * one the mask cancelled, and plays again; so does a CSS animation the
- * browser dropped from a target that still computes its name (one hidden
- * with `display: none`, or whose animation the page started over).
+ * Last, once every field was read where it rested, it plays the cancelled
+ * animations again (`Mask.replay`).
  */
 export const unmaskSecureFields = withDom((dom, token: string): boolean => {
   const masks: Map<string, Mask> | undefined = Reflect.get(globalThis, Symbol.for('e2e.bidi.mask'));
   const mask = masks?.get(token);
-  if (masks === undefined || mask === undefined) return false;
-  masks.delete(token);
+  if (mask === undefined) return false;
   const painted = (element: HTMLElement): boolean => {
     const style = getComputedStyle(element);
     return style.display !== 'none' && style.visibility === 'visible' && style.opacity === '1';
@@ -151,8 +190,7 @@ export const unmaskSecureFields = withDom((dom, token: string): boolean => {
     return drawn.left <= target.left + 0.5 && drawn.top <= target.top + 0.5 && drawn.right >= target.right - 0.5 && drawn.bottom >= target.bottom - 0.5;
   };
   const shown = mask.hosts.every(placed) && mask.boxes.every((entry) => painted(entry.box) && covers(entry));
-  for (const { host } of mask.hosts) host.remove();
-  for (const root of mask.sheeted) root.adoptedStyleSheets = root.adoptedStyleSheets.filter((sheet) => sheet !== mask.caret);
+  mask.uncover();
   const still = ({ field, rect }: Mask['boxes'][number]): boolean => {
     const now = field.getBoundingClientRect();
     return now.x === rect.x && now.y === rect.y && now.width === rect.width && now.height === rect.height;
@@ -163,21 +201,6 @@ export const unmaskSecureFields = withDom((dom, token: string): boolean => {
     return !covered.has(field) && rect.width > 0 && rect.height > 0;
   };
   const held = shown && mask.boxes.every(still) && !dom.roots().some((root) => [...root.querySelectorAll(mask.selector)].some(uncovered));
-  const overlapping: Mask | undefined = masks.values().next().value;
-  if (overlapping !== undefined) {
-    overlapping.cancelled.push(...mask.cancelled);
-    return held;
-  }
-  const dropped = (animation: Animation): boolean =>
-    animation instanceof CSSAnimation && animation.effect instanceof KeyframeEffect && animation.effect.target !== null
-    && !getComputedStyle(animation.effect.target, animation.effect.pseudoElement).animationName.split(', ').includes(CSS.escape(animation.animationName));
-  for (const animation of mask.cancelled) {
-    if (dropped(animation)) continue;
-    try {
-      animation.play();
-    } catch {
-      // play() refuses an animation with no end that plays backwards.
-    }
-  }
+  mask.replay();
   return held;
 });

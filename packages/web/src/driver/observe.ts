@@ -301,6 +301,9 @@ const RECAPTURE_MS = 50;
  * document with no script context (`hasScriptContext`) holds nothing to
  * mask; the commit that gives it content is such a navigation, and one that
  * has a script context once the masks come off makes the capture stale too.
+ * A document that left under its masks took them off itself as it went
+ * (`maskSecureFields`), since the unmask here reaches the one that replaced
+ * it.
  */
 async function maskedCapture(session: BidiSession, viewport: ViewportSize): Promise<{ pixels: ObservationPixels; maskedRegionCount: number }> {
   const context = session.requireContext();
