@@ -38,6 +38,7 @@ async function attempt(owners: ContextTree, userContext: string) {
     network: { addContext: async (context: string) => void added.push(context), removeContext: async () => undefined, retire: () => undefined },
     owns: (context: string | null | undefined) => context != null && owners.owner(context) === userContext,
     input: { forget: (context: string) => void forgotten.push(context), emulateFocus: async () => undefined },
+    log: { openedTab: async () => undefined, reportBrowserLines: async () => undefined },
   };
   session.tabs = new AttemptTabs({
     prepare: async () => undefined,

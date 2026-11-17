@@ -82,6 +82,17 @@ export interface BrowserTraits {
    * front is brought back to it before keys or text go to it.
    */
   readonly focus: 'emulated' | 'front-tab';
+  /**
+   * Where a page's console lines, uncaught errors, and the browser's own
+   * log lines for it are read. `cdp`: off Chromium's DevTools protocol
+   * (`Runtime.consoleAPICalled`, `Runtime.exceptionThrown`, `Log.entryAdded`).
+   * Its BiDi mapper reports none of the browser's own lines (a failed
+   * WebSocket connection), gives an error and a class instance as a bare
+   * type, drops a line whose format string and arguments do not pair up,
+   * and can exit on one, so its `log.entryAdded` is never subscribed to.
+   * `bidi`: off `log.entryAdded`.
+   */
+  readonly appLog: 'cdp' | 'bidi';
   /** The permission names a target's `app.permissions` may grant. */
   readonly permissions: readonly string[];
 }
@@ -103,6 +114,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     windowClipsViewport: false,
     resendsPageCalls: false,
     focus: 'emulated',
+    appLog: 'cdp',
     permissions: [
       'accelerometer', 'ambient-light-sensor', 'background-sync', 'camera', 'clipboard-read', 'clipboard-write',
       'geolocation', 'gyroscope', 'local-fonts', 'local-network-access', 'magnetometer', 'microphone', 'midi',
@@ -124,6 +136,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     windowClipsViewport: true,
     resendsPageCalls: true,
     focus: 'front-tab',
+    appLog: 'bidi',
     permissions: ['geolocation', 'local-network-access', 'notifications', 'persistent-storage', 'push', 'screen-wake-lock'],
   },
 };

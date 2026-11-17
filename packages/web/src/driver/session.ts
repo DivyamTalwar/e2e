@@ -13,7 +13,8 @@ import { BidiInput } from './input.ts';
 import { ArtifactPaths } from './artifact-paths.ts';
 import type { ContextTree } from './context-tree.ts';
 import { AttemptDownloads, type RemoteDownloads } from './downloads.ts';
-import { ErrorLatch, invalidState, releaseQuietly, unlessStale } from '../errors.ts';
+import { BidiError, ErrorLatch, invalidState, releaseQuietly, unlessStale } from '../errors.ts';
+import { AttemptLog } from './events.ts';
 import { FrameRegistry, scriptedContexts } from './frames.ts';
 import type { BidiBrowser } from './launch.ts';
 import { AttemptNetwork } from './network.ts';
@@ -89,6 +90,8 @@ export class BidiSession {
   readonly video: AttemptVideo;
   /** The navigations the driver itself has in flight in the tab. */
   readonly navigations = new OwnNavigations();
+  /** The attempt's subscriptions to what its pages log. */
+  readonly log: AttemptLog;
   /** Where the attempt's screenshots and downloads are written. */
   readonly artifacts: ArtifactPaths;
   /** The viewport `browser.setViewport` set for the rest of the attempt; the configured one until then. */
@@ -110,6 +113,7 @@ export class BidiSession {
     private readonly contexts: ContextTree,
   ) {
     this.artifacts = new ArtifactPaths(attempt.artifactsDir);
+    this.log = new AttemptLog(browser.connection, browser.traits);
     this.page = new PageCalls(browser.connection, () => this.requireContext());
     this.viewport = settings.viewport;
     this.windows = new TabWindows(browser.connection);
@@ -292,9 +296,10 @@ export class BidiSession {
 
   /**
    * Opens a tab in `userContext` and shows it: `adopted`, the tab the
-   * attempt found open there, else a new one. The network covers it, and
-   * its page behaves as focused (`BidiInput.emulateFocus`), before it joins
-   * the attempt's tabs, which show it (`AttemptTabs.own`). Until
+   * attempt found open there, else a new one. The network covers it, its
+   * page behaves as focused (`BidiInput.emulateFocus`), and its log is
+   * heard (`AttemptLog.openedTab`), before it joins the attempt's tabs,
+   * which show it (`AttemptTabs.own`). Until
    * it is shown a tab created here is this call's to close: when a step
    * fails, or the attempt closed or replaced its user context while the tab
    * opened, it is closed again, and an adopted one is left as it was found.
@@ -308,6 +313,7 @@ export class BidiSession {
       this.requireUserContext(userContext);
       await this.network.addContext(context);
       await this.input.emulateFocus(context);
+      await this.log.openedTab(userContext, context, context === adopted);
       this.requireUserContext(userContext);
       return await this.tabs.own(context);
     } catch (cause) {
@@ -453,8 +459,10 @@ export class BidiSession {
   }
 
   /**
-   * Ends the attempt: its video, user context, network, and download
-   * directory, each attempted whatever the others did; the first failure is
+   * Ends the attempt: its video, user context, log subscriptions (once its
+   * tabs are gone: a browser asks a page to stop reporting, and a stuck one
+   * never answers), network, and download directory, each attempted
+   * whatever the others did; the first failure is
    * reported once all ran, each remote step bounded so a hung one never keeps
    * the rest from running. A browser already gone leaves only local work. A
    * replacement user context still opening removes itself when it lands.
@@ -468,6 +476,7 @@ export class BidiSession {
       step(this.video.closeStep, () => this.video.close(CLOSE_STEP_MS)),
       step('user context removal', () => (gone ? undefined : this.closeUserContext())),
       step('earlier user contexts', () => (gone ? undefined : this.userContext.removeOwed())),
+      step('log release', () => (gone ? undefined : this.log.close())),
       step('network release', () => this.network.dispose()),
       () => this.downloads.dispose(),
     ]);
