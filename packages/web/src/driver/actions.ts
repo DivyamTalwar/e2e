@@ -239,8 +239,12 @@ function notInserted(place: number, total: number, dispatched: boolean): EngineE
  * pausing between tries: `ok` is the result, an element out of the document
  * fails as a retryable `NODE_STALE`, so the harness locates it again, and a
  * refusal, or a not yet once the deadline leaves no room for another try,
- * fails with the answer's reason after `prefix`. An attempt that throws ends
- * the poll. Nothing runs once `signal` aborted.
+ * fails with the answer's reason after `prefix`. Room for another try is
+ * the pause and as long as the slowest try took: on a slow machine a try
+ * started any later is still in flight when the operation's own deadline
+ * ends it as a bare timeout, and the reason this one gave is lost. The last
+ * answer then stands until the deadline. An attempt that throws ends the
+ * poll. Nothing runs once `signal` aborted.
  */
 async function settle<T extends object>(
   deadline: Deadline,
@@ -248,12 +252,20 @@ async function settle<T extends object>(
   attempt: () => Promise<Outcome<T>>,
   prefix = 'element did not become actionable in time: ',
 ): Promise<{ readonly kind: 'ok' } & T> {
+  let slowest = 0;
   for (;;) {
     signal.throwIfAborted();
+    const started = Date.now();
     const outcome = await attempt();
+    slowest = Math.max(slowest, Date.now() - started);
     if (outcome.kind === 'ok') return outcome;
     if (outcome.kind === 'detached') throw new EngineError('NODE_STALE', 'element is not attached to the DOM', { retryable: true });
-    if (outcome.kind === 'refused' || deadline.remaining() <= POLL_MS) throw new EngineError('NOT_ACTIONABLE', `${prefix}${outcome.reason}`, { retryable: false });
+    const left = deadline.remaining();
+    if (outcome.kind === 'refused' || left <= POLL_MS) throw new EngineError('NOT_ACTIONABLE', `${prefix}${outcome.reason}`, { retryable: false });
+    if (left <= POLL_MS + slowest) {
+      await sleep(left, undefined, { signal });
+      throw new EngineError('NOT_ACTIONABLE', `${prefix}${outcome.reason}`, { retryable: false });
+    }
     await sleep(POLL_MS, undefined, { signal });
   }
 }

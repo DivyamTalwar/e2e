@@ -2,6 +2,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { perform } from '../../src/driver/actions.ts';
+import { withDeadline } from '../../src/driver/budget.ts';
 import { clickSources, moveSources, pressDownSources, swipeSources, typeSource } from '../../src/driver/input-sources.ts';
 import { fixtureKeyStroke, strokeSource, type KeyPhase } from '../../src/driver/keyboard.ts';
 import { DispatchScope, type BidiInput } from '../../src/driver/input.ts';
@@ -387,6 +388,21 @@ describe('a fill', () => {
     await expect(done).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('element is not editable') });
     expect(scope.dispatched).toBe(false);
     expect(held.input.dispatches).toBeGreaterThan(0);
+  });
+
+  it('fails with the reason its last try gave when a try takes longer than the lead of the operation\'s deadline', async () => {
+    const fake = new FakeBidi();
+    const held = await session(fake);
+    field(fake, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      return answer({ kind: 'not-yet', reason: 'element is not editable' });
+    });
+    held.refs.storeLocated('1', { element: new ElementRef('e'), context: 'tab', locator: { kind: 'selector', selector: '#a' } });
+    const started = Date.now();
+    const done = withDeadline({ timeoutMs: 1_000, signal: new AbortController().signal }, 'fill', (budget) =>
+      perform(held, { id: '1' } as NodeRef, { kind: 'fill', value: 'x', sensitive: false }, budget.timeoutMs, budget.signal));
+    await expect(done).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('element is not editable') });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(700);
   });
 
   it('fails stale, as never dispatched, when the field left the document since its checks', async () => {
