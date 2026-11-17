@@ -82,6 +82,18 @@ describe('clip containers', () => {
     await expectClipped();
   });
 
+  it('refuses a tap on a target clipped by a second body, which keeps its own overflow though the first is display: none', async () => {
+    await page.setContent(`<!doctype html><style>body { margin: 100px 0 0 }</style><script>
+      const first = document.documentElement.appendChild(document.createElement('body'));
+      first.style.display = 'none';
+      const second = document.documentElement.appendChild(document.createElement('body'));
+      second.style.overflow = 'hidden';
+      second.innerHTML = ${JSON.stringify(ABOVE)};
+    </script>`);
+    expect(await painted()).toBe(false);
+    await expectClipped();
+  });
+
   it('refuses a tap on a target an ordinary overflow: hidden box clips away', async () => {
     await page.setContent(`<div style="margin-top:100px;overflow:hidden">${ABOVE}</div>`);
     expect(await painted()).toBe(false);

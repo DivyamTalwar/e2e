@@ -105,8 +105,9 @@ export function createDom(key: string) {
   /**
    * Whether the style turns a containment on (CSS Containment 2): a
    * `contain` other than `none`, a `content-visibility` other than
-   * `visible`, or a `container-type` of `size` or `inline-size`. Read off
-   * the style alone: one the element's kind of box would not take counts too.
+   * `visible`, or a `container-type` of `size` or `inline-size`. It reads
+   * the style alone: a containment with no effect on the element's kind of
+   * box (an inline one, a table row) counts too.
    */
   const contained = (style: CSSStyleDeclaration): boolean =>
     style.contain !== 'none' || style.contentVisibility !== 'visible' || style.containerType.includes('size');
@@ -115,9 +116,10 @@ export function createDom(key: string) {
    * Whether the viewport takes the element's `overflow`, which leaves the
    * element a used value of `visible` (CSS Overflow 3, "Overflow viewport
    * propagation"): the root element's, and in its place that of the first
-   * child of an `<html>` root that is a `<body>` not `display: none`, while
-   * the root's is `visible` on both axes and neither of the two has a
-   * containment (`contained`).
+   * `<body>` child of an `<html>` root, while the root's is `visible` on
+   * both axes and neither of the two has a containment (`contained`). A
+   * later `<body>` keeps its own even when the first is `display: none`,
+   * as Chromium and Firefox both have it, where the spec names the later one.
    */
   const viewportTakesOverflow = (element: Element): boolean => {
     const root = document.documentElement;
@@ -125,7 +127,7 @@ export function createDom(key: string) {
     if (!(root instanceof HTMLHtmlElement) || element.parentNode !== root) return false;
     const rootStyle = getComputedStyle(root);
     if (rootStyle.overflowX !== 'visible' || rootStyle.overflowY !== 'visible' || contained(rootStyle)) return false;
-    const body = [...root.children].find((child) => child instanceof HTMLBodyElement && getComputedStyle(child).display !== 'none');
+    const body = [...root.children].find((child) => child instanceof HTMLBodyElement);
     return body === element && !contained(getComputedStyle(element));
   };
 
