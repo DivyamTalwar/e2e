@@ -79,10 +79,10 @@ export async function perform(session: BidiSession, ref: NodeRef, action: Locato
     case 'clear':
       return fill(session, target, '', deadline, signal);
     case 'press':
-      await focusOn(session, target, signal);
+      await focusOn(session, target, deadline, signal);
       return session.input.press(action.key, signal);
     case 'focus':
-      return focusOn(session, target, signal);
+      return focusOn(session, target, deadline, signal);
     case 'scrollIntoView':
       return scrollIntoView(session, target, deadline, signal);
     case 'check':
@@ -272,11 +272,9 @@ async function scrollIntoView(session: BidiSession, target: NodeTarget, deadline
   });
 }
 
-/** Focuses the element, a page change its focus handlers may make; an element that takes no focus keeps the old one, as Playwright's `focus` leaves it. */
-async function focusOn(session: BidiSession, target: NodeTarget, signal: AbortSignal): Promise<void> {
-  signal.throwIfAborted();
-  session.input.mutated();
-  await session.page.run(focus, [target.element], target.context);
+/** Focuses the element, a page change its focus handlers may make (`mutateWhenReady`), so one out of the document fails stale before any key goes out; an element that takes no focus keeps the old one, as Playwright's `focus` leaves it. */
+async function focusOn(session: BidiSession, target: NodeTarget, deadline: Deadline, signal: AbortSignal): Promise<void> {
+  await mutateWhenReady(session, deadline, signal, '', () => session.page.run(focus, [target.element], target.context));
 }
 
 /** Scrolls each frame holding the element into view (`scrollFrameIntoView`), outermost first. */

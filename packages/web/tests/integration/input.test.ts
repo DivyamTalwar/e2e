@@ -9,14 +9,36 @@
  * left to the app while the driver's own arrives trusted, a click no event
  * of the element's document saw may have committed, a fill fires its
  * events with the `Event` the page started with, a ref reused after input,
- * the hover of a swallowed click included, checks its locator again, and a
- * fill still running in the page at its deadline may have committed.
+ * the hover of a swallowed click included, checks its locator again, a
+ * fill still running in the page at its deadline may have committed, and a
+ * press, a fill, or a select of an element the page took out of the
+ * document is stale and changes nothing.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LocatorExpression } from '@e2e-dev/core/engine';
 import { bySelector, onFirefox, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { BidiConnection } from '../../src/driver/connection.ts';
 import { ROOT_NODE_ID } from '../../src/driver/observe.ts';
+import { callFunction } from '../../src/driver/script.ts';
+import { fill, selectOption } from '../../src/in-page/edits.ts';
+
+const send = BidiConnection.prototype.send;
+
+/**
+ * Has the page run `change` just before the driver's next call of the page
+ * function `fn`, as an app that changes between a check of the driver's and
+ * the mutation after it.
+ */
+function beforeNext(fn: { toString(): string }, change: string): void {
+  let changed = false;
+  vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(function (this: BidiConnection, method, params) {
+    const call = params as { functionDeclaration?: unknown; target?: { context?: string } };
+    if (changed || call.functionDeclaration !== fn.toString()) return send.call(this, method, params);
+    changed = true;
+    return callFunction(this, call.target!.context!, `() => { ${change} }`).then(() => send.call(this, method, params));
+  });
+}
 
 /** Escapes HTML for a single-quoted attribute value, so a document can carry a `srcdoc`. */
 function attribute(html: string): string {
@@ -27,6 +49,9 @@ describe('input', () => {
   let page: WebSession;
   beforeAll(async () => {
     page = await startWebSession({ timeoutMs: 10_000 });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
   afterAll(async () => {
     await page.close();
@@ -316,5 +341,41 @@ describe('input', () => {
     await expect(page.engine.perform!(field!.ref, { kind: 'fill', value: 'held', sensitive: false }, page.op(1_000))).rejects.toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED' });
     release();
     expect(await page.browser.evaluate('document.getElementById("i").value')).toBe('held');
+  });
+
+  it('fails a press on an observed node the page removed as stale, and sends its key to nothing', async () => {
+    await page.setContent('<input id=kept><button id=gone>gone</button>');
+    const gone = (await page.nodes()).find((node) => node.name === 'gone');
+    await page.browser.evaluate(() => {
+      document.getElementById('gone')!.remove();
+      document.getElementById('kept')!.focus();
+      return null;
+    });
+    await expect(page.engine.perform!(gone!.ref, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    expect(await page.browser.evaluate('document.getElementById("kept").value')).toBe('');
+  });
+
+  it('fails a fill of a field the page replaced since its checks as stale, so the fill lands in the field that replaced it', async () => {
+    await page.setContent('<input id=i>');
+    const replace = 'document.getElementById("i").replaceWith(Object.assign(document.createElement("input"), { id: "i" }))';
+    const [replaced] = await page.locate(bySelector('#i'));
+    beforeNext(fill, replace);
+    await expect(page.engine.perform!(replaced!.ref, { kind: 'fill', value: 'typed', sensitive: false }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    beforeNext(fill, replace);
+    await page.browser.locator('#i').fill('typed');
+    expect(await page.browser.evaluate('document.getElementById("i").value')).toBe('typed');
+  });
+
+  it('fails a select of a <select> the page replaced since its checks as stale, and selects only in the one that replaced it', async () => {
+    const select = '<select id=s><option>a</option><option>b</option></select>';
+    await page.setContent(select);
+    const replace = `document.getElementById("s").outerHTML = ${JSON.stringify(select)}`;
+    const [replaced] = await page.locate(bySelector('#s'));
+    beforeNext(selectOption, replace);
+    await expect(page.engine.perform!(replaced!.ref, { kind: 'selectOption', value: 'b' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    expect(await page.browser.evaluate('document.getElementById("s").value')).toBe('a');
+    beforeNext(selectOption, replace);
+    await page.browser.locator('#s').selectOption('b');
+    expect(await page.browser.evaluate('document.getElementById("s").value')).toBe('b');
   });
 });

@@ -7,10 +7,15 @@
 import { withDom, type Outcome } from './dom.ts';
 
 /**
- * Focuses an element; returns whether focus landed on it, or on the editing
- * host that holds it, followed through open and recorded closed shadow roots.
+ * Focuses an element, unless it is out of the document, where a key pressed
+ * after would reach whatever else holds focus. One that takes no focus keeps
+ * the old one, as Playwright's `focus` leaves it.
  */
-export const focus = withDom((dom, element: Element): boolean => dom.focus(element));
+export function focus(element: Element): Outcome {
+  if (!element.isConnected) return { kind: 'detached' };
+  (element as HTMLElement).focus();
+  return { kind: 'ok' };
+}
 
 /**
  * A checkable's state and kind, as Playwright reads it: a checkable role
@@ -34,10 +39,11 @@ export function checkState(element: Element): Outcome<{ checked: boolean; radio:
  * sees the trusted `beforeinput` and `input` an edit fires. A date, color,
  * range, or similar input takes the value directly, with `input` and
  * `change`. Nothing changes until the element proved editable and took
- * focus. Not yet while the field is disabled or read-only; refused for what
- * no fill can do.
+ * focus, and nothing of an element out of the document. Not yet while the
+ * field is disabled or read-only; refused for what no fill can do.
  */
 export const fill = withDom((dom, element: Element, value: string): Outcome => {
+  if (!element.isConnected) return { kind: 'detached' };
   const typed = ['', 'text', 'password', 'search', 'email', 'tel', 'url', 'number'];
   const unfocused: Outcome<never> = { kind: 'refused', reason: 'element could not be focused' };
   const field = element.nodeName === 'INPUT' || element.nodeName === 'TEXTAREA' ? (element as HTMLInputElement | HTMLTextAreaElement) : null;
@@ -83,11 +89,13 @@ export interface OptionChoice {
 
 /**
  * Selects the option of a `<select>` matching `by` and fires `input` and
- * `change`, as Playwright's `selectOption` does. Not yet while the select or
- * the option is disabled, or no option matches; refused for an element that
- * is no `<select>`.
+ * `change`, as Playwright's `selectOption` does. Nothing of an element out
+ * of the document changes. Not yet while the select or the option is
+ * disabled, or no option matches; refused for an element that is no
+ * `<select>`.
  */
 export const selectOption = withDom((dom, element: Element, by: OptionChoice): Outcome => {
+  if (!element.isConnected) return { kind: 'detached' };
   if (element.nodeName !== 'SELECT') return { kind: 'refused', reason: 'Element is not a <select> element' };
   const select = element as HTMLSelectElement;
   if (select.disabled) return { kind: 'not-yet', reason: 'element is not enabled' };

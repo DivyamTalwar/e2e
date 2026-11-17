@@ -10,7 +10,7 @@ import { routeEvents } from '../../src/driver/events.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
 import { elementShown } from '../../src/in-page/actionability.ts';
-import { fill } from '../../src/in-page/edits.ts';
+import { fill, focus } from '../../src/in-page/edits.ts';
 import type { UserContextMode } from '../../src/driver/user-context.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
 import { BidiError } from '../../src/errors.ts';
@@ -316,6 +316,30 @@ describe('a fill', () => {
     await expect(done).rejects.toMatchObject({ code: 'NOT_ACTIONABLE', message: expect.stringContaining('element is not editable') });
     expect(scope.dispatched).toBe(false);
     expect(held.input.dispatches).toBeGreaterThan(0);
+  });
+
+  it('fails stale, as never dispatched, when the field left the document since its checks', async () => {
+    const fake = new FakeBidi();
+    const held = await session(fake);
+    field(fake, () => answer({ kind: 'detached' }));
+    const { scope, done } = filling(held, '1', 5_000);
+    await expect(done).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    expect(scope.dispatched).toBe(false);
+  });
+});
+
+describe('a press on a node', () => {
+  it('sends no key once the node left the document, and fails stale as never dispatched', async () => {
+    const fake = new FakeBidi().on('input.performActions', { result: {} }).on('script.callFunction', (params) => ({
+      result: { type: 'success', realm: 'r', result: { type: 'object', value: [['kind', { type: 'string', value: params['functionDeclaration'] === focus.toString() ? 'detached' : 'ok' }]] } },
+    }));
+    const held = await session(fake);
+    held.refs.storeLocated('1', { element: { sharedId: 'e' } as ElementRef, context: 'tab', locator: { kind: 'selector', selector: '#a' } });
+    const scope = new DispatchScope();
+    const pressing = scope.run(() => perform(held, { id: '1' } as NodeRef, { kind: 'press', key: 'a' }, 5_000, new AbortController().signal));
+    await expect(pressing).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    expect(fake.commands('input.performActions')).toEqual([]);
+    expect(scope.dispatched).toBe(false);
   });
 });
 
