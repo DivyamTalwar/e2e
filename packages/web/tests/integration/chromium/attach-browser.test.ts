@@ -7,9 +7,9 @@
  * without what a preload would have kept in it.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { attachBrowser } from '../../../src/index.ts';
-import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { closeRemoteChrome, launchRemoteChrome, recordGoodbyes, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { startPageServer, type PageServer } from '../../helpers/web-session.ts';
 
@@ -38,9 +38,14 @@ describe('attachBrowser', () => {
     if (chrome !== undefined) await closeRemoteChrome(chrome);
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('signs in on the open tab and leaves the tab, the browser, and the cookie behind', async () => {
     const [tab] = await pages(endpoint);
     expect(tab).toBeDefined();
+    const goodbyes = recordGoodbyes();
 
     const first = await attachBrowser(endpoint);
     try {
@@ -53,7 +58,7 @@ describe('attachBrowser', () => {
       await first.close();
     }
 
-    expect(chrome.proc.exitCode).toBeNull();
+    expect(goodbyes()).toEqual(['session.end']);
     expect(await pages(endpoint)).toEqual([{ id: tab!.id, url: `${app.url}/` }]);
 
     await using second = await attachBrowser(endpoint);

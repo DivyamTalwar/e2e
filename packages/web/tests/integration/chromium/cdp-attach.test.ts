@@ -9,11 +9,11 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@e2e-dev/core/engine';
 import { web } from '../../../src/index.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
-import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { closeRemoteChrome, debuggerUrl, launchRemoteChrome, recordGoodbyes, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
 import { byRole, cleanup, initInfo, operation } from '../../helpers/web-session.ts';
 
@@ -35,7 +35,12 @@ describe('web engine over CDP', () => {
     if (artifactsDir !== undefined) rmSync(artifactsDir, { recursive: true, force: true });
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('attaches to the remote, drives an attempt, and detaches on dispose without killing it', async () => {
+    const goodbyes = recordGoodbyes();
     let resolved = 0;
     const engine: EngineHandle = web({
       connect: {
@@ -64,8 +69,9 @@ describe('web engine over CDP', () => {
       await engine.dispose!(cleanup());
     }
 
-    // Dispose detaches the CDP session; the remote the host owns is still alive.
-    expect(chrome.proc.exitCode).toBeNull();
+    // Dispose ends its session and closes no browser: the remote the host owns still answers.
+    expect(goodbyes()).toEqual(['session.end']);
+    expect(await debuggerUrl(chrome)).toBe(chrome.endpoint);
   }, 60_000);
 
   it('reacquires a dropped remote at the next attempt by resolving the endpoint again', async () => {
@@ -111,6 +117,7 @@ describe('web engine over CDP', () => {
   }, 90_000);
 
   it('never caches a browser that connects after the init was cancelled', async () => {
+    const goodbyes = recordGoodbyes();
     let resolved = 0;
     const controller = new AbortController();
     const engine: EngineHandle = web({
@@ -139,6 +146,7 @@ describe('web engine over CDP', () => {
       await engine.dispose!(cleanup());
     }
     // And the remote the host owns was detached, not killed.
-    expect(chrome.proc.exitCode).toBeNull();
+    expect(goodbyes()).not.toContain('browser.close');
+    expect(await debuggerUrl(chrome)).toBe(chrome.endpoint);
   }, 60_000);
 });

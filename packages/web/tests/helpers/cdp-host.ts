@@ -4,6 +4,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { vi } from 'vitest';
+import { BidiConnection } from '../../src/driver/connection.ts';
 import { browserExecutable } from '../../src/install/provision.ts';
 
 /** A live Chrome with a random remote-debugging port; the host the engine attaches to. */
@@ -19,6 +21,25 @@ export async function closeRemoteChrome(chrome: Omit<RemoteChrome, 'endpoint'>):
   if (chrome.proc.exitCode === null && chrome.proc.signalCode === null) chrome.proc.kill('SIGKILL');
   await chrome.closed;
   rmSync(chrome.userDataDir, { recursive: true, force: true });
+}
+
+/** How a BiDi session ends: `session.end` detaches and leaves the browser to its host, `browser.close` ends the browser with it. */
+const GOODBYES: ReadonlySet<string> = new Set(['session.end', 'browser.close']);
+
+/**
+ * Records the goodbye of every BiDi session this process ends from now until
+ * the test restores its mocks; the function returned reads them in order.
+ */
+export function recordGoodbyes(): () => string[] {
+  const send = vi.spyOn(BidiConnection.prototype, 'send');
+  return () => send.mock.calls.map(([method]) => String(method)).filter((method) => GOODBYES.has(method));
+}
+
+/** The DevTools WebSocket URL `chrome` names over HTTP now, which only a Chrome still running answers. */
+export async function debuggerUrl(chrome: Pick<RemoteChrome, 'endpoint'>): Promise<string> {
+  const response = await fetch(`http://${new URL(chrome.endpoint).host}/json/version`);
+  const version = (await response.json()) as { webSocketDebuggerUrl: string };
+  return version.webSocketDebuggerUrl;
 }
 
 /** The pinned full Chrome's executable, which a suite that hosts one needs installed: nothing installs the headed build below the engine's `prepare`. */

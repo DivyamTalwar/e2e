@@ -10,10 +10,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@e2e-dev/core/engine';
 import { attachBrowser, web } from '../../../src/index.ts';
-import { closeRemoteChrome, installedChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { closeRemoteChrome, debuggerUrl, installedChrome, launchRemoteChrome, recordGoodbyes, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
 import { byRole, cleanup, initInfo, operation } from '../../helpers/web-session.ts';
@@ -37,6 +37,10 @@ describe('attaching to the pinned full Chrome over CDP', () => {
     if (artifactsDir !== undefined) rmSync(artifactsDir, { recursive: true, force: true });
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('lists browser UI targets beside the tab', async () => {
     const targets = (await (await fetch(`${endpoint}/json/list`)).json()) as { type: string }[];
     expect(targets.map(({ type }) => type)).toEqual(expect.arrayContaining(['page', 'browser_ui']));
@@ -49,7 +53,8 @@ describe('attaching to the pinned full Chrome over CDP', () => {
     expect(await attached.screen.getByRole('heading', 'Home').count()).toBe(1);
   }, 60_000);
 
-  it('navigates and locates through web({ connect })', async () => {
+  it('navigates and locates through web({ connect }), and leaves the browser running', async () => {
+    const goodbyes = recordGoodbyes();
     const engine: EngineHandle = web({ connect: { cdpEndpoint: () => chrome.endpoint } });
     await engine.init!(initInfo({ app: { site: new URL(app.url).hostname } }));
     try {
@@ -62,6 +67,7 @@ describe('attaching to the pinned full Chrome over CDP', () => {
     } finally {
       await engine.dispose!(cleanup());
     }
-    expect(chrome.proc.exitCode).toBeNull();
+    expect(goodbyes()).toEqual(['session.end']);
+    expect(await debuggerUrl(chrome)).toBe(chrome.endpoint);
   }, 60_000);
 });
