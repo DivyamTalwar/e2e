@@ -560,6 +560,9 @@ async function drag(session: BidiSession, from: ViewportPoint, to: () => Promise
  * Moves the mouse to a viewport point and wheels there by a swipe of
  * `extent`'s size, in one call, then waits for the frame that renders it:
  * what the swipe scrolled is left hovered, as a person's swipe leaves it.
+ * A document gone under that wait, one the swipe's own handlers navigated
+ * away from, has no frame to wait for: the swipe was delivered, as a click
+ * whose page went away under it counts as reached.
  */
 async function wheel(
   session: BidiSession,
@@ -573,5 +576,5 @@ async function wheel(
   const [deltaX, deltaY] = wheelDelta(direction, distance);
   const point = nearestPixel(at);
   await session.input.send(swipeSources(point.x, point.y, deltaX, deltaY), signal);
-  await session.page.run(nextFrame, []);
+  await unlessStale(session.page.run(nextFrame, []), false);
 }

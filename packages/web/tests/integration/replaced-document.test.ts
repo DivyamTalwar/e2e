@@ -8,7 +8,9 @@
  * the wait for a frame before a mouse action is taken up by the driver in
  * the page that came after. A read still running, such as a tap's wait for
  * its element to hold still, fails stale: Firefox keeps no page in its
- * back-forward cache, where a call still running is never answered. Firefox
+ * back-forward cache, where a call still running is never answered. A swipe
+ * whose wheel handler navigated away was delivered, so its wait for the
+ * frame that renders it ends with the document. Firefox
  * still sends a command again that it sent to a tab that never navigated:
  * there a `browser.evaluate` runs again, and the refusal of a node may
  * follow a focus that ran.
@@ -29,6 +31,26 @@ function called(fn: { toString(): string }): Promise<void> {
       const { functionDeclaration } = params as { functionDeclaration?: unknown };
       if (typeof functionDeclaration === 'string' && functionDeclaration.includes(fn.toString())) resolve();
       return send.call(this, method, params);
+    });
+  });
+}
+
+/**
+ * Holds the driver's next call of the page function `fn` that follows input
+ * until `until` settled, then sends it; resolves once it went out.
+ */
+function sentAfterInput(fn: { toString(): string }, until: Promise<void>): Promise<void> {
+  return new Promise((resolve) => {
+    let input = false;
+    vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(function (this: BidiConnection, method, params) {
+      if (method === 'input.performActions') input = true;
+      if (!input || (params as { functionDeclaration?: unknown }).functionDeclaration !== fn.toString()) return send.call(this, method, params);
+      input = false;
+      return until.then(() => {
+        const reply = send.call(this, method, params);
+        resolve();
+        return reply;
+      });
     });
   });
 }
@@ -196,6 +218,32 @@ describe('a document replaced under a call or input', () => {
     }
     await move;
     await expect.poll(() => page.browser.evaluate('[location.pathname === "/after-move", window.moved]')).toEqual([onFirefox, [40, 40]]);
+  });
+
+  it('resolves a swipe whose wheel handler navigated away, its page replaced while the swipe waited for the frame that renders it', async () => {
+    let release = (): void => undefined;
+    const requested = new Promise<void>((resolve) => {
+      page.serve('/after-swipe', (_request, response) => {
+        release = () => response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end('<title>After</title>');
+        resolve();
+      });
+    });
+    // The handler leaves no frame callback to run, so the swipe still waits for its frame when the page goes.
+    await page.setContent(`<title>Start</title><div style="height:3000px"></div><script>
+      addEventListener('wheel', () => {
+        requestAnimationFrame = () => 0;
+        location.href = '/after-swipe';
+      }, { once: true });
+    </script>`);
+    const waiting = sentAfterInput(nextFrame, requested);
+    const swipe = page.engine.performAt!({ x: 100, y: 100 }, { kind: 'swipe', direction: 'down' }, page.op());
+    try {
+      await waiting;
+    } finally {
+      release();
+    }
+    await swipe;
+    await arrived('/after-swipe');
   });
 
   it('fails a tap as stale whose page a navigation replaced while it waited for the element to hold still', async () => {
