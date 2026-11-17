@@ -366,10 +366,7 @@ export class BidiSession {
     signal.throwIfAborted();
     const tabs = contexts.filter((info) => info.userContext === this.userContext.id).map((info) => info.context);
     await this.forgetTabs();
-    await Promise.all(tabs.map(async (context) => {
-      await this.network.removeContext(context);
-      await unlessStale(this.connection.send('browsingContext.close', { context }), undefined);
-    }));
+    await Promise.all(tabs.map((context) => unlessStale(this.connection.send('browsingContext.close', { context }), undefined)));
   }
 
   /** Calls a page function the test compiled (`compileEvaluation`) with `arg` and returns its whole result; the test's code may change the page, as input would. */

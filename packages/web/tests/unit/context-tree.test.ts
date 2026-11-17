@@ -33,7 +33,8 @@ function request(context: string, id: string) {
 /**
  * A session on `fake` in the user context `mine` it opened there, its tab
  * `tab` open, its events routed through a tree that knows `tab` and its
- * frames `frame` and `inner`. The tab it opens next is `next`.
+ * frames `frame` and `inner`. The tab it opens next is `next`, and `fake`
+ * announces each tab it opens and closes, as a browser does.
  */
 async function attempt(fake: FakeBidi) {
   const tabs = ['tab', 'next'];
@@ -46,6 +47,10 @@ async function attempt(fake: FakeBidi) {
       const context = tabs.shift()!;
       fake.emit('browsingContext.contextCreated', info(context, null));
       return { result: { context } };
+    })
+    .on('browsingContext.close', (params) => {
+      fake.emit('browsingContext.contextDestroyed', info(String(params['context']), null));
+      return { result: {} };
     });
   const contexts = new ContextTree();
   const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };

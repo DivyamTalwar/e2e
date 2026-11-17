@@ -5,6 +5,7 @@ import { ContextTree } from '../../src/driver/context-tree.ts';
 import { clickSources, moveSources, pressDownSources, swipeSources, typeSource } from '../../src/driver/input-sources.ts';
 import { fixtureKeyStroke, strokeSource, type KeyPhase } from '../../src/driver/keyboard.ts';
 import { DispatchScope } from '../../src/driver/input.ts';
+import { routeEvents } from '../../src/driver/events.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
 import type { UserContextMode } from '../../src/driver/user-context.ts';
@@ -293,6 +294,40 @@ function holdNetwork(fake: FakeBidi, held: BidiSession): () => Promise<void> {
   };
 }
 
+/**
+ * A session with its tab `tab` open in a browser other clients drive too,
+ * with headers configured, so an intercept covers exactly its tabs. `fake`
+ * announces each tab it opens and closes, as a browser does, and the
+ * session's events are routed. The tab it opens next is `tab-2`.
+ */
+async function sharedSession(fake: FakeBidi): Promise<BidiSession> {
+  const tree = new ContextTree();
+  const tabs = ['tab', 'tab-2'];
+  let intercepts = 0;
+  fake
+    .on('browser.createUserContext', { result: { userContext: 'mine' } })
+    .on('network.addDataCollector', { result: { collector: 'c' } })
+    .on('session.subscribe', { result: { subscription: 's' } })
+    .on('network.addIntercept', () => ({ result: { intercept: `intercept-${String(++intercepts)}` } }))
+    .on('browsingContext.getTree', { result: { contexts: [{ context: 'tab', userContext: 'mine' }] } })
+    .on('browsingContext.create', () => {
+      const context = tabs.shift();
+      fake.emit('browsingContext.contextCreated', { context, userContext: 'mine', parent: null });
+      return { result: { context } };
+    })
+    .on('browsingContext.close', (params) => {
+      fake.emit('browsingContext.contextDestroyed', { context: params['context'], userContext: 'mine', parent: null });
+      return { result: {} };
+    });
+  const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };
+  const attempt = { protectedApp: new ProtectedApp(new Set(['http://app.test']), { 'x-preview': 'on' }, undefined) };
+  const shared = new BidiSession({ connection: fake.connection, exclusive: false, traits: BROWSER_TRAITS.chromium } as never, settings as never, attempt as never, tree);
+  routeEvents(fake.connection, tree, () => shared);
+  await shared.openUserContext(new AbortController().signal);
+  await shared.ensureContext();
+  return shared;
+}
+
 describe('BidiSession tabs', () => {
   it('opens its first tab at the viewport without activating it, and a tab opened beside it at the front', async () => {
     const fake = new FakeBidi();
@@ -475,6 +510,16 @@ describe('BidiSession tabs', () => {
     expect(closedTabs(fake)).toEqual([]);
     expect(held.context).toBe('tab');
     expect(held.tabs.list().map((tab) => tab.context)).toEqual(['tab']);
+  });
+
+  it('closes every tab in a restart whose network cannot let go of them, and leaves the failure to the next step', async () => {
+    const fake = new FakeBidi();
+    const shared = await sharedSession(fake);
+    fake.on('network.removeIntercept', { error: 'unknown error', message: 'no removal' });
+    await shared.closeContext(new AbortController().signal);
+    expect(closedTabs(fake)).toEqual(['tab']);
+    await settle();
+    expect(() => shared.latch.throwPending()).toThrow('no removal');
   });
 });
 

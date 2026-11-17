@@ -915,6 +915,24 @@ describe('web engine lifecycle', () => {
     });
   });
 
+  it('reaches networkidle after a restart closed a tab whose frame had a request in flight', async () => {
+    const engine = web();
+    await withAttempt(engine, app, artifactsDir, 's3', async () => {
+      const page = pageOf(engine);
+      const { browser } = page;
+      let asked: () => void = () => undefined;
+      const inFlight = new Promise<void>((resolve) => (asked = resolve));
+      const stuck = pages.serve('/stuck', () => asked());
+      const frame = pages.serve('/stuck-frame', `<script>addEventListener('message', () => void fetch(${JSON.stringify(stuck)}))</script>`);
+      await browser.goto(pages.serve('/stuck-outer', `<iframe src="${frame}"></iframe>`), { waitUntil: 'networkidle' });
+      await page.evaluate(() => document.querySelector('iframe')!.contentWindow!.postMessage('go', '*'));
+      await inFlight;
+      await engine.session!.restart!(operation('s3'));
+      await browser.goto(pages.serve('/after-stuck', '<h1>After</h1>'), { waitUntil: 'networkidle', timeout: 10_000 });
+      expect(await browser.url()).toBe(`${pages.origin}/after-stuck`);
+    });
+  });
+
   it('follows the window under viewport: null, reports the measured size, and swipes by it', async () => {
     const engine = web({ viewport: null });
     await withAttempt(engine, app, artifactsDir, 'w1', async () => {
