@@ -18,16 +18,16 @@ export type PagePart =
   | { readonly engine: 'xpath'; readonly body: string };
 
 /**
- * The elements a `>>` chain (`pageParts`) matches, over the DOM helpers `dom`, each part evaluated inside
+ * The elements a `>>` chain (`pageParts`) matches, each part evaluated inside
  * every element the part before it matched, as Playwright's engines read it.
  * CSS pierces open shadow roots: the last compound is queried natively in the
  * scope and in each shadow root under it, and the compounds before it are
- * matched right to left up the composed tree, memoized per element and
- * compound, with every combinator stopping at the scope element, which only a
- * `:scope` compound matches. XPath stays in the light DOM, a leading `/` read
- * from the scope element. The result is a set: its order means nothing, and
- * `locate` answers matches in its own. A selector the page cannot parse is
- * its error message.
+ * matched right to left up the composed tree (`dom.parentOrHostOf`), memoized
+ * per element and compound, with every combinator stopping at the scope
+ * element, which only a `:scope` compound matches. XPath stays in the light
+ * DOM, a leading `/` read from the scope element. The result is a set: its
+ * order means nothing, and `locate` answers matches in its own. A selector
+ * the page cannot parse is its error message.
  */
 export function selectChain(dom: Dom, parts: readonly PagePart[]): Element[] | string {
   const queryCss = (scope: Document | Element, chains: readonly (readonly CssStep[])[], into: Set<Element>): void => {

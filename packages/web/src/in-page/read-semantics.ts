@@ -19,8 +19,11 @@ import type { RawNodeData, RawObservation, RawObservedFrame, RawObservedNode, Tr
 /**
  * Builds the semantic reader for one read of a document: it keeps what it
  * reads of an element (`memoized`) and the page may change between two
- * calls, so each call into the page builds its own. Must stay
- * self-contained: no outer captures beyond its arguments.
+ * calls, so each call into the page builds its own, over the role
+ * computation `roles` and the name computation `accessibleNames`, both built
+ * here for the read, the document's modal scope `modalScopeOf`, and the DOM
+ * helpers `dom`. Must stay self-contained: no outer captures beyond its
+ * arguments.
  *
  * `tree` walks the document for one agent observation. The other methods
  * read one element as a locate matches and reports it (`locator-match.ts`).
