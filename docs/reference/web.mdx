@@ -364,6 +364,7 @@ export type WebInitScript = string | { readonly path: string } | (() => unknown)
 | On Firefox, `waitForResponse` never resolves for a request that `route.fulfill` answers with a redirect | Firefox reports no response for it. Wait for the URL the redirect leads to. |
 | On Firefox, `waitForResponse` resolves once the response's body starts, not when its headers arrive | Firefox reports a response only then. |
 | On Firefox, a key WebDriver defines no value for, such as `MediaPlayPause`, throws `UNSUPPORTED_CAPABILITY` | Chromium presses those keys over CDP. |
+| On Firefox, a viewport its window cannot grow to hold throws `UNSUPPORTED_CAPABILITY` | Firefox takes pointer input only inside its window. A headless window grows to 16384 pixels each way, a headed one to its display. |
 | On Chromium, a request for `/favicon.ico` goes to the network past its own route | chromium-bidi reports no events for it. |
 | On Chromium, a route on a form submission that navigates gets no `route.request.postData`, and `route.fetch()` on it throws `ACTION_FAILED` | Chromium does not report the body of a held navigation. |
 | On Firefox, an init script sees a same-origin frame's first, empty document (`about:blank`), not the page the frame then loads | Firefox keeps that document's `window` for the page and runs no script again. What the script set on `window` stays. |
