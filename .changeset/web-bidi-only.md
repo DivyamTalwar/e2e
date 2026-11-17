@@ -11,6 +11,7 @@
 - `getByRole('textbox')` also finds a `contenteditable` host, and `getByRole` finds a control with only an icon by its `title`. A query that matched one node before can now match two.
 - `connect.reconnectEndpoint` and `BrowserLease.reconnectEndpoint` are removed, and `reconnectEndpoint` in `connect` is `INVALID_CONFIG`: a dropped connection fails the attempt, and the next attempt attaches again through `cdpEndpoint`.
 - With a `scope: 'attempt'` browser provider, `headers`, `basicAuth`, `userAgent`, `locale`, and `timezoneId` are no longer `INVALID_CONFIG`. `app.clearState()` still throws `UNSUPPORTED_CAPABILITY` there, and a test that uses a saved session still fails collection with `COLLECTION_ERROR`: the attempt runs in the fresh browser's own context.
+- `browser.mouse.move` and `wheel` throw `INVALID_ARGUMENT` for a point outside the viewport, and `waitForResponse` reads no body over 20 MB (`body()` throws `ACTION_FAILED`).
 - `setInputFiles` on a browser provider's browser sends the files' bytes to the page, up to 50 MB in all; a directory there throws `UNSUPPORTED_CAPABILITY`, and so does a download on a provider without `downloads`.
 - On Firefox, `browser.emulateMedia({ reducedMotion })` (set `web({ reducedMotion })` instead), `route.continue({ url })`, and a drag that starts an HTML5 drag throw `UNSUPPORTED_CAPABILITY`. The web reference lists the limits of each browser.
 - Setting `headers` or a route no longer turns the browser's HTTP cache off: a response served from the cache sends no request for a route to see.

@@ -740,7 +740,7 @@ expect(response.status).toBe(201);
 | Throws | When |
 | --- | --- |
 | `INVALID_ARGUMENT` | A predicate function as the pattern. |
-| `ACTION_FAILED` | Nothing matches inside the deadline. From `body()`, `text()`, and `json()`: a body still streaming when their budget runs out, or a body the browser could not read (a connection reset short of the declared `Content-Length`, a request the page aborted, or a redirect, whose body the browser never keeps), instead of an empty string. |
+| `ACTION_FAILED` | Nothing matches inside the deadline. From `body()`, `text()`, and `json()`: a body still streaming when their budget runs out, or a body the browser could not read (a connection reset short of the declared `Content-Length`, a request the page aborted, a body over 20 MB, or a redirect, whose body the browser never keeps), instead of an empty string. |
 
 ```ts
 export interface WebResponse {
@@ -998,6 +998,7 @@ await browser.mouse.move(320, 240);
 await browser.mouse.up();
 ```
 
+A point outside the viewport throws `INVALID_ARGUMENT`.
 [`Browser`](#browser-interface) describes each method, `wheel` included.
 
 ### Functions

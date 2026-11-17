@@ -1711,7 +1711,7 @@ async locate(expression) {
 export function urlMatches(
   current: string,
   expected: string | RegExp,
-  baseHref: string,
+  baseHref: string | undefined,
   ignoreCase?: boolean,
 ): boolean;
 ```
