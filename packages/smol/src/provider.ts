@@ -206,8 +206,9 @@ function startScript(setup: string | undefined, hostPorts: readonly number[]): s
     // The machine's loopback is its own; the host's is behind host.smolvm.internal.
     ...hostPorts.map((port) => tcpRelay(port, 'host.smolvm.internal', port, '127.0.0.1')),
     tcpRelay(GUEST_PORT, '127.0.0.1', CHROMIUM_CDP_PORT, '0.0.0.0', '/tmp/e2e-cdp-relay.log'),
-    // A history restore from Chromium's back/forward cache emits no load event
-    // over CDP, so Playwright goBack({ waitUntil: 'load' }) otherwise hangs.
+    // The back/forward cache is off, as in the browser the engine launches:
+    // going back loads the page again, and its request reaches the routes. A
+    // page restored from the cache keeps its state and sends no request.
     detached(
       `"$chrome" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --no-default-browser-check --disable-features=BackForwardCache --remote-debugging-port=${CHROMIUM_CDP_PORT} --user-data-dir=/tmp/e2e-chromium about:blank`,
       '/tmp/e2e-chromium.log',
