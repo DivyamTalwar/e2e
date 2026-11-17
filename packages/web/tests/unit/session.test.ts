@@ -408,8 +408,8 @@ describe('a press on a node', () => {
 
   /**
    * Presses a key on a node an observation gave, on a page that answers its
-   * `focus` with `focused` and the read before it, where there is one, with
-   * `read`; counted by a scope of its own.
+   * `focus` with `focused` and the read before it with `read`; counted by a
+   * scope of its own.
    */
   async function press(browser: BrowserName, focused: Reply, read: Reply = ok): Promise<{ fake: FakeBidi; scope: DispatchScope; failure: unknown }> {
     const fake = new FakeBidi().on('input.performActions', { result: {} }).on('script.callFunction', (params) => (params['functionDeclaration'] === focus.toString() ? focused : read));
@@ -423,53 +423,50 @@ describe('a press on a node', () => {
   /** The page calls of `fn` that `fake` got. */
   const calls = (fake: FakeBidi, fn: { toString(): string }): SentCommand[] => fake.commands('script.callFunction').filter((command) => command.params['functionDeclaration'] === fn.toString());
 
-  // What Chromium answered for an element of a document a navigation replaced, settled and in flight: each time before the function ran.
-  it.each<Reply>([
-    { error: 'no such node', message: 'SharedId "f.1.d.2.e.3" belongs to different document. Current document is 4.' },
-    { error: 'no such node', message: 'SharedId "f.1.d.2.e.3" was not found.' },
-    { error: 'unknown error', message: 'Node with given id does not belong to the document' },
-  ])('fails stale, as never dispatched, when Chromium refused the node of a document a navigation replaced, and sends no key: %j', async (refusal) => {
-    const { fake, scope, failure } = await press('chromium', refusal);
-    expect(failure).toMatchObject({ code: 'NODE_STALE', retryable: true });
-    expect(fake.commands('input.performActions')).toEqual([]);
-    expect(scope.dispatched).toBe(false);
-  });
+  /** What each browser answers for an element of a document a navigation replaced, settled and in flight, or of a frame that is gone. */
+  const REFUSALS: readonly (readonly [BrowserName, Reply])[] = [
+    ['chromium', { error: 'no such node', message: 'SharedId "f.1.d.2.e.3" belongs to different document. Current document is 4.' }],
+    ['chromium', { error: 'no such node', message: 'SharedId "f.1.d.2.e.3" was not found.' }],
+    ['chromium', { error: 'unknown error', message: 'Node with given id does not belong to the document' }],
+    ['chromium', { error: 'no such frame', message: 'Context 046C34E7A7D4F228602F3B47BEDF8F34 not found' }],
+    ['firefox', { error: 'no such node', message: 'The node with the reference e is not known' }],
+    ['firefox', { error: 'no such frame', message: 'Browsing Context with id 15032385537 not found' }],
+  ];
 
-  // What Chromium answered for a focus whose function ran and whose document, frame, or tab went away under it.
-  it.each<Reply>([
-    { error: 'unknown error', message: 'Inspected target navigated or closed' },
-    { error: 'unknown error', message: 'Cannot find context with specified id' },
-    { error: 'unknown error', message: 'Execution context was destroyed.' },
-    { error: 'no such frame', message: 'Browsing context is gone' },
-  ])('keeps a focus whose document went away under it counted, so it may have committed: %j', async (gone) => {
-    const { fake, scope, failure } = await press('chromium', gone);
-    expect(failure).toBeInstanceOf(BidiError);
-    expect(fake.commands('input.performActions')).toEqual([]);
-    expect(scope.dispatched).toBe(true);
-  });
-
-  it('keeps a focus Firefox refused the node of counted: Firefox sends a call again that it sent to a first, empty document', async () => {
-    const { fake, scope, failure } = await press('firefox', { error: 'no such node', message: 'The node with the reference e is not known' });
-    expect(failure).toMatchObject({ error: 'no such node' });
-    expect(fake.commands('input.performActions')).toEqual([]);
-    expect(scope.dispatched).toBe(true);
-  });
-
-  it('reads the node before it focuses it on Firefox, so one of a document a navigation replaced fails stale, as never dispatched', async () => {
-    const { fake, scope, failure } = await press('firefox', ok, { error: 'no such node', message: 'The node with the reference e is not known' });
+  it.each(REFUSALS)('reads the node before it focuses it, so one %s refused fails stale, as never dispatched, and no key goes out: %j', async (browser, refusal) => {
+    const { fake, scope, failure } = await press(browser, ok, refusal);
     expect(afterDispatch(classify(failure, 'press'), 'press', scope.dispatched)).toMatchObject({ code: 'NODE_STALE', retryable: true });
     expect(calls(fake, elementAttached)).toHaveLength(1);
     expect(calls(fake, focus)).toEqual([]);
     expect(fake.commands('input.performActions')).toEqual([]);
   });
 
-  it('focuses in one page call where the refusal of a node proves nothing ran, and in two on Firefox', async () => {
-    for (const [browser, reads] of [['chromium', 0], ['firefox', 1]] as const) {
-      const { fake, scope, failure } = await press(browser, ok);
-      expect(failure).toBeUndefined();
-      expect([calls(fake, elementAttached).length, calls(fake, focus).length, fake.commands('input.performActions').length]).toEqual([reads, 1, 1]);
-      expect(scope.dispatched).toBe(true);
-    }
+  // The read of the node passed, so a navigation replaced the document in the moment since: Firefox may have run the focus in the one that went away.
+  it.each(REFUSALS)('keeps a focus counted whose node %s refused, so it may have committed: %j', async (browser, refusal) => {
+    const { fake, scope, failure } = await press(browser, refusal);
+    expect(afterDispatch(classify(failure, 'press'), 'press', scope.dispatched)).toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED', retryable: false });
+    expect(fake.commands('input.performActions')).toEqual([]);
+  });
+
+  // What the browsers answered for a focus whose function ran and whose document, frame, or tab went away under it.
+  it.each<readonly [BrowserName, Reply]>([
+    ['chromium', { error: 'unknown error', message: 'Inspected target navigated or closed' }],
+    ['chromium', { error: 'unknown error', message: 'Cannot find context with specified id' }],
+    ['chromium', { error: 'unknown error', message: 'Execution context was destroyed.' }],
+    ['chromium', { error: 'no such frame', message: 'Browsing context is gone' }],
+    ['firefox', { error: 'no such frame', message: 'DiscardedBrowsingContextError: Actor \'MessageHandlerFrame\' destroyed before query \'MessageHandlerFrameParent:sendCommand\' was resolved' }],
+  ])('keeps a focus on %s whose document went away under it counted, so it may have committed: %j', async (browser, gone) => {
+    const { fake, scope, failure } = await press(browser, gone);
+    expect(failure).toBeInstanceOf(BidiError);
+    expect(fake.commands('input.performActions')).toEqual([]);
+    expect(scope.dispatched).toBe(true);
+  });
+
+  it.each(['chromium', 'firefox'] as const)('reads the node, focuses it, and sends the key on %s: two page calls and one input', async (browser) => {
+    const { fake, scope, failure } = await press(browser, ok);
+    expect(failure).toBeUndefined();
+    expect([calls(fake, elementAttached).length, calls(fake, focus).length, fake.commands('input.performActions').length]).toEqual([1, 1, 1]);
+    expect(scope.dispatched).toBe(true);
   });
 });
 

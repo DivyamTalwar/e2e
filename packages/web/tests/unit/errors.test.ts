@@ -2,21 +2,23 @@
  * The engine's errors: a gone node, frame, or document is retryable
  * `NODE_STALE`, a classified error passes untouched, anything else is
  * `ENGINE_FAILURE`; what a failure after dispatched input becomes, with a
- * sensitive value scrubbed; the stale fallback, the fallback for an element
- * the browser refused, and the quiet release helper;
+ * sensitive value scrubbed; the stale fallback and the quiet release helper;
  * and a runner error recognized by its code, whichever copy of `e2e` raised
  * it.
  */
 
 import { describe, expect, it } from 'vitest';
 import { EngineError, TestError, ConfigurationError } from '@e2e-dev/core/engine';
-import { afterDispatch, BidiError, classify, isStale, releaseQuietly, ScriptError, unlessRefused, unlessStale, isTestErrorCode } from '../../src/errors.ts';
+import { afterDispatch, BidiError, classify, isStale, releaseQuietly, ScriptError, unlessStale, isTestErrorCode } from '../../src/errors.ts';
 
 describe('classify', () => {
   it.each([
     new BidiError('script.callFunction', 'no such node', 'SharedId "f.1.d_2" was not found.'),
+    new BidiError('script.callFunction', 'no such node', 'SharedId "f.1.d.2.e.3" belongs to different document. Current document is 4.'),
     new BidiError('script.callFunction', 'unknown error', 'Node with given id does not belong to the document'),
     new BidiError('browsingContext.getTree', 'no such frame', 'Context abc not found'),
+    new BidiError('script.callFunction', 'no such frame', 'Browsing context is gone'),
+    new BidiError('script.callFunction', 'unknown error', 'Cannot find context with specified id'),
     new ScriptError('Execution context was destroyed, most likely because of a navigation'),
     new ScriptError('element is detached'),
     new BidiError('script.callFunction', 'unknown error', 'Inspected target navigated or closed'),
@@ -55,26 +57,6 @@ describe('unlessStale', () => {
     await expect(unlessStale(Promise.reject(new BidiError('m', 'no such node', '')), 'fallback')).resolves.toBe('fallback');
     await expect(unlessStale(Promise.resolve('value'), 'fallback')).resolves.toBe('value');
     await expect(unlessStale(Promise.reject(new BidiError('m', 'invalid argument', '')), 'fallback')).rejects.toBeInstanceOf(BidiError);
-  });
-});
-
-describe('unlessRefused', () => {
-  it('falls back only for an element the browser refused, never for a frame or document gone under the call', async () => {
-    await expect(unlessRefused(Promise.resolve('value'), 'fallback')).resolves.toBe('value');
-    for (const refused of [
-      new BidiError('script.callFunction', 'no such node', 'SharedId "f.1.d.2.e.3" belongs to different document. Current document is 4.'),
-      new BidiError('script.callFunction', 'unknown error', 'Node with given id does not belong to the document'),
-    ]) {
-      await expect(unlessRefused(Promise.reject(refused), 'fallback')).resolves.toBe('fallback');
-    }
-    for (const gone of [
-      new BidiError('script.callFunction', 'no such frame', 'Browsing context is gone'),
-      new BidiError('script.callFunction', 'unknown error', 'Cannot find context with specified id'),
-      new BidiError('script.callFunction', 'unknown error', 'Inspected target navigated or closed'),
-      new ScriptError('Execution context was destroyed, most likely because of a navigation'),
-    ]) {
-      await expect(unlessRefused(Promise.reject(gone), 'fallback')).rejects.toBe(gone);
-    }
   });
 });
 

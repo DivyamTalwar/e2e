@@ -24,7 +24,7 @@ import { checkState, elementAttached, fileInput, fileInputTakes, fill as fillEle
 import { armHitInterceptor, hitInterceptorResult } from '../in-page/hit-interceptor.ts';
 import { SECURE_FIELD_SELECTOR } from '../in-page/read-node.ts';
 import { chromiumDrag, firefoxDrag } from './drag.ts';
-import { unlessRefused, unlessStale } from '../errors.ts';
+import { unlessStale } from '../errors.ts';
 import type { NodeTarget } from './frames.ts';
 import { invert, project } from './projection.ts';
 import { ROOT_NODE_ID, stillLocated } from './observe.ts';
@@ -276,13 +276,12 @@ async function scrollIntoView(session: BidiSession, target: NodeTarget, deadline
  * Focuses the element, a page change its focus handlers may make
  * (`mutateWhenReady`), so one out of the document fails stale before any key
  * goes out; an element that takes no focus keeps the old one, as
- * Playwright's `focus` leaves it. Where the refusal of a node does not prove
- * the focus never ran (`resendsPageCalls`), the node is read first, as every
- * other action reads it before it changes the page, so one of a document a
- * navigation replaced fails stale there.
+ * Playwright's `focus` leaves it. The node is read first, as every other
+ * action reads it before it changes the page, so one whose document a
+ * navigation replaced, or whose frame is gone, fails stale there.
  */
 async function focusOn(session: BidiSession, target: NodeTarget, deadline: Deadline, signal: AbortSignal): Promise<void> {
-  if (session.browser.traits.resendsPageCalls) await settle(deadline, signal, () => session.page.run(elementAttached, [target.element], target.context));
+  await settle(deadline, signal, () => session.page.run(elementAttached, [target.element], target.context));
   await mutateWhenReady(session, deadline, signal, '', () => session.page.run(focus, [target.element], target.context));
 }
 
@@ -382,19 +381,21 @@ async function fill(session: BidiSession, target: NodeTarget, value: string, dea
  * counts as dispatched before it runs, like any input, so one whose handlers
  * still run at the operation's deadline may have committed. A not yet
  * changed nothing, as an answer of a detached element did not, so the
- * operation takes those back (`BidiInput.takeBack`). So is an element the
- * browser refused, one of a document a navigation replaced
- * (`unlessRefused`), unless the browser sends a call again
- * (`resendsPageCalls`): its refusal may answer for the document that
- * replaced the one the mutation ran in. A mutation that ran, threw midway,
- * or refused stays counted: a fill refuses a malformed number only once the
- * field took it. So does one whose document, frame, or tab went away under
- * it. Nothing runs once `signal` aborted.
+ * operation takes those back (`BidiInput.takeBack`). A mutation that ran,
+ * threw midway, or refused stays counted: a fill refuses a malformed number
+ * only once the field took it. So does one whose document, frame, or tab
+ * went away under it, and one whose element the browser refused. Every
+ * action reads its element before it changes the page, so that refusal
+ * means a navigation replaced the document in the moment since, and it
+ * does not prove nothing ran: Firefox sends a call again that it sent to a
+ * first, empty document, and then refuses the element for the document
+ * that replaced the one the mutation ran in. Nothing runs once `signal`
+ * aborted.
  */
 async function mutateWhenReady(session: BidiSession, deadline: Deadline, signal: AbortSignal, prefix: string, mutate: () => Promise<Outcome>): Promise<void> {
   await settle(deadline, signal, async () => {
     session.input.mutated();
-    const outcome = await (session.browser.traits.resendsPageCalls ? mutate() : unlessRefused(mutate(), { kind: 'detached' }));
+    const outcome = await mutate();
     if (outcome.kind === 'not-yet' || outcome.kind === 'detached') session.input.takeBack();
     return outcome;
   }, prefix);

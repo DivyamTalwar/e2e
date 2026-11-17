@@ -13,9 +13,10 @@
  * fill still running in the page at its deadline may have committed, a
  * press, a fill, or a select of an element the page took out of the
  * document is stale and changes nothing, a press or a focus on a node of a
- * document a navigation replaced is stale too, so a locator's press lands
- * in the document that replaced it, and a press whose focus handler took
- * its document away may have committed.
+ * document a navigation replaced, or of a frame that is gone, is stale
+ * too, so a locator's press lands in the document that replaced it, and a
+ * press whose document went away after the read of its node, or under its
+ * focus handler, may have committed.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -392,6 +393,30 @@ describe('input', () => {
     expect(await page.browser.evaluate('document.getElementById("kept").value')).toBe('');
   });
 
+  it.each([
+    ['removed', 'document.getElementById("f").remove()'],
+    ['put another in the place of', 'document.getElementById("f").replaceWith(document.getElementById("f").cloneNode())'],
+  ])('fails a press and a focus on an observed node of a frame the page %s as stale, and sends its key to nothing', async (_how, change) => {
+    await page.setContent(`<input id=kept><iframe id=f srcdoc='${attribute('<button>framed</button>')}'></iframe>`);
+    await page.waitForFrames();
+    const framed = (await page.nodes()).find((node) => node.name === 'framed')!.ref;
+    await page.browser.evaluate(`(() => { ${change}; document.getElementById("kept").focus(); })()`);
+    await expect(page.engine.perform!(framed, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    await expect(page.engine.perform!(framed, { kind: 'focus' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    expect(await page.browser.evaluate('document.getElementById("kept").value')).toBe('');
+  });
+
+  it('fails a press and a focus on an observed node of a frame whose page a navigation replaced as stale, and sends its key to nothing', async () => {
+    await page.setContent(`<iframe id=f srcdoc='${attribute('<button>framed</button>')}'></iframe>`);
+    await page.waitForFrames();
+    const framed = (await page.nodes()).find((node) => node.name === 'framed')!.ref;
+    await page.setContent('<input id=kept>');
+    await page.browser.evaluate('document.getElementById("kept").focus()');
+    await expect(page.engine.perform!(framed, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    await expect(page.engine.perform!(framed, { kind: 'focus' }, page.op())).rejects.toMatchObject({ code: 'NODE_STALE', retryable: true });
+    expect(await page.browser.evaluate('document.getElementById("kept").value')).toBe('');
+  });
+
   it('fails a press, a focus, a fill, and a tap on an observed node of a frame whose document a navigation replaced as stale, and sends its key to nothing', async () => {
     const framed = page.serve('/framed-before', '<input aria-label=field><button>go</button>');
     const after = page.serve('/framed-after', '<p>after</p>');
@@ -417,21 +442,19 @@ describe('input', () => {
   it('presses a located field in the document a navigation replaced its own with since the locate', async () => {
     const field = '<input id=i>';
     await page.setContent(field);
-    // The first page call of a press: the focus on Chromium, whose refusal of the node proves nothing ran, and the read before it on Firefox.
-    navigatedBeforeNext(onFirefox ? elementAttached : focus, page.serve('/replaced-before-press', field));
+    // The first page call of a press is the read of its node.
+    navigatedBeforeNext(elementAttached, page.serve('/replaced-before-press', field));
     await page.browser.locator('#i').press('x');
     expect(await page.browser.evaluate('[location.pathname, document.getElementById("i").value]')).toEqual(['/replaced-before-press', 'x']);
   });
 
-  it('fails a focus whose node Chromium refused as stale, and reports one Firefox refused as possibly committed', async () => {
+  it('reports a press as possibly committed whose document a navigation replaced between the read of its node and its focus, and sends its key to nothing', async () => {
     const field = '<input id=i>';
     await page.setContent(field);
     const [located] = await page.locate(bySelector('#i'));
     navigatedBeforeNext(focus, page.serve('/replaced-before-focus', field));
-    // Firefox sends a call again that it sent to a tab's or frame's first, empty document, so its refusal may follow a focus that ran.
-    await expect(page.engine.perform!(located!.ref, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject(
-      onFirefox ? { code: 'ACTION_MAY_HAVE_COMMITTED', retryable: false } : { code: 'NODE_STALE', retryable: true },
-    );
+    // The focus is counted before it runs, and the refusal of its node does not prove it never ran: Firefox sends a call again that it sent to a first, empty document.
+    await expect(page.engine.perform!(located!.ref, { kind: 'press', key: 'x' }, page.op())).rejects.toMatchObject({ code: 'ACTION_MAY_HAVE_COMMITTED', retryable: false });
     expect(await page.browser.evaluate('[location.pathname, document.getElementById("i").value]')).toEqual(['/replaced-before-focus', '']);
   });
 
