@@ -6,50 +6,20 @@ import { ContextTree } from '../../src/driver/context-tree.ts';
 import { clickSources, moveSources, pressDownSources, swipeSources, typeSource } from '../../src/driver/input-sources.ts';
 import { fixtureKeyStroke, strokeSource, type KeyPhase } from '../../src/driver/keyboard.ts';
 import { DispatchScope, type BidiInput } from '../../src/driver/input.ts';
-import { routeEvents } from '../../src/driver/events.ts';
-import { BidiSession } from '../../src/driver/session.ts';
-import { BROWSER_TRAITS, type BrowserName, type BrowserTraits } from '../../src/browsers.ts';
+import type { BidiSession } from '../../src/driver/session.ts';
+import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
 import { elementShown } from '../../src/in-page/actionability.ts';
 import { elementAttached, fill, focus } from '../../src/in-page/edits.ts';
-import type { UserContextMode } from '../../src/driver/user-context.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
 import { afterDispatch, BidiError, classify } from '../../src/errors.ts';
 import type { NodeRef } from '@e2e-dev/core/engine';
 import { adoptable, contextInfo, FakeBidi, type Reply, type SentCommand, settle } from '../helpers/bidi-fake.ts';
 import { gate } from '../helpers/gate.ts';
 import { callOf } from '../helpers/page-call.ts';
+import { closedTabs, session, sharedSession, unopened } from '../helpers/session-fake.ts';
 import { ElementRef } from '../../src/driver/script.ts';
 
 const SHIFT = '';
-
-/** A session on `fake` that has opened nothing yet, on a 100 by 100 viewport, in a browser of `traits`, in a user context of its own unless `userContext` says otherwise. */
-function unopenedOn(fake: FakeBidi, traits: BrowserTraits, userContext: UserContextMode = 'fresh'): BidiSession {
-  const settings = { media: {}, viewport: { width: 100, height: 100 }, initScripts: { forAttempt: () => [] }, permissions: [], userContext, testIdAttribute: 'data-testid' };
-  const attempt = { protectedApp: new ProtectedApp(new Set(), undefined, undefined) };
-  return new BidiSession({ connection: fake.connection, exclusive: true, traits } as never, settings as never, attempt as never, new ContextTree());
-}
-
-/**
- * A session on `fake` that has opened nothing yet (`unopenedOn`), on
- * `browser` with windows that hold any viewport: `fake` models no window,
- * and how one grows has tests of its own (`tab-windows.test.ts`).
- */
-function unopened(fake: FakeBidi, browser: BrowserName = 'chromium', userContext: UserContextMode = 'fresh'): BidiSession {
-  return unopenedOn(fake, { ...BROWSER_TRAITS[browser], windowClipsViewport: false }, userContext);
-}
-
-/** A session on `fake` with its user context and its tab `tab` open; the tab it opens next is `tab-2`. */
-async function session(fake: FakeBidi, browser: BrowserName = 'chromium'): Promise<BidiSession> {
-  const tabs = ['tab', 'tab-2'];
-  fake
-    .on('browser.createUserContext', { result: { userContext: 'mine' } })
-    .on('network.addDataCollector', { result: { collector: 'c' } })
-    .on('browsingContext.create', () => ({ result: { context: tabs.shift() } }));
-  const opened = unopened(fake, browser);
-  await opened.openUserContext(new AbortController().signal);
-  await opened.ensureContext();
-  return opened;
-}
 
 /** The BiDi key source of one `browser.keyboard` call, with Shift held before it or not. */
 function keySource(key: string, phase: KeyPhase, shiftHeld: boolean) {
@@ -545,11 +515,6 @@ describe('BidiSession.refs', () => {
   });
 });
 
-/** The contexts `fake` was asked to close, in order. */
-function closedTabs(fake: FakeBidi): unknown[] {
-  return fake.commands('browsingContext.close').map((command) => command.params['context']);
-}
-
 /** The tab commands `fake` got, in order, each with its context. */
 function tabCommands(fake: FakeBidi): string[] {
   return fake.sent
@@ -583,40 +548,6 @@ function holdNetwork(fake: FakeBidi, held: BidiSession): () => Promise<void> {
     release();
     await tracking;
   };
-}
-
-/**
- * A session with its tab `tab` open in a browser other clients drive too,
- * with headers configured, so an intercept covers exactly its tabs. `fake`
- * announces each tab it opens and closes, as a browser does, and the
- * session's events are routed. The tab it opens next is `tab-2`.
- */
-async function sharedSession(fake: FakeBidi): Promise<BidiSession> {
-  const tree = new ContextTree();
-  const tabs = ['tab', 'tab-2'];
-  let intercepts = 0;
-  fake
-    .on('browser.createUserContext', { result: { userContext: 'mine' } })
-    .on('network.addDataCollector', { result: { collector: 'c' } })
-    .on('session.subscribe', { result: { subscription: 's' } })
-    .on('network.addIntercept', () => ({ result: { intercept: `intercept-${String(++intercepts)}` } }))
-    .on('browsingContext.getTree', { result: { contexts: [contextInfo('tab')] } })
-    .on('browsingContext.create', () => {
-      const context = tabs.shift()!;
-      fake.emit('browsingContext.contextCreated', contextInfo(context));
-      return { result: { context } };
-    })
-    .on('browsingContext.close', (params) => {
-      fake.emit('browsingContext.contextDestroyed', contextInfo(String(params['context'])));
-      return { result: {} };
-    });
-  const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };
-  const attempt = { protectedApp: new ProtectedApp(new Set(['http://app.test']), { 'x-preview': 'on' }, undefined) };
-  const shared = new BidiSession({ connection: fake.connection, exclusive: false, traits: BROWSER_TRAITS.chromium } as never, settings as never, attempt as never, tree);
-  routeEvents(fake.connection, tree, () => shared);
-  await shared.openUserContext(new AbortController().signal);
-  await shared.ensureContext();
-  return shared;
 }
 
 describe('BidiSession tabs', () => {
@@ -662,7 +593,7 @@ describe('BidiSession tabs', () => {
   it('grows a tab\'s window to hold the viewport before it sizes the tab, where a window cuts a viewport short', async () => {
     const fake = new FakeBidi();
     const sized = oneWindow(fake, Infinity);
-    const clipped = unopenedOn(fake, BROWSER_TRAITS.firefox);
+    const clipped = unopened(fake, 'firefox', 'fresh', { traits: BROWSER_TRAITS.firefox });
     await clipped.openUserContext(new AbortController().signal);
     await clipped.ensureContext();
     expect(sized()).toEqual(['setClientWindowState 100x110', 'setViewport 100x100']);
@@ -675,7 +606,7 @@ describe('BidiSession tabs', () => {
   it('keeps the viewport it has when the window cannot hold a new one, for the shown tab and the tabs after it', async () => {
     const fake = new FakeBidi();
     const sized = oneWindow(fake, 500);
-    const clipped = unopenedOn(fake, BROWSER_TRAITS.firefox);
+    const clipped = unopened(fake, 'firefox', 'fresh', { traits: BROWSER_TRAITS.firefox });
     await clipped.openUserContext(new AbortController().signal);
     await clipped.ensureContext();
     await expect(clipped.setViewport({ width: 300, height: 600 })).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY', message: expect.stringContaining('cannot hold a 300x600 viewport: it shows at most 490 pixels of the page\'s height') });
@@ -689,7 +620,7 @@ describe('BidiSession tabs', () => {
   it('sizes a tab and no window where a window cuts no viewport short', async () => {
     const fake = new FakeBidi();
     const sized = oneWindow(fake, Infinity);
-    const whole = unopenedOn(fake, BROWSER_TRAITS.chromium);
+    const whole = unopened(fake, 'chromium', 'fresh', { traits: BROWSER_TRAITS.chromium });
     await whole.openUserContext(new AbortController().signal);
     await whole.ensureContext();
     await whole.setViewport({ width: 300, height: 200 });
@@ -750,9 +681,12 @@ describe('BidiSession tabs', () => {
         tree.created('tab', 'mine', null);
         return { result: { context: 'tab' } };
       });
-    const settings = { media: {}, viewport: null, initScripts: { forAttempt: () => [] }, permissions: [], userContext: 'fresh' };
-    const attempt = { protectedApp: new ProtectedApp(new Set(['http://app.test']), { 'x-preview': 'on' }, undefined) };
-    const shared = new BidiSession({ connection: fake.connection, exclusive: false, traits: BROWSER_TRAITS.chromium } as never, settings as never, attempt as never, tree);
+    const shared = unopened(fake, 'chromium', 'fresh', {
+      settings: { viewport: null },
+      exclusive: false,
+      protectedApp: new ProtectedApp(new Set(['http://app.test']), { 'x-preview': 'on' }, undefined),
+      tree,
+    });
     await shared.openUserContext(new AbortController().signal);
     await expect(shared.ensureContext()).rejects.toThrow('no intercept');
     expect(closedTabs(fake)).toEqual(['tab']);
