@@ -9,7 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { SemanticNode } from '@e2e-dev/core/engine';
-import { byRole, flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
+import { byRole, byTestId, flatten, startWebSession, type WebSession } from '../helpers/web-session.ts';
 
 let page: WebSession;
 
@@ -117,6 +117,58 @@ describe('a role query on a display: contents element', () => {
       <button onclick="document.title = 'saved'">Save</button>`);
     await page.act(byRole('button', 'Save'), { kind: 'tap' });
     expect(await page.browser.evaluate(() => document.title)).toBe('saved');
+  });
+});
+
+describe('content a closed <details> folds away across a shadow boundary', () => {
+  /** A page whose light child `target` is slotted into the body of a `<details>` in its host's shadow root. */
+  const slotted = (mode: string, open: string, target: string): string => `<fold-host>${target}</fold-host><script>
+    customElements.define('fold-host', class extends HTMLElement {
+      connectedCallback() { this.attachShadow({ mode: '${mode}' }).innerHTML = '<details${open}><summary>More</summary><slot></slot></details>'; }
+    });
+  </script>`;
+
+  /** A page whose `target` is in the shadow root of a host in the body of a `<details>`. */
+  const hosted = (mode: string, open: string, target: string): string => `<details${open}><summary>More</summary><fold-host></fold-host></details><script>
+    customElements.define('fold-host', class extends HTMLElement {
+      connectedCallback() { this.attachShadow({ mode: '${mode}' }).innerHTML = ${JSON.stringify(target)}; }
+    });
+  </script>`;
+
+  const BUTTON = '<button data-testid="target">Go</button>';
+  const CONTENTS = '<span data-testid="target" role="button" style="display:contents">Go</span>';
+
+  /** What the page says of its target: its `hidden` state, how many buttons a role query finds, and how many an observation lists. */
+  async function read(html: string): Promise<{ hidden: boolean; byRole: number; observed: number }> {
+    await page.setContent(html);
+    const [target] = await page.locate(byTestId('target'));
+    return {
+      hidden: target!.states?.hidden ?? false,
+      byRole: (await page.locate(byRole('button', 'Go'))).length,
+      observed: (await captureTree()).filter((node) => node.role === 'button' && node.name === 'Go').length,
+    };
+  }
+
+  it.each([
+    ['a button slotted into the <details> of an open shadow root', slotted, 'open', BUTTON],
+    ['a button slotted into the <details> of a closed shadow root', slotted, 'closed', BUTTON],
+    ['a display: contents button slotted into the <details> of an open shadow root', slotted, 'open', CONTENTS],
+    ['a display: contents button slotted into the <details> of a closed shadow root', slotted, 'closed', CONTENTS],
+    ['a button in the open shadow root of a host under <details>', hosted, 'open', BUTTON],
+    ['a button in the closed shadow root of a host under <details>', hosted, 'closed', BUTTON],
+    ['a display: contents button in the open shadow root of a host under <details>', hosted, 'open', CONTENTS],
+    ['a display: contents button in the closed shadow root of a host under <details>', hosted, 'closed', CONTENTS],
+  ])('hides %s while the <details> is closed', async (_case, build, mode, target) => {
+    expect(await read(build(mode, '', target))).toEqual({ hidden: true, byRole: 0, observed: 0 });
+    expect(await read(build(mode, ' open', target))).toEqual({ hidden: false, byRole: 1, observed: 1 });
+  });
+
+  it.each(['open', 'closed'])('shows a button slotted into the summary of a closed <details> in a shadow root: %s', async (mode) => {
+    expect(await read(`<fold-host><button slot="label" data-testid="target">Go</button><p>Folded</p></fold-host><script>
+      customElements.define('fold-host', class extends HTMLElement {
+        connectedCallback() { this.attachShadow({ mode: '${mode}' }).innerHTML = '<details><summary><slot name="label"></slot></summary><slot></slot></details>'; }
+      });
+    </script>`)).toEqual({ hidden: false, byRole: 1, observed: 1 });
   });
 });
 

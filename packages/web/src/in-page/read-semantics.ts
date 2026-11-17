@@ -227,22 +227,20 @@ export const createSemanticReader = (
   };
 
   /**
-   * True for content a closed `<details>` folds away: anything under it that
-   * is not in its `<summary>`. Every closed ancestor is asked, so a summary's
-   * own controls stay visible while the closed body's do not, nested
-   * `<details>` and their summaries included.
+   * True for content a closed `<details>` folds away: anything under it in
+   * the flat tree that is not in its first `<summary>` child, so what is
+   * slotted into a `<details>` of a shadow root folds with it, and so does
+   * the shadow tree of a host under one. Every closed `<details>` on the way
+   * up is asked, so a summary's own controls stay visible while the closed
+   * body's do not, nested `<details>` and their summaries included.
+   * Memoized, so siblings under one ancestor share the walk up.
    */
-  const isInClosedDetails = (el: Element): boolean => {
-    let details = el.parentElement?.closest('details') ?? null;
-    while (details !== null) {
-      if (!details.open) {
-        const summary = details.querySelector(':scope > summary');
-        if (summary === null || !summary.contains(el)) return true;
-      }
-      details = details.parentElement?.closest('details') ?? null;
-    }
-    return false;
-  };
+  const isInClosedDetails = memoized((el: Element): boolean => {
+    const parent = flatParentOf(el);
+    if (parent === null) return false;
+    if (parent instanceof HTMLDetailsElement && !parent.open && parent.querySelector(':scope > summary') !== el) return true;
+    return isInClosedDetails(parent);
+  });
 
   /**
    * True when an ancestor in the flat tree has `content-visibility: hidden`:
