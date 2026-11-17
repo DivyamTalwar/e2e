@@ -31,13 +31,18 @@ export interface InputTarget {
   readonly viewport: () => Promise<ViewportSize>;
 }
 
-/** The input state of one tab, which the browser keeps between calls and the driver mirrors. */
+/**
+ * The input state of one tab, which the browser keeps between calls and the
+ * driver mirrors. One object for the tab's whole life: input records what it
+ * leaves in the state it read, so input still in flight when its tab closes
+ * changes nothing in the state of the tab shown next (`BidiInput.reset`).
+ */
 class InputState {
   constructor(
     /** The keys held, by layout `code`. */
-    readonly keys = new Map<string, HeldKey>(),
+    public keys = new Map<string, HeldKey>(),
     /** The mouse buttons held. */
-    readonly buttons = new Set<number>(),
+    public buttons = new Set<number>(),
     /** Where the mouse last moved. */
     public pointer: ViewportPoint = { x: 0, y: 0 },
   ) {}
@@ -45,6 +50,13 @@ class InputState {
   /** A copy to stage the effect of input on before the browser takes it. */
   copy(): InputState {
     return new InputState(new Map(this.keys), new Set(this.buttons), this.pointer);
+  }
+
+  /** Becomes what input left on a copy of it (`staged`), once the browser took that input. */
+  take(staged: InputState): void {
+    this.keys = staged.keys;
+    this.buttons = staged.buttons;
+    this.pointer = staged.pointer;
   }
 
   /** The modifiers held, on either side. */
@@ -125,7 +137,7 @@ export class BidiInput {
     operationDispatches.getStore()?.(1);
   }
 
-  /** Forgets everything held and where the mouse was, with the tab that held them. */
+  /** Forgets everything held and where the mouse was, with the tab that held them: the tab shown next gets a state of its own. */
   reset(): void {
     this.state = new InputState();
     this.cdpSession = undefined;
@@ -140,10 +152,10 @@ export class BidiInput {
    * sent once `signal` aborted.
    */
   async send(actions: readonly Input.SourceActions[], signal?: AbortSignal): Promise<void> {
-    const { sent, after } = await this.prepare(actions, signal);
+    const { sent, state, after } = await this.prepare(actions, signal);
     this.count();
     await this.perform(sent);
-    this.state = after;
+    state.take(after);
   }
 
   /**
@@ -160,7 +172,7 @@ export class BidiInput {
    * own tab): that input was taken.
    */
   async sendSuppressible<V>(actions: readonly Input.SourceActions[], signal: AbortSignal, watch: InputWatch<V>): Promise<V> {
-    const { sent, after } = await this.prepare(actions, signal);
+    const { sent, state, after } = await this.prepare(actions, signal);
     let dispatched = false;
     let failure: { cause: unknown } | undefined;
     try {
@@ -169,7 +181,7 @@ export class BidiInput {
       dispatched = true;
       this.count();
       await this.perform(sent);
-      this.state = after;
+      state.take(after);
     } catch (cause) {
       failure = { cause };
     }
@@ -181,7 +193,7 @@ export class BidiInput {
     }
     if (failure !== undefined) {
       if (!dispatched || !(failure.cause instanceof BidiError && failure.cause.error === 'no such frame')) throw failure.cause;
-      this.state = after;
+      state.take(after);
     }
     if (watch.suppressed(read)) operationDispatches.getStore()?.(-1);
     return read;
@@ -222,10 +234,11 @@ export class BidiInput {
   async dragEvent(type: Protocol.Input.DispatchDragEventRequest['type'], point: ViewportPoint, data: Protocol.Input.DragData, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
     await this.checkInViewport([point]);
+    const state = this.state;
     const cdp = await this.cdp();
     this.count();
     await cdp.send('Input.dispatchDragEvent', { type, x: point.x, y: point.y, data });
-    this.state.pointer = { x: point.x, y: point.y };
+    state.pointer = { x: point.x, y: point.y };
   }
 
   /**
@@ -235,14 +248,15 @@ export class BidiInput {
    */
   private async sendCdpKeys(commands: readonly CdpKeyCommand[], signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
+    const state = this.state;
     const cdp = await this.cdp();
     signal?.throwIfAborted();
     this.count();
     for (const command of commands) {
       await cdp.send(command.method, command.params);
       const held = holdsAfter(command);
-      if (held?.down === true) this.state.keys.set(held.code, { via: 'cdp' });
-      else if (held?.down === false) this.state.keys.delete(held.code);
+      if (held?.down === true) state.keys.set(held.code, { via: 'cdp' });
+      else if (held?.down === false) state.keys.delete(held.code);
     }
   }
 
@@ -259,16 +273,17 @@ export class BidiInput {
     return this.cdpSession.cdp;
   }
 
-  /** The sources as they go out, and the state they leave once the browser took them; refuses a pointer target outside the viewport. */
-  private async prepare(actions: readonly Input.SourceActions[], signal: AbortSignal | undefined): Promise<{ sent: Input.SourceActions[]; after: InputState }> {
+  /** The sources as they go out, the tab's state they were read against, and what they leave of it (`after`) once the browser took them; refuses a pointer target outside the viewport. */
+  private async prepare(actions: readonly Input.SourceActions[], signal: AbortSignal | undefined): Promise<{ sent: Input.SourceActions[]; state: InputState; after: InputState }> {
     signal?.throwIfAborted();
     this.target.context();
     await this.checkInViewport(actions.flatMap(targets));
     if (this.target.traits.pointerWaitsForFrame && actions.some((source) => source.type !== 'key')) await this.framePresented();
     signal?.throwIfAborted();
-    const after = this.state.copy();
+    const state = this.state;
+    const after = state.copy();
     const sent = actions.map((source) => (source.type === 'key' ? keepHeld(source, after) : source.type === 'pointer' ? withPressure(source, after) : source));
-    return { sent, after };
+    return { sent, state, after };
   }
 
   /**

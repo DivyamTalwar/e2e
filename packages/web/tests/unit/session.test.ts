@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ContextTree } from '../../src/driver/context-tree.ts';
 import { clickSources, moveSources, pressDownSources, swipeSources, typeSource } from '../../src/driver/input-sources.ts';
 import { fixtureKeyStroke, strokeSource, type KeyPhase } from '../../src/driver/keyboard.ts';
-import { DispatchScope } from '../../src/driver/input.ts';
+import { DispatchScope, type BidiInput } from '../../src/driver/input.ts';
 import { routeEvents } from '../../src/driver/events.ts';
 import { BidiSession } from '../../src/driver/session.ts';
 import { BROWSER_TRAITS, type BrowserName } from '../../src/browsers.ts';
@@ -12,7 +12,7 @@ import type { UserContextMode } from '../../src/driver/user-context.ts';
 import { ProtectedApp } from '../../src/protected-app.ts';
 import { BidiError } from '../../src/errors.ts';
 import type { NodeRef } from '@e2e-dev/core/engine';
-import { FakeBidi, settle } from '../helpers/bidi-fake.ts';
+import { FakeBidi, settle, type Reply } from '../helpers/bidi-fake.ts';
 import type { ElementRef } from '../../src/driver/script.ts';
 
 const SHIFT = '';
@@ -226,6 +226,34 @@ describe('BidiInput.send', () => {
     await held.input.send([keySource('Shift', 'keyDown', false)]);
     held.tabs.destroyed('tab');
     await held.ensureContext();
+    await held.input.send([keySource('Shift', 'keyDown', false)]);
+    expect(keyActions(fake).at(-1)).toEqual([{ type: 'keyDown', value: SHIFT }]);
+  });
+
+  const unsuppressed = { arm: async () => undefined, verdict: async () => null, suppressed: () => false };
+  it.each<[string, string, Reply, (input: BidiInput) => Promise<unknown>]>([
+    ['a send', 'input.performActions', { result: {} }, (input) => input.send(clickSources(5, 5))],
+    ['a suppressible send', 'input.performActions', { result: {} }, (input) => input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), unsuppressed)],
+    ['a suppressible send the closed tab failed', 'input.performActions', { error: 'no such frame', message: 'Browsing context is gone' }, (input) => input.sendSuppressible(clickSources(5, 5), AbortSignal.timeout(500), unsuppressed)],
+    ['a CDP key', 'goog:cdp.sendCommand', { result: {} }, (input) => input.key(fixtureKeyStroke('MediaPlayPause', 'keyDown'))],
+    ['a drag event', 'goog:cdp.sendCommand', { result: {} }, (input) => input.dragEvent('drop', { x: 5, y: 5 }, { items: [], dragOperationsMask: 1 }, AbortSignal.timeout(500))],
+  ])('keeps what %s left in a tab that closed under it out of the tab shown next', async (_name, method, reply, send) => {
+    const fake = new FakeBidi().on('input.performActions', { result: {} }).on('goog:cdp.getSession', { result: { session: 'cdp' } }).on('goog:cdp.sendCommand', { result: {} });
+    const held = await session(fake);
+    await held.newTab();
+    await held.input.send([keySource('Shift', 'keyDown', false)]);
+    // The tab's close reaches the driver before the answer to the input that closed it.
+    fake.on(method, () => {
+      held.tabs.destroyed('tab-2');
+      return reply;
+    });
+    await send(held.input);
+    fake.on(method, { result: {} });
+    await held.tabs.settled();
+    expect(held.context).toBe('tab');
+    expect(held.input.pointer).toEqual({ x: 0, y: 0 });
+    await held.input.key(fixtureKeyStroke('MediaPlayPause', 'keyDown'));
+    expect(fake.commands('goog:cdp.sendCommand').at(-1)!.params['params']).toMatchObject({ modifiers: 0, autoRepeat: false });
     await held.input.send([keySource('Shift', 'keyDown', false)]);
     expect(keyActions(fake).at(-1)).toEqual([{ type: 'keyDown', value: SHIFT }]);
   });
