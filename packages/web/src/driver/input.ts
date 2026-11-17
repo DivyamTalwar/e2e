@@ -288,12 +288,17 @@ export class BidiInput {
 
   /**
    * Resolves once the tab is the one its window shows and its document has
-   * rendered a frame. Firefox turns a mouse or wheel action into a native
-   * event the parent process hit-tests against what the compositor shows
+   * rendered a frame, when it renders any. Firefox turns a mouse or wheel
+   * action into a native event the parent process hit-tests against what the
+   * compositor shows
    * (`remote.events.async.mouse.enabled`, `remote.events.async.wheel.enabled`):
    * a tab the app opened in front of the test's would take it, and a
    * document a navigation just moved into a new content process has shown
-   * nothing yet, so input sent before its first frame reaches no page.
+   * nothing yet, so input sent before its first frame reaches no page. A
+   * hidden tab is brought to the front and the frame it renders there is
+   * awaited. Its answer is no gate: a tab still hidden at the front is the
+   * shown tab of a minimized window, which renders no frame and still takes
+   * the input, so refusing it would fail every pointer action there.
    */
   private async framePresented(): Promise<void> {
     const { connection } = this.target;

@@ -151,6 +151,17 @@ describe('BidiInput.send', () => {
     expect(fake.commands('input.performActions')).toHaveLength(2);
   });
 
+  it('sends Firefox pointer input to a tab still hidden at the front, as the shown tab of a minimized window is, which takes it', async () => {
+    const fake = new FakeBidi()
+      .on('input.performActions', { result: {} })
+      .on('script.callFunction', { result: { type: 'success', realm: 'r', result: { type: 'boolean', value: false } } });
+    const held = await session(fake, 'firefox');
+    await held.input.send(clickSources(5, 5));
+    expect(fake.commands('browsingContext.activate')).toHaveLength(1);
+    expect(fake.commands('input.performActions')).toHaveLength(1);
+    expect(held.input.dispatches).toBe(1);
+  });
+
   it('takes input the page suppressed back from the operation that sent it, and never from the attempt', async () => {
     let fail = false;
     const fake = new FakeBidi().on('input.performActions', () => (fail ? { error: 'unknown error', message: 'gone' } : { result: {} }));
