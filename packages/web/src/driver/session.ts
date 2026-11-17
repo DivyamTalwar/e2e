@@ -134,7 +134,7 @@ export class BidiSession {
       : new ProviderVideo(attempt.recorder, attempt.artifactsDir, this.lifetime);
     this.tabs = new AttemptTabs({
       prepare: async (context, front) => {
-        if (this.viewport !== null) await this.connection.send('browsingContext.setViewport', { context, viewport: this.viewport });
+        if (this.viewport !== null) await this.sizeTab(context, this.viewport);
         if (front) await this.connection.send('browsingContext.activate', { context });
       },
       forget: () => {
@@ -350,7 +350,16 @@ export class BidiSession {
     this.viewport = { width: size.width, height: size.height };
     // Before the first page the size is only kept: the tab opens at it, and no page opens early.
     if (this.context === undefined) return;
-    await this.connection.send('browsingContext.setViewport', { context: this.context, viewport: this.viewport });
+    await this.sizeTab(this.context, this.viewport);
+  }
+
+  /**
+   * Gives a tab the attempt's viewport at scale factor 1, whatever the
+   * display's, so a headed run on a dense display renders the pixels a
+   * headless one does.
+   */
+  private async sizeTab(context: string, viewport: ViewportSize): Promise<void> {
+    await this.connection.send('browsingContext.setViewport', { context, viewport, devicePixelRatio: 1 });
   }
 
   /**

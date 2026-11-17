@@ -484,6 +484,8 @@ describe('BidiSession tabs', () => {
     const fake = new FakeBidi();
     const held = await session(fake);
     expect(tabCommands(fake)).toEqual(['create', 'setViewport tab']);
+    // Scale factor 1 whatever the display's, so a headed run renders what a headless one does.
+    expect(fake.commands('browsingContext.setViewport')[0]?.params).toMatchObject({ context: 'tab', devicePixelRatio: 1 });
     const beside = await held.newTab();
     expect(tabCommands(fake).slice(2)).toEqual(['create', 'setViewport tab-2', 'activate tab-2']);
     expect(held.context).toBe('tab-2');
