@@ -7,24 +7,16 @@
  * fails without it, naming the install command.
  */
 
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { EngineHandle } from '@e2e-dev/core/engine';
 import { attachBrowser, web } from '../../../src/index.ts';
-import { closeRemoteChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { closeRemoteChrome, installedChrome, launchRemoteChrome, type RemoteChrome } from '../../helpers/cdp-host.ts';
 import { startFixtureApp, type FixtureApp } from '../../helpers/fixture-app.ts';
 import { ignoreTrace, noSecrets } from '../../helpers/secrets.ts';
 import { byRole, cleanup, initInfo, operation } from '../../helpers/web-session.ts';
-import { browserExecutable } from '../../../src/install/provision.ts';
-
-/** The pinned full Chrome's executable, which the suite needs installed. */
-function installedChrome(): string {
-  const executable = browserExecutable('chromium', true);
-  if (!existsSync(executable)) throw new Error(`the pinned full Chrome is not installed at ${executable}: run "node packages/web/dist/bin.js install chromium --headed"`);
-  return executable;
-}
 
 describe('attaching to the pinned full Chrome over CDP', () => {
   let app: FixtureApp;

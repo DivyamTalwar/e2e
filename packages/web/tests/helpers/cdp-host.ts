@@ -1,7 +1,7 @@
 /** A local Chrome process owned independently of the engine's CDP transport. */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { browserExecutable } from '../../src/install/provision.ts';
@@ -19,6 +19,13 @@ export async function closeRemoteChrome(chrome: Omit<RemoteChrome, 'endpoint'>):
   if (chrome.proc.exitCode === null && chrome.proc.signalCode === null) chrome.proc.kill('SIGKILL');
   await chrome.closed;
   rmSync(chrome.userDataDir, { recursive: true, force: true });
+}
+
+/** The pinned full Chrome's executable, which a suite that hosts one needs installed: nothing installs the headed build below the engine's `prepare`. */
+export function installedChrome(): string {
+  const executable = browserExecutable('chromium', true);
+  if (!existsSync(executable)) throw new Error(`the pinned full Chrome is not installed at ${executable}: run "node packages/web/dist/bin.js install chromium --headed"`);
+  return executable;
 }
 
 /** What the remote host runs. */

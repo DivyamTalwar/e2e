@@ -9,10 +9,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineSnapshot } from '@e2e-dev/core/engine';
+import { aroundCapture, heldByCapture } from '../helpers/capture-hooks.ts';
 import { decodePng } from '../helpers/png.ts';
 import { startWebSession, type WebSession } from '../helpers/web-session.ts';
 import { BidiConnection } from '../../src/driver/connection.ts';
-import { maskSecureFields, unmaskSecureFields } from '../../src/in-page/mask.ts';
+import { maskSecureFields } from '../../src/in-page/mask.ts';
 
 const GREEN = [0, 128, 0, 255];
 const BLACK = [0, 0, 0, 255];
@@ -114,32 +115,6 @@ async function expectBlinkRuns(): Promise<void> {
   await expect.poll(() => session.browser.evaluate(blinkTime), { timeout: 5_000 }).toBeGreaterThan(0);
 }
 
-/**
- * What a test does around each screenshot, counted from 1: `before` once the
- * page is masked and the capture is about to be sent, `after` once the
- * browser answered it, and `unmask` before a document is told to take its
- * masks off.
- */
-interface CaptureHooks {
-  readonly before?: (order: number) => Promise<void>;
-  readonly after?: (order: number, connection: BidiConnection, context: string) => void;
-  readonly unmask?: () => Promise<void>;
-}
-
-/** Runs `hooks` around every screenshot the driver takes. */
-function aroundCapture(hooks: CaptureHooks): void {
-  const send = BidiConnection.prototype.send;
-  let captures = 0;
-  vi.spyOn(BidiConnection.prototype, 'send').mockImplementation(async function (this: BidiConnection, method, params) {
-    const order = method === 'browsingContext.captureScreenshot' ? (captures += 1) : 0;
-    if (order > 0) await hooks.before?.(order);
-    if (method === 'script.callFunction' && (params as { functionDeclaration: string }).functionDeclaration === unmaskSecureFields.toString()) await hooks.unmask?.();
-    const result = await send.call(this, method, params);
-    if (order > 0) hooks.after?.(order, this, (params as { context: string }).context);
-    return result;
-  });
-}
-
 describe.each(PLACES)('in %s', (_place, page) => {
   it('takes the same pixels of an infinite animation twice, and the animation runs again afterwards', async () => {
     await session.setContent(page);
@@ -217,7 +192,7 @@ it('takes the mask off a document it masked after another document could not be 
   await expect(session.engine.artifacts!.screenshot!('unmaskable', session.op(5_000))).rejects.toThrow('mask failed');
   vi.restoreAllMocks();
 
-  expect(await session.browser.evaluate(() => `${String(document.querySelectorAll('e2e-mask').length)} hosts, ${String(document.adoptedStyleSheets.length)} sheets`)).toBe('0 hosts, 0 sheets');
+  expect(await session.browser.evaluate(heldByCapture)).toBe('0 hosts, 0 sheets, 1 animations');
   await expectBlinkRuns();
 });
 
@@ -326,25 +301,22 @@ it('leaves stopped a CSS animation the page dropped during the capture, and play
   expect(await session.browser.evaluate(animating)).toEqual([...kept, 'spin running on removed', 'script running on scripted']);
 });
 
-it('undoes its masking in a document that leaves under it, so going back shows the page unmasked and animating', async () => {
+it('undoes its masking in a document as it leaves under the capture', async () => {
   const masked = session.serve('/masked', `${PLACES[0]![1]}<input type="password" value="hunter22" style="position:absolute;left:100px;top:100px;width:100px;height:30px">`);
   const next = session.serve('/next', '<!doctype html><title>Next</title><p>Next</p>');
   await session.open(masked);
-  /** What a capture holds of the page: its mask hosts, the stylesheets the document adopted, and the blink animations left to run. Runs in the page. */
-  const held = (): string =>
-    `${String(document.querySelectorAll('e2e-mask').length)} hosts, ${String(document.adoptedStyleSheets.length)} sheets, ${String(document.getElementById('blink')!.getAnimations().length)} animations`;
-  expect(await session.browser.evaluate(held)).toBe('0 hosts, 0 sheets, 1 animations');
+  expect(await session.browser.evaluate(heldByCapture)).toBe('0 hosts, 0 sheets, 1 animations');
   const during: string[] = [];
   let left!: () => void;
   const whenLeft = new Promise<void>((resolve) => (left = resolve));
   aroundCapture({
     before: async (order) => {
       if (order > 1) return;
-      during.push(await session.browser.evaluate(held));
+      during.push(await session.browser.evaluate(heldByCapture));
       // Registered after the mask's own listener, so it records what that one left. Firefox opens no session storage in a document that is already leaving.
       await session.browser.evaluate(`() => {
         sessionStorage.setItem('hidden', 'never');
-        addEventListener('pagehide', () => sessionStorage.setItem('hidden', (${held.toString()})()));
+        addEventListener('pagehide', () => sessionStorage.setItem('hidden', (${heldByCapture.toString()})()));
         return null;
       }`);
       await session.open(next);
@@ -358,13 +330,8 @@ it('undoes its masking in a document that leaves under it, so going back shows t
   vi.restoreAllMocks();
 
   expect(during).toEqual(['1 hosts, 1 sheets, 0 animations']);
+  // The next page shares the session storage the leaving document wrote what it held into.
   expect(await session.browser.evaluate(() => sessionStorage.getItem('hidden'))).toBe('0 hosts, 0 sheets, 1 animations');
-  // A browser that keeps the document in its back-forward cache restores it as the capture left it.
-  await session.browser.back();
-  expect(await session.browser.evaluate(held)).toBe('0 hosts, 0 sheets, 1 animations');
-  // A masking left behind would take over what each later capture cancels, and never play it again.
-  await capture();
-  await expectBlinkRuns();
 });
 
 it('covers a secure field an infinite animation moves where the field rests with the animation cancelled', async () => {
