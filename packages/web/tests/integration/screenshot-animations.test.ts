@@ -333,7 +333,7 @@ it('undoes its masking in a document that leaves under it, so going back shows t
 
   expect(during).toEqual(['1 hosts, 1 sheets, 0 animations']);
   expect(await session.browser.evaluate(() => sessionStorage.getItem('hidden'))).toBe('0 hosts, 0 sheets, 1 animations');
-  // Firefox restores the document from its back-forward cache, as the capture left it.
+  // A browser that keeps the document in its back-forward cache restores it as the capture left it.
   await session.browser.back();
   expect(await session.browser.evaluate(held)).toBe('0 hosts, 0 sheets, 1 animations');
   // A masking left behind would take over what each later capture cancels, and never play it again.

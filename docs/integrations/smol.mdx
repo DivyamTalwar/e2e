@@ -163,10 +163,9 @@ and `app.clearState()` work. Nothing is branched, and `prepare` is an
 
 ## What differs from a local browser
 
-The browser's back/forward cache is off, so going back reloads the page.
-`browser.waitForDownload` works as it does locally: the provider reads each
-file off the machine's disk. `setInputFiles` sends the files' bytes to the
-page, up to 50 MB in all; a directory throws `UNSUPPORTED_CAPABILITY`.
+`setInputFiles` sends the files' bytes to the page, up to 50 MB in all; a
+directory throws `UNSUPPORTED_CAPABILITY`. `browser.waitForDownload` works as
+it does locally: the provider reads each file off the machine's disk.
 
 ## Clean up leftover machines
 

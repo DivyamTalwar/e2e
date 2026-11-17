@@ -54,9 +54,9 @@ type Mask = {
  *
  * A document that leaves while masked takes its own masking off and plays
  * its animations again, on `pagehide`: the driver's unmask then reaches the
- * document that replaced it, which holds no such token, and Firefox would
- * keep this one masked in its back-forward cache and show it so again on
- * the way back.
+ * document that replaced it, which holds no such token, and a browser the
+ * engine did not launch can keep this one masked in its back-forward cache
+ * and show it so again on the way back.
  */
 export const maskSecureFields = withDom((dom, selector: string, token: string): number => {
   const sheeted = dom.roots();
