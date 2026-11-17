@@ -265,14 +265,15 @@ export class NetworkBinding implements DecisionScope {
    * `context`: where the hop goes, and whether it counts as in flight, as a
    * request of the attempt's tab does unless it is an EventSource stream,
    * which never settles. A hop further along the redirects starts without
-   * the answered challenge of the hop before it; the redirect count tells
-   * it from a hop Firefox announces again, as it does when it resends one
-   * with credentials.
+   * the fulfilled body and the answered challenge of the hop before it; the
+   * redirect count tells it from a hop Firefox announces again, as it does
+   * when it resends one with credentials.
    */
   private started(event: BidiEventParams<'network.beforeRequestSent'>, context: string): RequestRecord {
     const record = this.record(event.request.request, context);
     if (record.redirectCount !== event.redirectCount) {
       record.redirectCount = event.redirectCount;
+      delete record.fulfilledBody;
       delete record.authAnswered;
     }
     record.context = context;

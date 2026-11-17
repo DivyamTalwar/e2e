@@ -833,6 +833,38 @@ describe('AttemptNetwork', () => {
       fake.emit('network.responseCompleted', response('r'));
       await expect((await again).body().then(String)).resolves.toBe('from the collector');
     });
+
+    it.each([
+      ['reports the redirect’s response, as Chromium does', true],
+      ['reports none for the redirect, as Firefox does', false],
+    ])('keeps the body of a fulfilled redirect off the hop it led to, on a browser that %s', async (_name, reported) => {
+      const fake = new FakeBidi().on('network.getData', { result: { bytes: { type: 'string', value: 'landed' } } });
+      const { net, open } = network(fake);
+      await net.bind('user-1');
+      await open('tab');
+      await net.addRoute(route('**', async (_held, decisions) => {
+        await decisions.fulfill({ status: 302, headers: { location: '/next' }, body: 'moved' });
+      }));
+      /** Request `id` is fulfilled with the redirect and followed to the page it names. */
+      const follow = async (id: string): Promise<void> => {
+        const moved = { ...request(id, `${SITE}/moved`, []), response: { url: `${SITE}/moved`, status: 302, headers: LOCATION } };
+        const landed = { ...request(id, `${SITE}/next`, []), redirectCount: 1, response: { url: `${SITE}/next`, status: 200, headers: [] } };
+        fake.emit('network.beforeRequestSent', request(id, `${SITE}/moved`));
+        await settle();
+        await settle();
+        if (reported) for (const event of ['network.responseStarted', 'network.responseCompleted']) fake.emit(event, moved);
+        fake.emit('network.beforeRequestSent', { ...request(id, `${SITE}/next`), redirectCount: 1 });
+        fake.emit('network.responseStarted', landed);
+        fake.emit('network.responseCompleted', landed);
+        await settle();
+      };
+      const waiting = net.waitForResponse((url) => url.endsWith('/next'), AbortSignal.timeout(5_000));
+      await settle();
+      await follow('read');
+      await expect((await waiting).body().then(String)).resolves.toBe('landed');
+      await follow('unread');
+      expect(fake.commands('network.disownData').map((command) => command.params)).toEqual([{ dataType: 'response', collector: 'collector-1', request: 'unread' }]);
+    });
   });
 
   it('adds no intercept for a tab that closed while its intercept was added, and leaves no failure behind', async () => {

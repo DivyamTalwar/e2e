@@ -93,7 +93,7 @@ export interface DecisionRecord {
   url?: string;
   /** How its redirect hops go on, kept until its last hop settles. */
   redirect?: RedirectPolicy;
-  /** The body a route fulfilled it with, which a response wait reads since the browser keeps none. */
+  /** The body a route fulfilled its hop in flight with, which a response wait reads since the browser keeps none. */
   fulfilledBody?: Buffer;
   /** Whether the basic-auth challenge of its hop in flight was answered once. */
   authAnswered?: boolean;

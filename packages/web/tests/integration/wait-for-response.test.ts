@@ -162,6 +162,20 @@ describe('browser.waitForResponse bodies', () => {
     });
   });
 
+  it('reads the body of the response a fulfilled redirect led to, not the body the route wrote', async () => {
+    await session.open(`${origin}/`);
+    await browser.route('**/api/moved', (route) => route.fulfill({ status: 302, headers: { location: '/api/full' }, body: 'moved' }));
+    const [response] = await Promise.all([
+      browser.waitForResponse('**/api/full'),
+      browser.evaluate(
+        (url: string) => { void fetch(url).then((reply) => reply.text()).catch(() => undefined); return null; },
+        `${origin}/api/moved`,
+      ),
+    ]);
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toBe('{"ok":true}');
+  });
+
   it('keeps the status of a redirect and rejects reading its body', async () => {
     const response = await observe('/api/redirect');
     expect(response.status).toBe(302);
