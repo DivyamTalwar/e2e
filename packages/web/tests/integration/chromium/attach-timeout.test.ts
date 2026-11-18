@@ -57,6 +57,22 @@ describe("attachBrowser's timeout", () => {
     await expect(attachBrowser(silentEndpoint, { timeout: 500 })).rejects.toMatchObject(ranOut(500));
   });
 
+  it.each([0, -1, 1.5, Number.POSITIVE_INFINITY, Number.NaN, 2 ** 31])('refuses a timeout of %s, which no timer can wait, before it attaches', async (timeout) => {
+    await expect(attachBrowser(silentEndpoint, { timeout })).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT',
+      message: `attachBrowser's timeout must be a whole number of milliseconds from 1 to 2147483647, got ${String(timeout)}`,
+    });
+  });
+
+  it('attaches with the longest timeout a timer can wait', async () => {
+    const attached = await attachBrowser(`http://${new URL(chrome.endpoint).host}`, { timeout: 2 ** 31 - 1 });
+    try {
+      expect(await attached.browser.evaluate(() => 1 + 1)).toBe(2);
+    } finally {
+      await attached.close();
+    }
+  });
+
   it("fails an attach the caller's own signal ended as cancelled", async () => {
     const caller = new AbortController();
     const attaching = attachBrowser(silentEndpoint, { signal: caller.signal });

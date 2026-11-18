@@ -1068,7 +1068,8 @@ await screen.getByRole('button', 'Sign in').tap();
 | `signal` | `AbortSignal` | - |
 
 - `timeout` is the budget in milliseconds for all operations together,
-  counted from the attach.
+  counted from the attach: a whole number from 1 to 2147483647. Any other
+  value throws `INVALID_ARGUMENT`.
 - `signal` cancels attaching and every operation. `close()` still detaches.
 
 ```ts

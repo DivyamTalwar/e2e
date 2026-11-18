@@ -888,7 +888,7 @@ await screen.getByRole('button', 'Sign in').tap();
 | `timeout` | `number` | `120000` |
 | `signal` | `AbortSignal` | - |
 
-- `timeout` は、すべての操作を合わせた時間上限をミリ秒で指定します。接続の時点から数えます。
+- `timeout` は、すべての操作を合わせた時間上限をミリ秒で指定します。接続の時点から数えます。1 から 2147483647 までの整数で指定します。それ以外の値は `INVALID_ARGUMENT` をスローします。
 - `signal` は、接続とすべての操作をキャンセルします。その場合も `close()` は接続を切り離します。
 
 ```ts

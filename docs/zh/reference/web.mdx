@@ -888,7 +888,7 @@ await screen.getByRole('button', 'Sign in').tap();
 | `timeout` | `number` | `120000` |
 | `signal` | `AbortSignal` | - |
 
-- `timeout` 是所有操作合计的预算，单位为毫秒，从连接时开始计算。
+- `timeout` 是所有操作合计的预算，单位为毫秒，从连接时开始计算。取值为 1 到 2147483647 之间的整数，其他值会抛出 `INVALID_ARGUMENT`。
 - `signal` 会取消连接过程和所有操作。`close()` 仍会断开连接。
 
 ```ts
