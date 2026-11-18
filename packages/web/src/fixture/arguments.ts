@@ -24,8 +24,10 @@ export function requireWaitUntil(options: Parameters<Browser['goto']>[1]): WaitU
 }
 
 /** What a browser refuses in a cookie's value: a `;`, a control character, or a space at either end. Refused here by the cookie's name, since a browser's refusal names neither the cookie nor the reason. */
+// oxlint-disable-next-line no-control-regex -- the control characters are the point
 const UNSTORABLE_VALUE = /[;\u0000-\u001f\u007f]|^ | $/;
 /** What a browser refuses in a cookie's name: what it refuses in a value, and a `=`. */
+// oxlint-disable-next-line no-control-regex -- the control characters are the point
 const UNSTORABLE_NAME = /[=;\u0000-\u001f\u007f]|^ | $/;
 
 /**
