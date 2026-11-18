@@ -166,10 +166,16 @@ async function takesKeystrokes(session: BidiSession, documents: readonly string[
 /**
  * Types `text` into whatever holds focus, as Playwright's `keyboard.type`
  * does: a run of characters the US keyboard has is key presses, a run of
- * anything else (an emoji, letters of another alphabet) is inserted as text,
- * one edit per character, in the document holding focus, since no key types
- * it. The tab's documents are read once, when the first such run is
- * inserted, and each is offered what is left of a run until one takes some.
+ * anything else (an emoji, letters of another alphabet, a tab, whose key
+ * would move focus) is inserted as text, one edit per character, in the
+ * document holding focus, since no key types it. The tab's documents are
+ * read once, when the first such run is inserted, and each is offered what
+ * is left of a run until one takes some.
+ *
+ * With Shift held (`keyboard.down`), a key press would type the key's
+ * shifted character, so the characters keys type are inserted as text too,
+ * and arrive as written. Where no field takes them they go out as key
+ * presses after all, for what listens for keys there.
  *
  * A string is never entered in part. A character to insert that no document
  * takes, while what holds focus takes keystrokes (it is no field or editing
@@ -182,18 +188,26 @@ async function takesKeystrokes(session: BidiSession, documents: readonly string[
  * character to insert is left out.
  */
 export async function typeInto(session: BidiSession, text: string, signal: AbortSignal): Promise<void> {
-  const runs: { readonly keys: boolean; readonly graphemes: string[] }[] = [];
+  /** How a run goes out: as key presses, as text no key types, or as text while Shift would change what its keys type. */
+  type Entry = 'keys' | 'text' | 'unshifted';
+  const shift = session.input.holds('Shift');
+  const entryOf = (segment: string): Entry => {
+    if (segment === '\n' || segment === '\r' || segment === '\r\n') return 'keys';
+    if (!/^[\x20-\x7e]$/.test(segment)) return 'text';
+    return shift ? 'unshifted' : 'keys';
+  };
+  const runs: { readonly entry: Entry; readonly graphemes: string[] }[] = [];
   for (const { segment } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
-    const keys = /^[\x20-\x7e]$/.test(segment) || segment === '\n' || segment === '\r' || segment === '\r\n' || segment === '\t';
+    const entry = entryOf(segment);
     const last = runs.at(-1);
-    if (last?.keys === keys) last.graphemes.push(segment);
-    else runs.push({ keys, graphemes: [segment] });
+    if (last?.entry === entry) last.graphemes.push(segment);
+    else runs.push({ entry, graphemes: [segment] });
   }
   const total = runs.reduce((count, run) => count + run.graphemes.length, 0);
   let entered = 0;
   let contexts: readonly string[] | undefined;
   for (const run of runs) {
-    if (run.keys) {
+    if (run.entry === 'keys') {
       await session.input.send([typeSource(run.graphemes)], signal);
       entered += run.graphemes.length;
       continue;
@@ -210,6 +224,11 @@ export async function typeInto(session: BidiSession, text: string, signal: Abort
       }
       if (inserted === 0) {
         session.input.takeBack();
+        if (run.entry === 'unshifted') {
+          await session.input.send([typeSource(left)], signal);
+          entered += left.length;
+          break;
+        }
         if (await takesKeystrokes(session, contexts)) throw notInserted(entered + 1, total, session.input.dispatched);
       }
       const done = Math.max(inserted, 1);

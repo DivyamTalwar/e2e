@@ -271,6 +271,11 @@ export class BidiInput {
     return read;
   }
 
+  /** Whether `modifier` is held in the tab input goes to. */
+  holds(modifier: Modifier): boolean {
+    return this.state.modifiers().has(modifier);
+  }
+
   /** Presses one key of the contract grammar (`pressStroke`). */
   press(key: string, signal?: AbortSignal): Promise<void> {
     return this.key(pressStroke(key), signal);

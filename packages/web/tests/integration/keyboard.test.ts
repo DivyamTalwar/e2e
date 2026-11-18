@@ -102,3 +102,46 @@ describe('typed text no key of the keyboard types', () => {
     }))).toEqual({ value: 'aこんにちはb', edits: ['a', 'こ', 'ん', 'に', 'ち', 'は', 'b'] });
   });
 });
+
+describe('typed text that keys would not type as written', () => {
+  let session: WebSession;
+  beforeAll(async () => {
+    session = await startWebSession({ timeoutMs: 5_000, startAttempt: false });
+  });
+  beforeEach(async () => {
+    await session.startAttempt();
+    await session.setContent(`<textarea id="field"></textarea><input id="next"><p id="keys"></p>
+      <script>document.addEventListener('keydown', (event) => { document.getElementById('keys').textContent += event.key + (event.shiftKey ? '+shift;' : ';'); });</script>`);
+  });
+  afterEach(async () => { await session.endAttempt(); });
+  afterAll(async () => { await session.close(); });
+
+  /** The field's value, which element holds focus, and the keys the page heard go down. */
+  const page = (): Promise<{ value: string; focus: string | null; keys: string }> => session.browser.evaluate(() => ({
+    value: document.querySelector<HTMLTextAreaElement>('#field')!.value,
+    focus: document.activeElement?.id ?? null,
+    keys: document.getElementById('keys')!.textContent ?? '',
+  }));
+
+  it('types a tab into the field, where the Tab key would move focus out of it', async () => {
+    await session.browser.evaluate(() => (document.getElementById('field')!.focus(), null));
+    await session.browser.keyboard.type('a\tb');
+    expect(await page()).toEqual({ value: 'a\tb', focus: 'field', keys: 'a;b;' });
+  });
+
+  it('types the text as written with Shift held, and Shift stays held for the key after it', async () => {
+    await session.browser.evaluate(() => (document.getElementById('field')!.focus(), null));
+    await session.browser.keyboard.down('Shift');
+    await session.browser.keyboard.type('ab1');
+    await session.browser.keyboard.press('KeyC');
+    await session.browser.keyboard.up('Shift');
+    expect(await page()).toEqual({ value: 'ab1C', focus: 'field', keys: 'Shift+shift;C+shift;' });
+  });
+
+  it('presses the keys of text typed with Shift held where no field takes it', async () => {
+    await session.browser.keyboard.down('Shift');
+    await session.browser.keyboard.type('g');
+    await session.browser.keyboard.up('Shift');
+    expect((await page()).keys).toMatch(/^Shift\+shift;[gG]\+shift;$/);
+  });
+});
