@@ -113,6 +113,5 @@ web({ browser: lightpanda({ loadResources: ['stylesheet', 'iframe'] }) })
 | ------- | ------------ | --- |
 | 打开页面：`app.open`、`browser.goto` | 调用始终不返回。测试会在其 [`timeout`](/reference/config#timeout) 结束时失败，错误为 `TEST_TIMEOUT` 或 `ACTION_FAILED`。 | Lightpanda 不会以引擎能读取的方式报告新页面。 |
 | [会话](/authentication)（在 `test.setup` 中使用 `session.save`，在测试上设置 `session:`） | 准备测试会以同样的方式超时，e2e 会跳过每个使用其会话的测试。 | 准备测试无法打开页面。 |
-| [下载](/browser#download-a-file) | `browser.waitForDownload` 抛出 `UNSUPPORTED_CAPABILITY`。 | 提供方不提供[下载](/browser#downloads-on-the-provider)。 |
 
 修复需要 Lightpanda 自身做出改动。请改用 Chromium 测试目标运行测试套件。

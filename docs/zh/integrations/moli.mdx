@@ -80,7 +80,6 @@ web({ connect: { cdpEndpoint: () => process.env.MOLI_CDP_URL?.trim() || 'http://
 | 对元素的操作：`tap`、`fill`、`check`、`hover`、`swipe`、`setInputFiles` | 操作会在其 [`actionTimeout`](/reference/config#actiontimeout) 结束时失败，错误为 `ACTION_FAILED` 或 `LOCATOR_NOT_FOUND`。 | Moli 不会以引擎能读取的方式标识元素。 |
 | 截图 | 截图时抛出 `ENGINE_FAILURE`。 | Moli 没有 `document.getAnimations`。 |
 | 框架内的查询 | 查询以 `LOCATOR_NOT_FOUND` 失败。 | 引擎在该框架中找不到文档。 |
-| [下载](/browser#download-a-file) | `browser.waitForDownload` 抛出 `UNSUPPORTED_CAPABILITY`。 | 提供方不提供[下载](/browser#downloads-on-the-provider)。 |
 
 修复需要 Moli 自身做出改动。请查看其[上游问题](https://github.com/lexmount/moli/issues)，并在 Chromium 测试目标上运行需要操作页面的测试。
 

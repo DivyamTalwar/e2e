@@ -85,7 +85,6 @@ Moli 1.1.25 では、プロバイダーを使う場合も `connect` を使う場
 | 要素への操作：`tap`、`fill`、`check`、`hover`、`swipe`、`setInputFiles` | [`actionTimeout`](/reference/config#actiontimeout) に達すると、操作は `ACTION_FAILED` または `LOCATOR_NOT_FOUND` で失敗します。 | Moli は、エンジンが読み取る形式では要素を識別しません。 |
 | スクリーンショット | 取得時に `ENGINE_FAILURE` をスローします。 | Moli には `document.getAnimations` がありません。 |
 | フレーム内のクエリ | クエリは `LOCATOR_NOT_FOUND` で失敗します。 | エンジンがフレーム内にドキュメントを見つけられません。 |
-| [ダウンロード](/browser#download-a-file) | `browser.waitForDownload` が `UNSUPPORTED_CAPABILITY` をスローします。 | プロバイダーが [ダウンロード](/browser#downloads-on-the-provider) を提供しません。 |
 
 修正には Moli 側の変更が必要です。[Moli の issue](https://github.com/lexmount/moli/issues) を確認し、
 ページを操作するテストは Chromium ターゲットで実行してください。

@@ -87,7 +87,6 @@ fail on Moli 1.1.25, with the provider and with `connect`:
 | An action on an element: `tap`, `fill`, `check`, `hover`, `swipe`, `setInputFiles` | The action fails when its [`actionTimeout`](/reference/config#actiontimeout) ends, with `ACTION_FAILED` or `LOCATOR_NOT_FOUND`. | Moli does not name an element the way the engine reads it. |
 | Screenshots | The capture throws `ENGINE_FAILURE`. | Moli has no `document.getAnimations`. |
 | A query inside a frame | The query fails with `LOCATOR_NOT_FOUND`. | The engine finds no document in the frame. |
-| [Downloads](/browser#download-a-file) | `browser.waitForDownload` throws `UNSUPPORTED_CAPABILITY`. | The provider serves no [downloads](/browser#downloads-on-the-provider). |
 
 A fix needs changes in Moli. Check its
 [upstream issues](https://github.com/lexmount/moli/issues), and run tests

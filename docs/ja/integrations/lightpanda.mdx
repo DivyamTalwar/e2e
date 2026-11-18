@@ -130,7 +130,6 @@ web({ browser: lightpanda({ loadResources: ['stylesheet', 'iframe'] }) })
 | ------- | ------------ | --- |
 | ページを開く操作：`app.open`、`browser.goto` | 呼び出しが戻りません。テストは [`timeout`](/reference/config#timeout) に達すると、`TEST_TIMEOUT` または `ACTION_FAILED` で失敗します。 | Lightpanda は、エンジンが読み取る形式では新しいページを報告しません。 |
 | [セッション](/authentication)（`test.setup` と `session.save`、テストの `session:`） | セットアップが同じようにタイムアウトし、e2e はそのセッションを使う各テストをスキップします。 | セットアップがページを開けません。 |
-| [ダウンロード](/browser#download-a-file) | `browser.waitForDownload` が `UNSUPPORTED_CAPABILITY` をスローします。 | プロバイダーが [ダウンロード](/browser#downloads-on-the-provider) を提供しません。 |
 
 修正には Lightpanda 側の変更が必要です。
 代わりに、Chromium ターゲットでスイートを実行してください。

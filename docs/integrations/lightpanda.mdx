@@ -140,7 +140,6 @@ and [agent step](/agent-steps) needs a page.
 | ------- | ------------ | --- |
 | Opening a page: `app.open`, `browser.goto` | The call never returns. The test fails when its [`timeout`](/reference/config#timeout) ends, with `TEST_TIMEOUT` or `ACTION_FAILED`. | Lightpanda does not report a new page the way the engine reads it. |
 | [Sessions](/authentication) (`test.setup` with `session.save`, `session:` on a test) | The setup times out the same way, and e2e skips each test that uses its session. | The setup cannot open a page. |
-| [Downloads](/browser#download-a-file) | `browser.waitForDownload` throws `UNSUPPORTED_CAPABILITY`. | The provider serves no [downloads](/browser#downloads-on-the-provider). |
 
 A fix needs changes in Lightpanda. Run the suite on a Chromium target
 instead.
