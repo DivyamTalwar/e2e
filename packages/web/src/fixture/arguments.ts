@@ -23,6 +23,11 @@ export function requireWaitUntil(options: Parameters<Browser['goto']>[1]): WaitU
   return waitUntil;
 }
 
+/** What a browser refuses in a cookie's value: a `;`, a control character, or a space at either end. Refused here by the cookie's name, since a browser's refusal names neither the cookie nor the reason. */
+const UNSTORABLE_VALUE = /[;\u0000-\u001f\u007f]|^ | $/;
+/** What a browser refuses in a cookie's name: what it refuses in a value, and a `=`. */
+const UNSTORABLE_NAME = /[=;\u0000-\u001f\u007f]|^ | $/;
+
 /**
  * Each cookie of `browser.setCookies` with where it lands. The harness's URL
  * rule decides which targets are admitted; a domain cookie is checked as the
@@ -30,8 +35,9 @@ export function requireWaitUntil(options: Parameters<Browser['goto']>[1]): WaitU
  * no URL), and a relative `url` lands on the base URL the way `goto` would.
  * A `url` gives its host, its directory as the path, and `secure` for
  * `https:` unless the cookie says. A target that is not http(s) is
- * `POLICY_DENIED`; a cookie that names neither a `url` nor a `domain` is
- * refused by name.
+ * `POLICY_DENIED`; a cookie that names neither a `url` nor a `domain`, or
+ * whose name or value no browser stores, is refused by name, never by
+ * value.
  */
 export function cookieTargets(cookies: Parameters<Browser['setCookies']>[0], context: EngineFixtureContext): CookieTarget[] {
   const scheme = (): string => {
@@ -39,6 +45,10 @@ export function cookieTargets(cookies: Parameters<Browser['setCookies']>[0], con
     return base !== undefined && new URL(base).protocol === 'https:' ? 'https' : 'http';
   };
   return cookies.map((cookie) => {
+    const unstorable = UNSTORABLE_NAME.test(cookie.name) ? 'name' : UNSTORABLE_VALUE.test(cookie.value) ? 'value' : undefined;
+    if (unstorable !== undefined) {
+      throw new TestError('INVALID_ARGUMENT', `browser.setCookies: the ${unstorable} of cookie ${JSON.stringify(cookie.name)} is one no browser stores: it holds a ";"${unstorable === 'name' ? ', a "="' : ''} or a control character, or starts or ends with a space`);
+    }
     // A test is JavaScript at run time, so the type alone does not rule out a cookie that names neither.
     const named: { readonly url?: string; readonly domain?: string } = cookie;
     if (named.url === undefined && named.domain === undefined) {

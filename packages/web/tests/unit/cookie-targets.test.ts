@@ -66,4 +66,23 @@ describe('cookieTargets', () => {
       );
     }
   });
+
+  it('refuses a name or a value no browser stores, by the name alone', () => {
+    const refusal = (name: string, value: string): unknown => {
+      try {
+        cookieTargets([{ name, value, url: 'https://app.test/' }], contextOf(undefined));
+        return undefined;
+      } catch (cause) {
+        return { code: (cause as { code?: string }).code, message: (cause as Error).message };
+      }
+    };
+    const why = 'is one no browser stores: it holds a ";" or a control character, or starts or ends with a space';
+    for (const value of ['v w;', 'a;b', 'a\nb', 'a\tb', ' a', 'a ', 'a\u0000b', 'a\u007fb']) {
+      expect(refusal('k', value)).toEqual({ code: 'INVALID_ARGUMENT', message: `browser.setCookies: the value of cookie "k" ${why}` });
+    }
+    for (const name of ['k=1', 'k;', ' k', 'k\n']) {
+      expect(refusal(name, 'v')).toEqual({ code: 'INVALID_ARGUMENT', message: `browser.setCookies: the name of cookie ${JSON.stringify(name)} ${why.replace('";"', '";", a "="')}` });
+    }
+    for (const [name, value] of [['k', 'v w'], ['k', 'a"b'], ['k', 'a,b'], ['k', 'a=b'], ['k', ''], ['k v', 'v'], ['k', 'é']] as const) expect(refusal(name, value)).toBeUndefined();
+  });
 });

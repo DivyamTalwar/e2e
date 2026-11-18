@@ -4,6 +4,7 @@
  */
 
 import type { Network, Storage } from 'webdriver-bidi-protocol';
+import { BidiError } from '../errors.ts';
 import type { Cookie, CookieFields, CookieFilter } from '../fixture/types.ts';
 import type { BidiConnection } from './connection.ts';
 import { bytesText } from './network-wire.ts';
@@ -52,9 +53,16 @@ export async function storedCookies(connection: BidiConnection, userContext: str
   return (await connection.send('storage.getCookies', { partition: partition(userContext) })).cookies;
 }
 
-/** Stores one cookie in `userContext`'s jar. */
+/**
+ * Stores one cookie in `userContext`'s jar. Chromium's refusal reaches here
+ * as an object turned to text (`[object Object]`), which says nothing, so
+ * the cookie is named in its place.
+ */
 export async function storeCookie(connection: BidiConnection, userContext: string, cookie: Storage.PartialCookie): Promise<void> {
-  await connection.send('storage.setCookie', { cookie, partition: partition(userContext) });
+  await connection.send('storage.setCookie', { cookie, partition: partition(userContext) }).catch((cause: unknown) => {
+    if (!(cause instanceof BidiError) || !cause.detail.includes('[object Object]')) throw cause;
+    throw new BidiError(cause.method, cause.error, `the browser refused cookie ${JSON.stringify(cookie.name)} for ${cookie.domain}`);
+  });
 }
 
 /** The cookie partition of a user context. */
