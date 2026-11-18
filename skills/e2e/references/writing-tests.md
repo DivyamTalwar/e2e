@@ -498,19 +498,19 @@ import { z } from 'zod';
 
 const projectTest = test.extend<{ project: { id: string } }>({
   project: async ({ app, browser }, use) => {
-    const cookie = (await browser.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
+    const cookie = (await browser.cookies()).map((c) => c.name + '=' + c.value).join('; ');
     const api = (path: string, init: RequestInit = {}) =>
-      fetch(`${app.baseUrl}${path}`, { ...init, headers: { cookie, 'content-type': 'application/json' } });
-    const created = await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: `Project ${Date.now()}` }) });
+      fetch(app.baseUrl + path, { ...init, headers: { cookie, 'content-type': 'application/json' } });
+    const created = await api('/api/projects', { method: 'POST', body: JSON.stringify({ name: 'Project ' + Date.now() }) });
     const project = expect(await created.json()).toMatchSchema(z.object({ id: z.string() }));
     await use(project);
-    await api(`/api/projects/${project.id}`, { method: 'DELETE' }); // runs after a failure too
+    await api('/api/projects/' + project.id, { method: 'DELETE' }); // runs after a failure too
   },
 });
 
 describe('project settings', { session: 'admin' }, () => {
   projectTest('renames a project', async ({ app, screen, project }) => {
-    await app.open(`/projects/${project.id}/settings`); // straight to the screen under test
+    await app.open('/projects/' + project.id + '/settings'); // straight to the screen under test
 
     await screen.getByLabel('Name').fill('Atlas');
     await screen.getByRole('button', 'Save').tap();
@@ -624,7 +624,7 @@ A `route`, `unroute`, or `waitForResponse` pattern is a glob string or
   `browser.locator('.btn-primary')`.
 - Test data gets a run-unique name (`Invoice ${Date.now()}`) and `afterEach`
   cleanup, so replays and retries never trip over leftovers.
-- APIs live in the same suite: ``fetch(`${app.baseUrl}/api/users`)``
+- APIs live in the same suite: `fetch(app.baseUrl + '/api/users')`
   plus value matchers, in a `test.extend` fixture that reads `browser.cookies()`
   when the API needs the session.
 - No sleeps, fixed delays, or polling loops. Wait for the state, not a

@@ -235,7 +235,7 @@ runner starts the app.
 
 ```yaml
 # .github/workflows/e2e.yml
-# Omits the github() reporter: it needs pull-requests: write and
+# Omits the github() reporter: it needs `pull-requests: write` and
 # GITHUB_TOKEN in the run step's env.
 name: e2e
 on:

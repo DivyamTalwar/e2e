@@ -124,7 +124,7 @@ the prompt). Full list: topic debugging.
 Options:
 
 - `params`: values the instruction names; the runner fills a `Secret`,
-  and a run-unique `unique(\`E2E ${Date.now()}\`)` keeps the cache working
+  and a run-unique value wrapped in `unique()` keeps the cache working
   across runs.
 - `timeout`: the config `timeout`.
 - `maxSteps` (default 25 actions), `maxModelCalls` (default 25): may only

@@ -49,7 +49,7 @@ Or declare it in the client's project config (`.mcp.json` for Claude Code,
 { "mcpServers": { "e2e": { "command": "npx", "args": ["e2e", "mcp"] } } }
 ```
 
-OpenCode takes another shape, in the project's `opencode.json`. Write the
+OpenCode takes another shape, in the project's `opencode.json`. Edit that
 file; `opencode mcp add e2e -- <command>` writes the global config instead.
 
 ```json
@@ -219,7 +219,7 @@ Resources: `e2e://guide` and `e2e://guide/<topic>` hold this skill.
    edit    + that line, in the assert block
    ```
 4. Run only that test:
-   `run_tests {files: ["tests/<feature>.e2e.ts:<line>"]}`, or
+   `run_tests {files: ['tests/<feature>.e2e.ts:<line>']}`, or
    `npx e2e run tests/<feature>.e2e.ts:<line>` from the shell (SKILL.md,
    "Rerunning a test while you fix it"). On a failure, fix from the run's failure block
    and the trace page (topic `debugging`), then rerun it the same way. To see a screen the evidence leaves out, go
@@ -266,7 +266,7 @@ session runs the test and stops where it failed:
    loads the config and the test files fresh, so it runs the edited test
    from the start and stops on the next failure, or on the final screen.
 5. `close_session`, then confirm once with
-   `run_tests {files: ["tests/<feature>.e2e.ts:<line>"]}`.
+   `run_tests {files: ['tests/<feature>.e2e.ts:<line>']}`.
 
 - `afterEach` hooks and fixture teardown wait for `close_session`; a failure
   there shows as a `Cleanup (afterEach)` line in its result.

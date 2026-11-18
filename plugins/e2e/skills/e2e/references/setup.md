@@ -43,7 +43,7 @@ e2e init`; `npx e2e init my-app` scaffolds into a new directory.
 The wizard picks the engines (web, mobile, or both) and a model provider (None for tests without AI)
 and offers to install this skill, register the MCP server for your coding
 agent, and install dependencies. `--yes` picks the web engine (Playwright) and Vercel AI
-Gateway, installs the skill in `.agents/skills/` (`.claude/skills/e2e`
+Gateway, adds the skill to `.agents/skills/` (`.claude/skills/e2e`
 symlinks to it), registers MCP in `.mcp.json`, `.cursor/mcp.json`, and `.codex/config.toml`, skips
 installing dependencies. A flag per question overrides one default:
 `--engine` (`web,mobile` for both), `--gateway`, `--endpoint`, `--skills`,
@@ -303,7 +303,7 @@ app: {
 
 For an app started elsewhere, point `app.url` at it, literally or via
 `process.env.APP_URL ?? 'http://localhost:3000'`; the runner reads no
-`APP_URL` and loads no `.env`, so put `process.loadEnvFile('.env')` atop
+`APP_URL` and loads no `.env`, so put `process.loadEnvFile()` atop
 `e2e.config.ts` (workers re-import it).
 
 ## Environment variables the runner reads
