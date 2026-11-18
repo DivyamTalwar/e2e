@@ -75,9 +75,13 @@ it('selects the option whose label the list shows, not one whose text a label at
     <option value="0">Zero</option>
     <option value="1" label="Real label">Other text</option>
     <option value="2">Other   text</option>
+    <option value="3">&nbsp;Padded</option>
   </select>`);
   await session.act(bySelector('#s'), { kind: 'selectOption', value: 'Other text' });
   expect(await state('#s')).toBe('2');
   await session.act(bySelector('#s'), { kind: 'selectOption', value: 'Real label' });
   expect(await state('#s')).toBe('1');
+  // A non-breaking space is no part of the label a person reads.
+  await session.act(bySelector('#s'), { kind: 'selectOption', value: 'Padded' });
+  expect(await state('#s')).toBe('3');
 });

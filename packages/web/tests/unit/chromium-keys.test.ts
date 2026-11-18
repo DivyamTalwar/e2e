@@ -1,8 +1,8 @@
 /** Which keys Chromium takes as CDP key events, and the events: media keys, Numpad5 with NumLock off, and macOS editing shortcuts with their commands. */
 
 import { describe, expect, it } from 'vitest';
-import { chromiumKeyCommands, MAC_EDITING_COMMANDS, macEditingCommands, type ChromiumKeyboard } from '../../src/driver/chromium-keys.ts';
-import { fixtureKeyStroke, KEYS, keyValue, strokeSource, type KeyPhase, type Modifier } from '../../src/driver/keyboard.ts';
+import { chromiumKeyCommands, chromiumTypedCommands, MAC_EDITING_COMMANDS, macEditingCommands, type ChromiumKeyboard } from '../../src/driver/chromium-keys.ts';
+import { characterKey, fixtureKeyStroke, KEYS, keyValue, shiftChanges, strokeSource, type KeyPhase, type Modifier } from '../../src/driver/keyboard.ts';
 
 /** The BiDi key source of one `browser.keyboard` call, with Shift held before it or not. */
 function source(key: string, phase: KeyPhase, shiftHeld: boolean) {
@@ -119,5 +119,31 @@ describe('numpad keys on BiDi', () => {
     expect(keyValue(KEYS.get('Numpad5')!, true)).toBe('\uE01F');
     expect(() => source('MediaPlayPause', 'press', false)).toThrow('WebDriver defines no key value for "MediaPlayPause"');
     expect(() => source('Numpad5', 'press', false)).toThrow('"Numpad5" with NumLock off (key "Clear")');
+  });
+});
+
+describe('chromiumTypedCommands', () => {
+  it('types a character as written under a held Shift: its key down and up, entering the character itself', () => {
+    expect(chromiumTypedCommands('a', new Set<Modifier>(['Shift'])).map((command) => command.params)).toEqual([
+      { type: 'keyDown', windowsVirtualKeyCode: 65, code: 'KeyA', key: 'a', location: 0, isKeypad: false, modifiers: 8, text: 'a', unmodifiedText: 'a' },
+      { type: 'keyUp', windowsVirtualKeyCode: 65, code: 'KeyA', key: 'a', location: 0, isKeypad: false, modifiers: 8 },
+    ]);
+    expect(chromiumTypedCommands('1', new Set<Modifier>(['Shift']))[0]!.params).toMatchObject({ code: 'Digit1', key: '1', text: '1' });
+    expect(chromiumTypedCommands('é', new Set<Modifier>(['Shift']))).toEqual([]);
+  });
+});
+
+describe('the key of a character', () => {
+  it('is the key of the main keyboard that types it, with Shift or without', () => {
+    expect(characterKey('a')).toMatchObject({ definition: { code: 'KeyA' }, shifted: false });
+    expect(characterKey('~')).toMatchObject({ definition: { code: 'Backquote' }, shifted: true });
+    expect(characterKey('1')).toMatchObject({ definition: { code: 'Digit1' }, shifted: false });
+    expect(characterKey('é')).toBeUndefined();
+    for (let code = 0x20; code <= 0x7e; code += 1) expect(characterKey(String.fromCharCode(code)), String.fromCharCode(code)).toBeDefined();
+  });
+
+  it('is changed by a held Shift only when it has another character to type', () => {
+    expect([...'az09`-=[];,./'].every(shiftChanges)).toBe(true);
+    expect([...'AZ~!@_+{}:<>? '].some(shiftChanges)).toBe(false);
   });
 });

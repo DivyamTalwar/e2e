@@ -10,7 +10,7 @@ import type { Protocol } from 'devtools-protocol';
 import type { Input } from 'webdriver-bidi-protocol';
 import { TestError, type ViewportPoint, type ViewportSize } from '@e2e-dev/core/engine';
 import { ChromiumCdp } from './cdp.ts';
-import { chromiumKeyCommands, holdsAfter, type CdpKeyCommand } from './chromium-keys.ts';
+import { chromiumKeyCommands, chromiumTypedCommands, holdsAfter, type CdpKeyCommand } from './chromium-keys.ts';
 import { codeOfValue, MODIFIER_CODES, pressStroke, strokeSource, type KeyStroke, type Modifier } from './keyboard.ts';
 import type { BrowserTraits } from '../browsers.ts';
 import { nextFrame } from '../in-page/document.ts';
@@ -271,9 +271,23 @@ export class BidiInput {
     return read;
   }
 
-  /** Whether `modifier` is held in the tab input goes to. */
-  holds(modifier: Modifier): boolean {
-    return this.state.modifiers().has(modifier);
+  /** Whether Shift, and no other modifier, is held in the tab input goes to: where a key press types its key's shifted character. */
+  holdsShiftAlone(): boolean {
+    const held = this.state.modifiers();
+    return held.size === 1 && held.has('Shift');
+  }
+
+  /**
+   * Types `characters` as written under the modifiers held, each with its
+   * key's events, where a key event can say what text its key enters
+   * (Chromium, over CDP: `chromiumTypedCommands`). False, with nothing
+   * sent, on a browser whose key events cannot.
+   */
+  async typeAsWritten(characters: readonly string[], signal?: AbortSignal): Promise<boolean> {
+    if (!this.target.traits.cdp) return false;
+    const held = this.state.modifiers();
+    await this.sendCdpKeys(characters.flatMap((character) => chromiumTypedCommands(character, held)), signal);
+    return true;
   }
 
   /** Presses one key of the contract grammar (`pressStroke`). */

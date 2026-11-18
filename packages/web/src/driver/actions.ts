@@ -32,7 +32,7 @@ import { invert, project, projectBox } from './projection.ts';
 import { ROOT_NODE_ID, stillLocated } from './observe.ts';
 import { CONTENT_TYPES } from './content-types.ts';
 import { type ClickOptions, clickSources, moveSources, nearestPixel, swipeDistance, swipeSources, typeSource, wheelDelta } from './input-sources.ts';
-import { pressStroke } from './keyboard.ts';
+import { pressStroke, shiftChanges } from './keyboard.ts';
 import type { BidiSession } from './session.ts';
 import { ElementRef } from './script.ts';
 
@@ -172,10 +172,13 @@ async function takesKeystrokes(session: BidiSession, documents: readonly string[
  * read once, when the first such run is inserted, and each is offered what
  * is left of a run until one takes some.
  *
- * With Shift held (`keyboard.down`), a key press would type the key's
- * shifted character, so the characters keys type are inserted as text too,
- * and arrive as written. Where no field takes them they go out as key
- * presses after all, for what listens for keys there.
+ * With Shift alone held (`keyboard.down`), a key press types its key's
+ * shifted character, where Playwright types the text as written. So a
+ * character Shift would change (`a`, `1`) is typed with key events that name
+ * the text they enter, where the browser has such events
+ * (`BidiInput.typeAsWritten`); elsewhere it is inserted as text, with no key
+ * events, or pressed after all where no field takes text, for what listens
+ * for keys there.
  *
  * A string is never entered in part. A character to insert that no document
  * takes, while what holds focus takes keystrokes (it is no field or editing
@@ -188,13 +191,13 @@ async function takesKeystrokes(session: BidiSession, documents: readonly string[
  * character to insert is left out.
  */
 export async function typeInto(session: BidiSession, text: string, signal: AbortSignal): Promise<void> {
-  /** How a run goes out: as key presses, as text no key types, or as text while Shift would change what its keys type. */
+  /** How a run goes out: as key presses, as text no key types, or as written where a held Shift would change what its keys type. */
   type Entry = 'keys' | 'text' | 'unshifted';
-  const shift = session.input.holds('Shift');
+  const shift = session.input.holdsShiftAlone();
   const entryOf = (segment: string): Entry => {
     if (segment === '\n' || segment === '\r' || segment === '\r\n') return 'keys';
     if (!/^[\x20-\x7e]$/.test(segment)) return 'text';
-    return shift ? 'unshifted' : 'keys';
+    return shift && shiftChanges(segment) ? 'unshifted' : 'keys';
   };
   const runs: { readonly entry: Entry; readonly graphemes: string[] }[] = [];
   for (const { segment } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
@@ -209,6 +212,10 @@ export async function typeInto(session: BidiSession, text: string, signal: Abort
   for (const run of runs) {
     if (run.entry === 'keys') {
       await session.input.send([typeSource(run.graphemes)], signal);
+      entered += run.graphemes.length;
+      continue;
+    }
+    if (run.entry === 'unshifted' && await session.input.typeAsWritten(run.graphemes, signal)) {
       entered += run.graphemes.length;
       continue;
     }

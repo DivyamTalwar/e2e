@@ -8,7 +8,7 @@
  */
 
 import type { CdpCommand } from './cdp.ts';
-import { isShifted, keyValue, MODIFIER_KEYS, type KeyStroke, type Modifier } from './keyboard.ts';
+import { characterKey, isShifted, keyValue, MODIFIER_KEYS, type KeyStroke, type Modifier } from './keyboard.ts';
 
 /** Each modifier's bit in CDP's `modifiers` mask. */
 const MODIFIER_BITS: Readonly<Record<Modifier, number>> = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
@@ -196,6 +196,31 @@ export function chromiumKeyCommands(stroke: KeyStroke, keyboard: ChromiumKeyboar
     return modifierEvent(modifier, 'keyUp', holding);
   });
   return [...presses, ...cancelDrag, down, up, ...releases];
+}
+
+/**
+ * The CDP commands that type `character` as written under the modifiers
+ * `held`: its key goes down and up, and the text it enters is the character
+ * itself, as Playwright types text while Shift is held. A BiDi key action
+ * there enters what the key types with Shift. Empty for a character no key
+ * of the US layout types.
+ */
+export function chromiumTypedCommands(character: string, held: ReadonlySet<Modifier>): CdpKeyCommand[] {
+  const typed = characterKey(character);
+  if (typed === undefined) return [];
+  const { definition, shifted } = typed;
+  const event = {
+    windowsVirtualKeyCode: shifted && definition.shiftKeyCode !== undefined ? definition.shiftKeyCode : definition.keyCode,
+    code: definition.code,
+    key: character,
+    location: definition.location,
+    isKeypad: false,
+    modifiers: mask(held),
+  };
+  return [
+    { method: 'Input.dispatchKeyEvent', params: { ...event, type: 'keyDown', text: character, unmodifiedText: character } },
+    { method: 'Input.dispatchKeyEvent', params: { ...event, type: 'keyUp' } },
+  ];
 }
 
 /** The CDP event that presses or releases one modifier key, with the modifiers held after it. */

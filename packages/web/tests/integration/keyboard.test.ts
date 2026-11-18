@@ -135,7 +135,17 @@ describe('typed text that keys would not type as written', () => {
     await session.browser.keyboard.type('ab1');
     await session.browser.keyboard.press('KeyC');
     await session.browser.keyboard.up('Shift');
-    expect(await page()).toEqual({ value: 'ab1C', focus: 'field', keys: 'Shift+shift;C+shift;' });
+    // Chromium types each with its key's events; Firefox has no key event that enters text other than its key's, so it inserts them.
+    const typed = onFirefox ? '' : 'a+shift;b+shift;1+shift;';
+    expect(await page()).toEqual({ value: 'ab1C', focus: 'field', keys: `Shift+shift;${typed}C+shift;` });
+  });
+
+  it('presses the keys of characters Shift does not change, with Shift held', async () => {
+    await session.browser.evaluate(() => (document.getElementById('field')!.focus(), null));
+    await session.browser.keyboard.down('Shift');
+    await session.browser.keyboard.type('~A !');
+    await session.browser.keyboard.up('Shift');
+    expect(await page()).toEqual({ value: '~A !', focus: 'field', keys: 'Shift+shift;~+shift;A+shift; +shift;!+shift;' });
   });
 
   it('presses the keys of text typed with Shift held where no field takes it', async () => {

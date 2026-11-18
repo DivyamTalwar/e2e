@@ -120,8 +120,9 @@ export interface OptionChoice {
  * (`dom.control`), matching `by`, each option's state set through its own
  * setter (`dom.setState`), and fires `input` and `change`, as Playwright's
  * `selectOption` does. An option's label is the one the list shows: its
- * `label` attribute, or its text without one. Nothing of an element out
- * of the document changes. Not yet while the select or the option is
+ * `label` attribute, or its text without one, compared as written and with
+ * its whitespace normalized. Nothing of an element out of the document
+ * changes. Not yet while the select or the option is
  * disabled, or no option matches; refused for an element that is no
  * `<select>`.
  */
@@ -131,10 +132,12 @@ export const selectOption = withDom((dom, target: Element, by: OptionChoice): Ou
   if (element.nodeName !== 'SELECT') return { kind: 'refused', reason: 'Element is not a <select> element' };
   const select = element as HTMLSelectElement;
   if (select.disabled) return { kind: 'not-yet', reason: 'element is not enabled' };
+  // As Playwright compares a label: without soft hyphens and zero-width spaces, trimmed, each run of whitespace one space.
+  const normalized = (text: string): string => text.replace(/[\u200b\u00ad]/g, '').trim().replace(/\s+/g, ' ');
   const options = [...select.options];
   const option = by.index !== undefined ? options[by.index]
     : by.value !== undefined ? options.find((each) => each.value === by.value)
-    : options.find((each) => each.label === by.label);
+    : options.find((each) => each.label === by.label || normalized(each.label) === normalized(by.label ?? ''));
   if (option === undefined) return { kind: 'not-yet', reason: 'no option matches' };
   if (option.disabled || option.closest('optgroup')?.disabled === true) return { kind: 'not-yet', reason: 'option being selected is not enabled' };
   select.focus();

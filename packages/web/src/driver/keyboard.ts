@@ -187,6 +187,28 @@ const NAMES: ReadonlyMap<string, NamedKey> = (() => {
   return names;
 })();
 
+/** The key that types each character of the US layout, and whether it types it with Shift. */
+const CHARACTER_KEYS: ReadonlyMap<string, { readonly definition: KeyDefinition; readonly shifted: boolean }> = (() => {
+  const keys = new Map<string, { readonly definition: KeyDefinition; readonly shifted: boolean }>();
+  for (const definition of KEYS.values()) {
+    if (definition.location === 3) continue;
+    if ([...definition.key].length === 1 && !keys.has(definition.key)) keys.set(definition.key, { definition, shifted: false });
+    if (definition.shiftKey !== undefined && [...definition.shiftKey].length === 1 && !keys.has(definition.shiftKey)) keys.set(definition.shiftKey, { definition, shifted: true });
+  }
+  return keys;
+})();
+
+/** The key of the US layout that types `character`, and whether with Shift; undefined for a character no key types. */
+export function characterKey(character: string): { readonly definition: KeyDefinition; readonly shifted: boolean } | undefined {
+  return CHARACTER_KEYS.get(character);
+}
+
+/** Whether a held Shift changes what the key of `character` types: true for `a` and `1`, false for `A`, `!`, and a space. */
+export function shiftChanges(character: string): boolean {
+  const key = CHARACTER_KEYS.get(character);
+  return key !== undefined && !key.shifted && key.definition.shiftKey !== undefined && key.definition.shiftKey !== character;
+}
+
 /** The code each WebDriver value the driver sends presses. */
 const CODES_BY_VALUE: ReadonlyMap<string, string> = (() => {
   const codes = new Map<string, string>();
