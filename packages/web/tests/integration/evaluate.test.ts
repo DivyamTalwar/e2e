@@ -128,11 +128,14 @@ describe('browser.evaluate error boundaries', () => {
 
   it('fails a locate as EVALUATE_FAILED once the page broke a Map method', async () => {
     await session.setContent('<div>cart</div><script>Map.prototype.set = 1;</script>');
-    await expect(session.locate({ kind: 'selector', selector: 'div' })).rejects.toMatchObject({
-      code: 'EVALUATE_FAILED',
-      category: 'test',
-      message: expect.stringContaining('the page deleted or replaced a JavaScript built-in'),
-    });
+    // A selector of several compounds too, whose matching remembers what it matched in a Map: the page's fault, not the selector's.
+    for (const selector of ['div', 'body div']) {
+      await expect(session.locate({ kind: 'selector', selector })).rejects.toMatchObject({
+        code: 'EVALUATE_FAILED',
+        category: 'test',
+        message: expect.stringContaining('the page deleted or replaced a JavaScript built-in'),
+      });
+    }
   });
 
   it('runs keepNames output after the code deleted Object', async () => {

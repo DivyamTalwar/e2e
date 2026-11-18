@@ -50,7 +50,8 @@ export type PagePart =
  * compound. XPath stays in the light DOM, a leading `/` read from the scope
  * element. The result is a set: its order means nothing, and `locate`
  * answers matches in its own. A selector the page cannot parse is its error
- * message.
+ * message; any other failure is thrown, so a page that broke a built-in the
+ * chain calls is not taken for a bad selector.
  */
 export function selectChain(dom: Dom, parts: readonly PagePart[]): Element[] | string {
   const queryCss = (scope: Document | Element, chains: readonly (readonly CssStep[])[], into: Set<Element>): void => {
@@ -132,10 +133,17 @@ export function selectChain(dom: Dom, parts: readonly PagePart[]): Element[] | s
       if (scopeElement !== null && matchesCompound(scopeElement, last) && matchesBefore(scopeElement, chain.length - 1)) into.add(scopeElement);
     }
   };
-  const queryXpath = (scope: Document | Element, body: string, into: Set<Element>): void => {
+  /** Adds what the XPath `body` selects under `scope`; answers the browser's words for an expression it cannot evaluate to nodes. */
+  const queryXpath = (scope: Document | Element, body: string, into: Set<Element>): string | undefined => {
     const expression = scope.nodeType !== 9 && body.startsWith('/') ? `.${body}` : body;
-    const found = (scope.ownerDocument ?? (scope as Document)).evaluate(expression, scope, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE);
+    let found: XPathResult;
+    try {
+      found = (scope.ownerDocument ?? (scope as Document)).evaluate(expression, scope, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE);
+    } catch (cause) {
+      return cause instanceof Error ? cause.message : String(cause);
+    }
     for (let node = found.iterateNext(); node !== null; node = found.iterateNext()) if (node.nodeType === 1) into.add(node as Element);
+    return undefined;
   };
   try {
     let matched: (Document | Element)[] = [document];
@@ -143,13 +151,19 @@ export function selectChain(dom: Dom, parts: readonly PagePart[]): Element[] | s
       if (part.engine === 'css') document.querySelector(part.body);
       const found = new Set<Element>();
       for (const scope of matched) {
-        if (part.engine === 'css') queryCss(scope, part.chains, found);
-        else queryXpath(scope, part.body, found);
+        if (part.engine === 'css') {
+          queryCss(scope, part.chains, found);
+          continue;
+        }
+        const refused = queryXpath(scope, part.body, found);
+        if (refused !== undefined) return refused;
       }
       matched = [...found];
     }
     return matched as Element[];
   } catch (cause) {
-    return cause instanceof Error ? cause.message : String(cause);
+    // The browser refuses a selector with a DOMException. Anything else is a fault of the read, which the caller tells apart.
+    if (!(cause instanceof DOMException)) throw cause;
+    return cause.message;
   }
 }
