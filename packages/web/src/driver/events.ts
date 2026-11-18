@@ -118,8 +118,8 @@ const ABORTED = new Set(['net::ERR_ABORTED', 'NS_BINDING_ABORTED']);
 /**
  * Routes `connection`'s events to the attempt `current` returns; returns the
  * unsubscribe. A prompt in a context of another session (a browser shared
- * over CDP) is left for that session to answer. A tab the app opens joins
- * the attempt's tabs once a document loads in it, its page behaving as
+ * over CDP) is left for that session to answer. A tab one of the attempt's
+ * tabs opens joins them once a document loads in it, its page behaving as
  * focused from when it opened (`BidiInput.emulateFocus`; one that closed
  * before it was told has no page to tell), and a tab that closes leaves
  * them, with the input state kept of it. Where the app went is told
@@ -200,6 +200,8 @@ export function routeEvents(connection: BidiConnection, contexts: ContextTree, c
       contexts.created(info.context, info.userContext, info.parent);
       const session = ours(info.context);
       if (info.parent != null || info.originalOpener == null || session === undefined) return;
+      // A user context the attempt shares with the browser's own windows also holds the tabs those open, which are not the app's.
+      if (!session.tabs.holds(contexts.top(info.originalOpener))) return;
       void session.network.addContext(info.context).catch((cause: unknown) => session.latch.latch(asError(cause)));
       watch(session, info.context, session.input.emulateFocus(info.context));
       watch(session, info.context, session.log.openedTab(session.userContext.id, info.context, false));

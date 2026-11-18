@@ -9,6 +9,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ATTACH_HOSTS, closeRemoteChrome, installedChrome, launchRemoteChrome, tearDownRemote, type RemoteChrome } from '../../helpers/cdp-host.ts';
+import { evaluateInTab } from '../../helpers/cdp-page.ts';
 import { openTab, openTabs, showOnly } from '../../helpers/cdp-tabs.ts';
 import { byRole, startPageServer, startWebSession, type PageServer, type WebSession } from '../../helpers/web-session.ts';
 
@@ -113,6 +114,11 @@ describe("web({ connect: { context: 'existing' } }) beside tabs the browser alre
     endpoint = `http://${new URL(chrome.endpoint).host}`;
   }, 60_000);
 
+  afterEach(async () => {
+    await session?.close();
+    session = undefined;
+  });
+
   afterAll(async () => {
     await tearDownRemote({ ends: [() => session?.close()], chrome, closes: [() => pages?.close()] });
   });
@@ -127,5 +133,21 @@ describe("web({ connect: { context: 'existing' } }) beside tabs the browser alre
     await session.engine.session!.restart!(session.op());
     expect(await session.browser.url()).toBe(shown.url);
     expect((await openTabs(endpoint)).toSorted((a, b) => a.url.localeCompare(b.url))).toEqual([background, shown]);
+  });
+
+  it('leaves alone a tab that a tab it does not drive opened', async () => {
+    const popup = pages.serve('/theirs', '<title>Theirs</title>');
+    const background = await showOnly(endpoint, pages, '/opener', '<title>Opener</title>');
+    const shown = await openTab(endpoint, pages, '/driven', APP);
+    session = await startWebSession({ web: { connect: { cdpEndpoint: () => chrome.endpoint, context: 'existing' } } });
+    const urls = async (): Promise<string[]> => (await openTabs(endpoint)).map((tab) => tab.url).toSorted();
+
+    await evaluateInTab(endpoint, background, "window.open('/theirs') === null");
+    await expect.poll(urls).toEqual([shown.url, background.url, popup].toSorted());
+    await session.act(byRole('button', 'Press me'), { kind: 'tap' });
+    expect(session.browser.tabs()).toHaveLength(1);
+
+    await session.startAttempt();
+    expect(await urls()).toEqual([shown.url, background.url, popup].toSorted());
   });
 });

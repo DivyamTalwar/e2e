@@ -101,6 +101,11 @@ export class AttemptTabs {
     return context == null ? undefined : this.open.find((tab) => tab.context === context);
   }
 
+  /** Whether `context` is a tab the attempt has open, one that has yet to join included. */
+  holds(context: string): boolean {
+    return this.find(context) !== undefined || this.unjoined.has(context);
+  }
+
   /** The tab shown now, if any. */
   active(): AttemptTab | undefined {
     return this.showing;
