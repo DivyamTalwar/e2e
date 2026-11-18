@@ -79,7 +79,7 @@ export interface BrowserSource {
   dispose(context: EngineCleanupContext): Promise<void>;
   /** How an attempt records the browser when its provider records it, in place of the screencast. */
   recorder(attemptId: string): ((signal: AbortSignal) => Promise<LeaseRecording>) | undefined;
-  /** How a download is read back off a browser on another machine, or why none can be when its provider serves none; undefined for a browser that saves them on this machine. */
+  /** How a download is read back off a provider's browser, or why one saved on another machine cannot be when its provider serves none; undefined for a browser that saves them on this machine. */
   downloads(): RemoteDownloads | undefined;
 }
 
@@ -189,7 +189,7 @@ export function leaseSource(leases: LeasedBrowsers): BrowserSource {
     endAttempt: (context) => (leases.scope === 'attempt' ? leases.endAttempt(context) : Promise.resolve()),
     dispose: (context) => leases.dispose(context),
     recorder: (attemptId) => leases.recorder(attemptId),
-    downloads: () => leases.downloads() ?? { unserved: `browser provider "${leases.name}" serves no downloads, so a file its remote browser saves cannot be read back` },
+    downloads: () => leases.downloads() ?? { unserved: `browser provider "${leases.name}" serves no downloads, so a file its browser saves on another machine cannot be read back` },
   };
 }
 

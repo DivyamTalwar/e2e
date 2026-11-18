@@ -162,9 +162,10 @@ export interface BrowserProvider {
   /** Resolves CDP handshake headers in the worker from its own environment; never serialized with the lease. */
   cdpHeaders?(lease: BrowserLease, context: BrowserRequest): Readonly<Record<string, string>> | Promise<Readonly<Record<string, string>>>;
   /**
-   * Serves `browser.waitForDownload`. Without it a download on the
-   * provider's browser throws `UNSUPPORTED_CAPABILITY`, since the file lands
-   * on the browser's disk.
+   * Serves `browser.waitForDownload` for a browser on another machine.
+   * Without it a download is read from where the browser saved it, which
+   * works when the browser runs on the runner's machine; on another one the
+   * wait throws `UNSUPPORTED_CAPABILITY`, since the file is on that disk.
    */
   readonly downloads?: BrowserProviderDownloads | undefined;
   /**

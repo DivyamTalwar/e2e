@@ -335,7 +335,7 @@ export default {
 
 `downloads` を実装すると、`browser.waitForDownload` をローカルと同じように使えます。ホスト型ブラウザは、ランナーから開けない自身のディスクにファイルを保存します。`downloads` があると、ダウンロードしたファイルを `dir` に保存し、エンジンが完成した各ファイルのパスを `read` に渡します。`read` はサービスのファイル API からバイト列を取得します。[Kernel](/integrations/kernel#downloads)、[smol machines](/integrations/smol)、[E2B](/integrations/e2b) はこの方法でダウンロードに対応しています。ダウンロードをパスではなく名前で保存するサービスは、サイトが提案した名前である `context.suggestedFilename` でファイルを探します。[Notte](/integrations/notte#downloads) がこの方式です。
 
-`downloads` がない場合、`browser.waitForDownload` はプロバイダー名を示す `UNSUPPORTED_CAPABILITY` をスローします。プロバイダーのブラウザで `setInputFiles` を使うと、ファイルのバイト列がページに送られます。上限は合計 50 MB です。ディレクトリを指定すると `UNSUPPORTED_CAPABILITY` をスローします。
+`downloads` がない場合、別のマシン上のブラウザでダウンロードすると、プロバイダー名を示す `UNSUPPORTED_CAPABILITY` をスローします。ランナーと同じマシンでブラウザを動かすプロバイダーでは、追加の実装は不要です。プロバイダーのブラウザで `setInputFiles` を使うと、ファイルのバイト列がページに送られます。上限は合計 50 MB です。ディレクトリを指定すると `UNSUPPORTED_CAPABILITY` をスローします。
 
 ### プロバイダーで録画に対応する
 

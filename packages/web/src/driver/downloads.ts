@@ -6,7 +6,7 @@
  * the download's id.
  */
 
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EngineError, TestError } from '@e2e-dev/core/engine';
@@ -16,8 +16,10 @@ import { afterTrigger, type OperationBudget } from './budget.ts';
 import type { BidiConnection } from './connection.ts';
 
 /**
- * How the downloads of a browser on another machine reach this one: read
- * back through its provider, or `unserved`, which says why none can be.
+ * How the downloads of a provider's browser reach this machine: read back
+ * through the provider, or, for a provider that serves none, found where the
+ * browser saved them, which is here when the browser runs on this machine.
+ * `unserved` is why a download saved on another machine cannot be read.
  */
 export type RemoteDownloads = LeaseDownloads | { readonly unserved: string };
 
@@ -33,8 +35,8 @@ export class AttemptDownloads {
   readonly dir: string;
 
   /**
-   * `remote` is how the downloads of a browser on another machine reach this
-   * one; undefined for a browser that saves them here. `artifacts` gives each
+   * `remote` is how the downloads of a provider's browser reach this
+   * machine; undefined for a browser that saves them here. `artifacts` gives each
    * saved download its path in the attempt's `downloads` folder, and `onPage`
    * says whether a context is the attempt's tab or a frame in it.
    */
@@ -71,12 +73,13 @@ export class AttemptDownloads {
    * still waited for. A canceled download fails the wait. Every download is
    * read back before the first is written, and a write that fails takes the
    * ones before it along, so a wait that fails saves none: a file no step
-   * attached is never redacted. Refused before the trigger
-   * runs when no download can be read back.
+   * attached is never redacted. A download a provider's browser saved on
+   * another machine, and the provider does not serve, is refused by the
+   * provider's name.
    */
   async save(count: number, trigger: () => Promise<void>, budget: OperationBudget): Promise<SavedDownload[]> {
-    if (this.remote !== undefined && 'unserved' in this.remote) throw new EngineError('UNSUPPORTED_CAPABILITY', this.remote.unserved, { retryable: false });
     const { served } = this;
+    const unserved = this.remote !== undefined && 'unserved' in this.remote ? this.remote.unserved : undefined;
     const { timeoutMs } = budget;
     const started: { readonly id: string; readonly suggestedFilename: string }[] = [];
     const ended = new Map<string, string | null>();
@@ -101,12 +104,14 @@ export class AttemptDownloads {
         await done;
         const finished = started.map(({ id, suggestedFilename }) => {
           const filepath = ended.get(id);
-          if (filepath == null) throw new TestError('ACTION_FAILED', `download ${suggestedFilename} was canceled`);
+          // A browser on another machine may fail to save into a folder named by this machine's path.
+          if (filepath == null) throw new TestError('ACTION_FAILED', `download ${suggestedFilename} was canceled${unserved === undefined ? '' : `; if the browser runs on another machine: ${unserved}`}`);
           return { suggestedFilename, filepath };
         });
         const writes: { readonly suggestedFilename: string; readonly write: (absolute: string) => void }[] = [];
         for (const { suggestedFilename, filepath } of finished) {
           if (served === undefined) {
+            if (unserved !== undefined && !existsSync(filepath)) throw new EngineError('UNSUPPORTED_CAPABILITY', `download ${suggestedFilename} is not on this machine: ${unserved}`, { retryable: false });
             writes.push({ suggestedFilename, write: (absolute) => copyFileSync(filepath, absolute) });
             continue;
           }

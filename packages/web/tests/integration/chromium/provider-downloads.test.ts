@@ -166,7 +166,7 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
     expect(readdirSync(artifactsDir, { recursive: true, encoding: 'utf8' }).filter((entry) => entry.startsWith('downloads'))).toEqual([]);
   });
 
-  it('refuses a wait before its trigger runs when the provider serves no downloads', async () => {
+  it('saves a download of a provider without downloads whose browser runs on this machine', async () => {
     artifactsDir = mkdtempSync(path.join(tmpdir(), 'e2e-provider-unserved-'));
     chrome = await launchRemoteChrome();
     const provider: BrowserProvider = {
@@ -178,14 +178,12 @@ describe.each<BrowserProviderScope>(['worker', 'attempt'])('downloads through a 
     const prepared = await engine.prepare!({ runId: 'run-downloads', targetName: 'web', projectRoot: process.cwd(), app: { site: new URL(app.url).hostname }, slots: 1, env: {}, signal: signal(), headed: false, log: () => undefined });
     await engine.init!(initInfo({ runId: 'run-downloads', app: { site: new URL(app.url).hostname }, env: { ...prepared?.env } }));
     await engine.startAttempt!({ attemptId: 'a1', artifactsDir, signal: signal(), resolveSecret: noSecrets, ...ignoreTrace });
-    await engine.session!.open!(app.url, operation());
+    await engine.session!.open!(`${app.url}/login`, operation());
+    await addDownloadLinks(engine, app.url, 1, 'report body');
     const browser = browserFixture(engine, { baseUrl: app.url, operation: () => operation() });
-    let triggered = false;
-    await expect(browser.waitForDownload(async () => { triggered = true; })).rejects.toMatchObject({
-      code: 'UNSUPPORTED_CAPABILITY',
-      message: 'browser provider "toy-unserved" serves no downloads, so a file its remote browser saves cannot be read back',
-    });
-    expect(triggered).toBe(false);
+    const file = await browser.waitForDownload(() => tap(engine!, '#download-0'));
+    expect(file.suggestedFilename).toBe('report-0.txt');
+    expect(readFileSync(file.absolutePath, 'utf8')).toBe('report body 0');
   });
 
   it.each(['waitForDownload', 'waitForDownloads'] as const)('%s bounds a completed download whose provider read stalls', async (method) => {

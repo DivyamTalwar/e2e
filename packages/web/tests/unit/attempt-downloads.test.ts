@@ -73,6 +73,42 @@ describe('AttemptDownloads.save', () => {
     expect(kept()).toEqual([]);
   });
 
+  /** A provider that serves no downloads, whose browser saves them wherever it runs. */
+  const UNSERVED: RemoteDownloads = { unserved: 'browser provider "toy" serves no downloads' };
+
+  it('saves the download of a provider without downloads whose browser saved it on this machine', async () => {
+    local = attemptDownloads(UNSERVED);
+    const { dir } = local;
+    const saved = await local.save(1, async () => {
+      writeFileSync(path.join(dir, 'a.txt'), 'body of a.txt');
+      download('a.txt', path.join(dir, 'a.txt'));
+    }, budget(1_000));
+    expect(saved.map((file) => readFileSync(file.absolutePath, 'utf8'))).toEqual(['body of a.txt']);
+  });
+
+  it('refuses, by the provider, a download its browser saved on another machine', async () => {
+    local = attemptDownloads(UNSERVED);
+    const wait = local.save(1, async () => download('a.txt', '/remote/downloads/a.txt'), budget(1_000));
+    await expect(wait).rejects.toMatchObject({
+      code: 'UNSUPPORTED_CAPABILITY',
+      message: 'download a.txt is not on this machine: browser provider "toy" serves no downloads',
+    });
+    expect(kept()).toEqual([]);
+  });
+
+  it('names the provider when a download it does not serve was canceled', async () => {
+    local = attemptDownloads(UNSERVED);
+    const wait = local.save(1, async () => {
+      const navigation = navigationInfo('tab', 'http://app.test/a.txt');
+      fake.emit('browsingContext.downloadWillBegin', { ...navigation, download: 'a.txt', suggestedFilename: 'a.txt' });
+      fake.emit('browsingContext.downloadEnd', { ...navigation, download: 'a.txt', status: 'canceled' });
+    }, budget(1_000));
+    await expect(wait).rejects.toMatchObject({
+      code: 'ACTION_FAILED',
+      message: 'download a.txt was canceled; if the browser runs on another machine: browser provider "toy" serves no downloads',
+    });
+  });
+
   it('keeps nothing when its provider fails to read a later download back', async () => {
     const reads: string[] = [];
     const downloads = attemptDownloads({

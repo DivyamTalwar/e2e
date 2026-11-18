@@ -418,10 +418,11 @@ downloads this way. A service that stores downloads by name rather than by
 path finds the file by `context.suggestedFilename`, the name the site
 suggested, as [Notte](/integrations/notte#downloads) does.
 
-Without `downloads`, `browser.waitForDownload` throws
-`UNSUPPORTED_CAPABILITY`, naming the provider. `setInputFiles` on a
-provider's browser sends the files' bytes to the page, up to 50 MB in all; a
-directory throws `UNSUPPORTED_CAPABILITY`.
+Without `downloads`, a download on a browser on another machine throws
+`UNSUPPORTED_CAPABILITY`, naming the provider. A provider whose browsers run
+on the runner's machine needs nothing. `setInputFiles` on a provider's
+browser sends the files' bytes to the page, up to 50 MB in all; a directory
+throws `UNSUPPORTED_CAPABILITY`.
 
 ### Recording on the provider
 

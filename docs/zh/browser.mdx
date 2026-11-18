@@ -335,7 +335,7 @@ export default {
 
 实现 `downloads` 后，`browser.waitForDownload` 的用法就与本地相同。托管浏览器将下载文件保存到自己的磁盘上，运行器无法直接打开。设置 `downloads` 后，它会将下载文件保存到 `dir` 中，引擎再把每个下载完成的文件路径传给 `read`。`read` 通过服务的文件 API 获取字节数据。[Kernel](/integrations/kernel#downloads)、[smol machines](/integrations/smol) 和 [E2B](/integrations/e2b) 就以这种方式提供下载。按名称而非路径存储下载文件的服务，则通过 `context.suggestedFilename`（即网站建议的文件名）查找文件，[Notte](/integrations/notte#downloads) 就是如此。
 
-未实现 `downloads` 时，`browser.waitForDownload` 会抛出 `UNSUPPORTED_CAPABILITY`，并注明提供方名称。在提供方的浏览器上，`setInputFiles` 会将文件的字节数据发送到页面，总计最多 50 MB；传入目录会抛出 `UNSUPPORTED_CAPABILITY`。
+未实现 `downloads` 时，在另一台机器的浏览器上下载会抛出 `UNSUPPORTED_CAPABILITY`，并注明提供方名称。如果提供方的浏览器运行在运行器所在机器上，则无需额外实现。在提供方的浏览器上，`setInputFiles` 会将文件的字节数据发送到页面，总计最多 50 MB；传入目录会抛出 `UNSUPPORTED_CAPABILITY`。
 
 ### 提供方上的录制
 
