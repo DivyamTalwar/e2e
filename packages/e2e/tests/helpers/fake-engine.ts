@@ -162,6 +162,8 @@ export interface FakeEngineBehavior {
   fixtures?: boolean;
   /** The platform the engine declares; default none, so its target names one. */
   platform?: string;
+  /** Declares that its state outlives an attempt, as a device's does: `gadget`, `app`, and `screen` become worker fixtures. */
+  isolation?: 'attempt' | 'worker';
   /** The secrets the engine declares, which `onStartAttempt` may resolve through its context. */
   secrets?: readonly Secret[];
 }
@@ -362,6 +364,7 @@ export function createFakeEngine(behavior: FakeEngineBehavior = {}): FakeEngineH
       await behavior.perform?.(ref, action, operation, current);
     },
     ...(behavior.tapModifiers === undefined ? {} : { tapModifiers: behavior.tapModifiers }),
+    ...(behavior.isolation === undefined ? {} : { isolation: behavior.isolation }),
     ...(behavior.pointerActions === undefined
       ? {}
       : {
