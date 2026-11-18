@@ -315,6 +315,27 @@ describe('AttemptNetwork', () => {
     expect(fake.commands('network.removeIntercept').filter((command) => command.params['intercept'] === 'global').length).toBeGreaterThanOrEqual(2);
   });
 
+  it('binds nothing for an attempt that ended while the old user context was released', async () => {
+    const fake = new FakeBidi();
+    const { net, open } = network(fake, { headers: true, exclusive: true });
+    fake.on('network.addIntercept', { result: { intercept: 'global' } });
+    await net.bind('user-1');
+    await open('tab');
+    const added = fake.commands('network.addIntercept').length;
+    const { held: whenLetGo, release: letGo } = gate();
+    fake.on('network.removeIntercept', async () => {
+      await whenLetGo;
+      return { result: {} };
+    });
+    const rebound = net.bind('user-2');
+    await settle();
+    const disposed = net.dispose();
+    letGo();
+    await Promise.all([rebound, disposed]);
+    expect(added).toBeGreaterThan(0);
+    expect(fake.commands('network.addIntercept')).toHaveLength(added);
+  });
+
   it('binds the new user context with what the attempt needs when a removal for the old one failed, and still reports the removal', async () => {
     const fake = new FakeBidi();
     const { net } = network(fake, { headers: true, exclusive: true });

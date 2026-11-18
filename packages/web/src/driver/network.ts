@@ -24,6 +24,8 @@ export class AttemptNetwork {
   private unreleased: (() => Promise<unknown>)[] = [];
   /** Serializes changes to the intercepts and subscriptions, which each take round trips. */
   private changes: Promise<void> = Promise.resolve();
+  /** Whether the attempt's network ended (`dispose`). */
+  private disposed = false;
 
   constructor(
     private readonly connection: BidiConnection,
@@ -61,8 +63,11 @@ export class AttemptNetwork {
       try {
         await this.release(old);
       } finally {
-        this.binding = new NetworkBinding(this.connection, userContext, this.options, this.routes);
-        await this.reconcile();
+        // An attempt that ended while the old binding was released binds no new one, which nothing would ever release.
+        if (!this.disposed) {
+          this.binding = new NetworkBinding(this.connection, userContext, this.options, this.routes);
+          await this.reconcile();
+        }
       }
     });
   }
@@ -211,6 +216,7 @@ export class AttemptNetwork {
 
   /** Ends the attempt's network: listeners, pending response waits, routes, intercepts, collectors, and subscription. */
   async dispose(): Promise<void> {
+    this.disposed = true;
     const binding = this.binding;
     this.binding = undefined;
     binding?.close();
