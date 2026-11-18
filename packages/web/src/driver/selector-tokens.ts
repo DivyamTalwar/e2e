@@ -5,7 +5,7 @@
  * hex escape's terminating space never reads as a separator.
  */
 
-import type { CssCombinator, CssStep } from '../in-page/select-chain.ts';
+import type { CssCombinator, CssNested, CssStep } from '../in-page/select-chain.ts';
 
 /** One lexical unit of a selector, with its source text. */
 export type SelectorToken =
@@ -151,21 +151,59 @@ export function chainParts(selector: string): SelectorPart[] {
   return parts;
 }
 
+/** The pseudo-classes whose arguments are selectors, by the name the page matches each under: `:where()` reads as `:is()`. */
+const NESTED = /:(is|where|not|has)$/i;
+
+/**
+ * The selectors a pseudo-class takes, from its parenthesized group; undefined
+ * for one the page leaves to the browser: an argument that starts at a
+ * sibling (`:has(+ p)`), whose scope the chain does not search, or a group
+ * with no closing parenthesis. A `:has()` argument that starts with `>`
+ * starts at a `:scope` compound.
+ */
+function nestedChains(name: CssNested['name'], group: string): CssStep[][] | undefined {
+  if (!group.endsWith(')') || group.length < 2) return undefined;
+  const chains: CssStep[][] = [];
+  let current: SelectorToken[] = [];
+  const tokens = tokenizeSelector(group.slice(1, -1));
+  for (const token of [...tokens, { kind: 'comma', text: ',' } as const]) {
+    if (token.kind !== 'comma') {
+      current.push(token);
+      continue;
+    }
+    const leading = current.find((each) => each.kind !== 'whitespace');
+    if (leading?.kind === 'combinator' && (name !== 'has' || leading.text !== '>')) return undefined;
+    const [chain] = cssChains(`${leading?.kind === 'combinator' ? ':scope ' : ''}${current.map((each) => each.text).join('')}`);
+    if (chain === undefined || chain.length === 0) return undefined;
+    chains.push(chain);
+    current = [];
+  }
+  return chains;
+}
+
 /**
  * A CSS selector list as complex selectors, each its compounds in order with
  * the combinator before each one. Escapes, strings, and groups stay inside
  * their compound, so each compound is source text the browser's `matches`
- * reads as written.
+ * reads as written. A compound with `:is()`, `:where()`, `:not()`, or
+ * `:has()` also carries their selectors apart from the rest of it
+ * (`CssStep`), for the page to match them through shadow roots.
  */
 export function cssChains(selector: string): CssStep[][] {
   const chains: CssStep[][] = [[]];
   let compound = '';
+  let plain = '';
+  let nested: CssNested[] = [];
   let combinator: CssCombinator | null = null;
+  let previous: SelectorToken | undefined;
   const flush = (): void => {
     if (compound === '') return;
     const chain = chains[chains.length - 1]!;
-    chain.push({ compound, combinator: chain.length === 0 ? null : (combinator ?? ' ') });
+    const joined = { compound, combinator: chain.length === 0 ? null : (combinator ?? ' ') };
+    chain.push(nested.length === 0 ? joined : { ...joined, plain: plain === '' ? '*' : plain, nested });
     compound = '';
+    plain = '';
+    nested = [];
     combinator = null;
   };
   for (const token of tokenizeSelector(selector)) {
@@ -182,9 +220,20 @@ export function cssChains(selector: string): CssStep[][] {
         chains.push([]);
         combinator = null;
         break;
-      default:
+      default: {
         compound += token.text;
+        const name = token.kind === 'group' && token.text.startsWith('(') && previous?.kind === 'text' ? NESTED.exec(previous.text)?.[1]?.toLowerCase() : undefined;
+        const kind = name === 'where' ? 'is' : (name as CssNested['name'] | undefined);
+        const inner = kind === undefined ? undefined : nestedChains(kind, token.text);
+        if (kind === undefined || inner === undefined) {
+          plain += token.text;
+        } else {
+          plain = plain.slice(0, plain.length - name!.length - 1);
+          nested.push({ name: kind, chains: inner });
+        }
+      }
     }
+    previous = token;
   }
   flush();
   return chains;

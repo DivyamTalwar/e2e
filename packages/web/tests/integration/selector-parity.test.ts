@@ -20,6 +20,10 @@ import { bySelector, startWebSession } from '../helpers/web-session.ts';
 
 const SHADOW = `<p class="x"><div id="host"></div></p><script>document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = '<section class="in"><span class="inner">S</span><button>Shadow</button></section>';</script>`;
 
+/** A section whose button and tag are in its open shadow root, beside a section and an article with none. */
+const SHADOW_HOSTS = `<section id="host"></section><section id="plain"><p>None</p></section><article><i>x</i></article>
+<script>document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML = '<div><button>Save</button><span class="tag">T</span></div>';</script>`;
+
 /** Pages, and for each, selectors with the number of elements Playwright 1.64.1 matches. */
 const CASES: readonly (readonly [string, Readonly<Record<string, number>>])[] = [
   ['<main class="card"><article><button>X</button></article></main>', {
@@ -50,6 +54,27 @@ const CASES: readonly (readonly [string, Readonly<Record<string, number>>])[] = 
     '//button': 2,
     'section >> xpath=..': 1,
     'section >> xpath=//section': 0,
+  }],
+  // A selector inside a pseudo-class crosses a shadow root as a descendant combinator does.
+  [SHADOW_HOSTS, {
+    'section:has(button)': 1,
+    ':is(section button)': 1,
+    'section:not(:has(button))': 1,
+    '#host button': 1,
+    'section:has(> div)': 1,
+    'section:has(div > button)': 1,
+    ':where(#host .tag)': 1,
+    'section:is(:has(.tag), .nope)': 1,
+    'button:not(section button)': 0,
+    'section:has(button):not(#plain)': 1,
+    'body :is(div, p)': 2,
+    'section:not(:has(p))': 1,
+    'section:has(button) >> span': 1,
+    'section >> :is(div button)': 1,
+    '#host >> :has(> button)': 1,
+    'section:has(p, button)': 2,
+    ':not(:has(*))': 6,
+    'section:has(+ section)': 1,
   }],
   [SHADOW, {
     'p .inner': 0,

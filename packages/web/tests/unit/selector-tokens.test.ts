@@ -92,8 +92,35 @@ describe('cssChains', () => {
       { compound: 'd', combinator: '+' },
       { compound: 'e', combinator: '~' },
     ]]);
-    expect(cssChains(' a, b:is(c, d > e) ')).toEqual([[{ compound: 'a', combinator: null }], [{ compound: 'b:is(c, d > e)', combinator: null }]]);
+    expect(cssChains(' a, b:nth-child(2n of c, d > e) ')).toEqual([[{ compound: 'a', combinator: null }], [{ compound: 'b:nth-child(2n of c, d > e)', combinator: null }]]);
     expect(cssChains('li:nth-child(2n+1)[data-x~="y z"]')).toEqual([[{ compound: 'li:nth-child(2n+1)[data-x~="y z"]', combinator: null }]]);
+  });
+
+  it('carries the selectors of :is(), :where(), :not(), and :has() apart from the rest of their compound', () => {
+    expect(cssChains('b:is(c, d > e)')).toEqual([[{
+      compound: 'b:is(c, d > e)', combinator: null, plain: 'b',
+      nested: [{ name: 'is', chains: [[{ compound: 'c', combinator: null }], [{ compound: 'd', combinator: null }, { compound: 'e', combinator: '>' }]] }],
+    }]]);
+    expect(cssChains('a :WHERE(.x)[y]:not(.z)')).toEqual([[
+      { compound: 'a', combinator: null },
+      { compound: ':WHERE(.x)[y]:not(.z)', combinator: ' ', plain: '[y]', nested: [{ name: 'is', chains: [[{ compound: '.x', combinator: null }]] }, { name: 'not', chains: [[{ compound: '.z', combinator: null }]] }] },
+    ]]);
+    expect(cssChains(':has(> i, u)')).toEqual([[{
+      compound: ':has(> i, u)', combinator: null, plain: '*',
+      nested: [{ name: 'has', chains: [[{ compound: ':scope', combinator: null }, { compound: 'i', combinator: '>' }], [{ compound: 'u', combinator: null }]] }],
+    }]]);
+    expect(cssChains('s:not(:has(b))')).toEqual([[{
+      compound: 's:not(:has(b))', combinator: null, plain: 's',
+      nested: [{ name: 'not', chains: [[{ compound: ':has(b)', combinator: null, plain: '*', nested: [{ name: 'has', chains: [[{ compound: 'b', combinator: null }]] }] }]] }],
+    }]]);
+  });
+
+  it('leaves to the browser a pseudo-class it cannot match itself', () => {
+    expect(cssChains('s:has(+ p)')).toEqual([[{ compound: 's:has(+ p)', combinator: null }]]);
+    expect(cssChains('s:is(> p)')).toEqual([[{ compound: 's:is(> p)', combinator: null }]]);
+    expect(cssChains('s:is(a')).toEqual([[{ compound: 's:is(a', combinator: null }]]);
+    expect(cssChains('s:is()')).toEqual([[{ compound: 's:is()', combinator: null }]]);
+    expect(cssChains('.a\\:is(b)')).toEqual([[{ compound: '.a\\:is(b)', combinator: null }]]);
   });
 
   it('keeps escaped combinators, commas, and whitespace inside their compound', () => {
