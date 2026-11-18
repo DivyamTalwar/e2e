@@ -15,6 +15,8 @@
 
 [e2e](https://e2e.com?utm_source=e2e&utm_medium=github&utm_campaign=readme_intro) is an end-to-end testing framework for web and mobile apps. Describe a goal in natural language and an agent drives the app to reach it. Check the result with locators and assertions in the same test.
 
+<a href="https://e2e.com/docs/mobile?utm_source=e2e&utm_medium=github&utm_campaign=readme_demo#several-devices"><img src="./.github/assets/readme-demo.gif" alt="One e2e test suite runs on web, iOS, and Android at the same time, with each test's agent steps and replays streaming in the terminal" width="100%" /></a>
+
 ```ts
 // tests/checkout.e2e.ts
 import { test, expect } from 'e2e';
