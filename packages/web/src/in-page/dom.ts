@@ -403,6 +403,16 @@ export function createDom(key: string) {
     return active === element || ((element as HTMLElement).isContentEditable && active !== null && active.contains(element));
   };
 
+  /**
+   * The control an edit of `element` goes to, as Playwright retargets one: a
+   * label, or an element inside one that is no control itself, stands for
+   * the label's control.
+   */
+  const control = (element: Element): Element => {
+    if (element.matches('a, input, textarea, button, select, [role=link], [role=button], [role=checkbox], [role=radio]') || (element as HTMLElement).isContentEditable) return element;
+    return element.closest('label')?.control ?? element;
+  };
+
   /** Where `keepEvent` keeps the page's own `Event` constructor for `fireEdit`. */
   const eventKey = 'e2e.bidi.Event';
 
@@ -436,7 +446,7 @@ export function createDom(key: string) {
     setter?.call(element, state);
   };
 
-  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, inTopLayer, clippers, clipped, visibleArea, scrollIfClipped, alignment, landOnPixels, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, keepEvent, fireEdit, setState };
+  return { shadowOf, roots, parentOrHostOf, parentOf, turned, rectsOf, boxOf, viewport, scrollTarget, inTopLayer, clippers, clipped, visibleArea, scrollIfClipped, alignment, landOnPixels, shown, still, pointerTarget, hitAt, reaches, interceptedBy, activeElement, focus, control, keepEvent, fireEdit, setState };
 }
 
 /** The shared DOM helpers, as a page function takes them. */

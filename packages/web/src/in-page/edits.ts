@@ -29,18 +29,20 @@ export function holdsFocus(): boolean {
 
 /**
  * A checkable's state and kind, as Playwright reads it: a checkable role
- * without `aria-checked` is unchecked. Refused for an element with no
- * checked state.
+ * without `aria-checked` is unchecked, and a label answers for its control
+ * (`dom.control`), which a click on the label changes. Refused for an
+ * element with no checked state.
  */
-export function checkState(element: Element): Outcome<{ checked: boolean; radio: 'native' | 'aria' | null }> {
-  if (!element.isConnected) return { kind: 'detached' };
+export const checkState = withDom((dom, target: Element): Outcome<{ checked: boolean; radio: 'native' | 'aria' | null }> => {
+  if (!target.isConnected) return { kind: 'detached' };
+  const element = dom.control(target);
   const role = (element.getAttribute('role') ?? '').trim().split(/\s+/)[0] ?? '';
   const input = element.nodeName === 'INPUT' ? (element as HTMLInputElement) : null;
   const radio = input?.type === 'radio' ? 'native' : role === 'radio' || role === 'menuitemradio' ? 'aria' : null;
   if (input !== null && (input.type === 'checkbox' || input.type === 'radio')) return { kind: 'ok', checked: input.checked, radio };
   if (['checkbox', 'menuitemcheckbox', 'option', 'radio', 'switch', 'menuitemradio', 'treeitem'].includes(role)) return { kind: 'ok', checked: element.getAttribute('aria-checked') === 'true', radio };
   return { kind: 'refused', reason: 'Not a checkbox or radio button' };
-}
+});
 
 /**
  * Fills an element as Playwright's `fill` does, with no key events: a text
@@ -57,11 +59,13 @@ export function checkState(element: Element): Outcome<{ checked: boolean; radio:
  * stays as the app's handlers left it; only an edit the browser did not
  * perform is made through the same setter, with `input` and `change`.
  * Nothing changes until the element proved editable and took focus, and
- * nothing of an element out of the document. Not yet while the field is
- * disabled or read-only; refused for what no fill can do.
+ * nothing of an element out of the document. A label is filled as its
+ * control (`dom.control`). Not yet while the field is disabled or
+ * read-only; refused for what no fill can do.
  */
-export const fill = withDom((dom, element: Element, value: string): Outcome => {
-  if (!element.isConnected) return { kind: 'detached' };
+export const fill = withDom((dom, target: Element, value: string): Outcome => {
+  if (!target.isConnected) return { kind: 'detached' };
+  const element = dom.control(target);
   const typed = ['', 'text', 'password', 'search', 'email', 'tel', 'url', 'number'];
   const unfocused: Outcome<never> = { kind: 'refused', reason: 'element could not be focused' };
   const field = element.nodeName === 'INPUT' || element.nodeName === 'TEXTAREA' ? (element as HTMLInputElement | HTMLTextAreaElement) : null;
@@ -112,22 +116,25 @@ export interface OptionChoice {
 }
 
 /**
- * Selects the option of a `<select>` matching `by`, each option's state set
- * through its own setter (`dom.setState`), and fires `input` and `change`,
- * as Playwright's `selectOption` does. Nothing of an element out
+ * Selects the option of a `<select>`, or of the one a label names
+ * (`dom.control`), matching `by`, each option's state set through its own
+ * setter (`dom.setState`), and fires `input` and `change`, as Playwright's
+ * `selectOption` does. An option's label is the one the list shows: its
+ * `label` attribute, or its text without one. Nothing of an element out
  * of the document changes. Not yet while the select or the option is
  * disabled, or no option matches; refused for an element that is no
  * `<select>`.
  */
-export const selectOption = withDom((dom, element: Element, by: OptionChoice): Outcome => {
-  if (!element.isConnected) return { kind: 'detached' };
+export const selectOption = withDom((dom, target: Element, by: OptionChoice): Outcome => {
+  if (!target.isConnected) return { kind: 'detached' };
+  const element = dom.control(target);
   if (element.nodeName !== 'SELECT') return { kind: 'refused', reason: 'Element is not a <select> element' };
   const select = element as HTMLSelectElement;
   if (select.disabled) return { kind: 'not-yet', reason: 'element is not enabled' };
   const options = [...select.options];
   const option = by.index !== undefined ? options[by.index]
     : by.value !== undefined ? options.find((each) => each.value === by.value)
-    : options.find((each) => each.label === by.label || each.textContent?.trim() === by.label);
+    : options.find((each) => each.label === by.label);
   if (option === undefined) return { kind: 'not-yet', reason: 'no option matches' };
   if (option.disabled || option.closest('optgroup')?.disabled === true) return { kind: 'not-yet', reason: 'option being selected is not enabled' };
   select.focus();
