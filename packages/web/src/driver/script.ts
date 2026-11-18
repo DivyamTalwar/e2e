@@ -53,6 +53,8 @@ export interface CallOptions {
   readonly maxObjectDepth?: number | null;
   /** A sandbox realm of the document to run in instead of its main world, out of reach of the page's scripts. */
   readonly sandbox?: string;
+  /** Whether the document counts the call as a user's gesture, as it does a key or a click: what a page asks for before it opens a window, writes the clipboard or asks to confirm leaving. */
+  readonly userActivation?: boolean;
 }
 
 /**
@@ -80,6 +82,7 @@ export async function callFunction(
     arguments: args.map(toLocalValue),
     awaitPromise: options.awaitPromise ?? false,
     resultOwnership: 'none',
+    ...(options.userActivation === true ? { userActivation: true } : {}),
     serializationOptions: { maxDomDepth: 0, maxObjectDepth: options.maxObjectDepth === undefined ? 2 : options.maxObjectDepth, includeShadowTree: 'none' },
   }).catch((cause: unknown) => {
     throw nodes.length > 0 && cause instanceof BidiError && UNPASSED_NODE.test(cause.detail) ? foreign() : cause;

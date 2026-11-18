@@ -115,7 +115,7 @@ export class BidiSession {
   ) {
     this.artifacts = new ArtifactPaths(attempt.artifactsDir);
     this.log = new AttemptLog(browser.connection, browser.traits);
-    this.page = new PageCalls(browser.connection, () => this.requireContext());
+    this.page = new PageCalls(browser.connection, () => this.requireContext(), browser.traits);
     this.viewport = settings.viewport;
     this.windows = new TabWindows(browser.connection);
     this.input = new BidiInput({ connection: browser.connection, traits: browser.traits, context: () => this.requireContext(), viewport: () => this.viewportSize() });

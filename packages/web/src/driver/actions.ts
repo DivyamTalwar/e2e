@@ -96,7 +96,7 @@ export async function perform(session: BidiSession, ref: NodeRef, action: Locato
     case 'selectOption': {
       const by = typeof action.value === 'string' ? { label: action.value } : action.value;
       await waitVisibleEnabled(session, target, deadline, signal);
-      return mutateWhenReady(session, target, deadline, signal, 'selectOption: ', () => session.page.run(selectOption, [target.element, by], target.context));
+      return mutateWhenReady(session, target, deadline, signal, 'selectOption: ', () => session.page.act(selectOption, [target.element, by], target.context));
     }
     case 'setInputFiles':
       return setInputFiles(session, target, action.paths, deadline, signal);
@@ -451,7 +451,7 @@ function pointerAim(session: BidiSession, target: NodeTarget, enabled: boolean, 
 /** Replaces the field's content with `value` in one edit, as a paste would, once it is visible, enabled, and editable (not still, nor in view: no pointer is involved); see the page's `fill`. */
 async function fill(session: BidiSession, target: NodeTarget, value: string, deadline: Deadline, signal: AbortSignal): Promise<void> {
   await waitVisibleEnabled(session, target, deadline, signal);
-  return mutateWhenReady(session, target, deadline, signal, '', () => session.page.run(fillElement, [target.element, value], target.context));
+  return mutateWhenReady(session, target, deadline, signal, '', () => session.page.act(fillElement, [target.element, value], target.context));
 }
 
 /**
@@ -556,8 +556,12 @@ async function setInputFiles(session: BidiSession, target: NodeTarget, paths: re
     if (files.length > 1 && !takes.multiple) throw new TestError('INVALID_ARGUMENT', 'Non-multiple file input can only accept single file');
     signal.throwIfAborted();
     session.input.mutated();
-    if (remote === undefined) await connection.send('input.setFiles', { context, element: { sharedId: element.sharedId }, files });
-    else await session.page.run(setFileBytes, [element, remote], context);
+    if (remote === undefined) {
+      await session.page.userActs(context);
+      await connection.send('input.setFiles', { context, element: { sharedId: element.sharedId }, files });
+    } else {
+      await session.page.act(setFileBytes, [element, remote], context);
+    }
   };
   const input = await session.page.run(fileInput, [target.element], target.context);
   if (input instanceof ElementRef) {

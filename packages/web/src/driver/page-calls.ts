@@ -8,6 +8,7 @@
  */
 
 import { TestError } from '@e2e-dev/core/engine';
+import type { BrowserTraits } from '../browsers.ts';
 import { ScriptError } from '../errors.ts';
 import type { ReaderName, Readers } from '../in-page/create-readers.ts';
 import { readerCall, readerInstallCall, READERS_MISSING } from '../in-page/readers.ts';
@@ -32,7 +33,11 @@ export class PageCalls {
   constructor(
     private readonly connection: BidiConnection,
     private readonly shown: () => string,
+    private readonly traits: Pick<BrowserTraits, 'activationIsRealmState'>,
   ) {}
+
+  /** How many times `userActs` ran, which names the realm of each one where the browser needs a realm per activation. */
+  private activations = 0;
 
   /** Calls a page function in `context` (the tab by default). */
   call(declaration: string, args: readonly PageArgument[], options: CallOptions, context?: string): Promise<PageValue> {
@@ -47,6 +52,28 @@ export class PageCalls {
   async run<F extends TypedPageFunction>(fn: F, args: Wire<Parameters<F>> & readonly PageArgument[], context?: string): Promise<Wire<Awaited<ReturnType<F>>>> {
     const value = await callFunction(this.connection, context ?? this.shown(), fn, args, { awaitPromise: true, maxObjectDepth: null });
     return value as Wire<Awaited<ReturnType<F>>>;
+  }
+
+  /**
+   * Runs a typed page function that edits the page for the user (a fill, a
+   * choice of option), like `run`. The document counts it as the user's
+   * gesture, as it counts the keys and clicks a person would make the same
+   * edit with.
+   */
+  async act<F extends TypedPageFunction>(fn: F, args: Wire<Parameters<F>> & readonly PageArgument[], context?: string): Promise<Wire<Awaited<ReturnType<F>>>> {
+    if (this.traits.activationIsRealmState) {
+      await this.userActs(context);
+      return this.run(fn, args, context);
+    }
+    const value = await callFunction(this.connection, context ?? this.shown(), fn, args, { awaitPromise: true, maxObjectDepth: null, userActivation: true });
+    return value as Wire<Awaited<ReturnType<F>>>;
+  }
+
+  /** Tells the document in `context` (the tab's by default) that its user acts now, for an edit no page function makes (`input.setFiles`). */
+  async userActs(context?: string): Promise<void> {
+    this.activations += 1;
+    const sandbox = this.traits.activationIsRealmState ? { sandbox: `e2e-user-acts-${String(this.activations)}` } : {};
+    await callFunction(this.connection, context ?? this.shown(), '() => undefined', [], { ...sandbox, userActivation: true });
   }
 
   /** Calls the document's reader `name` in `context` (the tab by default) and reads its answer whole. */

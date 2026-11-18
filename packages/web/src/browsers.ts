@@ -73,6 +73,15 @@ export interface BrowserTraits {
    */
   readonly resendsPageCalls: boolean;
   /**
+   * Whether a page call's `userActivation` is kept as the state of the realm
+   * it ran in, not as the call's own. Firefox 159 does that, and takes the
+   * document's activation back at the realm's next call without it, so an
+   * edit's activation would end with the next read (fixed by Firefox bug
+   * 2084107). A call in a sandbox realm of its own activates the document
+   * and is never followed by one there.
+   */
+  readonly activationIsRealmState: boolean;
+  /**
    * How a tab's page comes to hold focus whatever window the system shows
    * in front of the browser. `emulated`: each tab is told to behave as
    * focused (CDP `Emulation.setFocusEmulationEnabled`), so every tab of the
@@ -113,6 +122,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     pointerWaitsForFrame: false,
     windowClipsViewport: false,
     resendsPageCalls: false,
+    activationIsRealmState: false,
     focus: 'emulated',
     appLog: 'cdp',
     permissions: [
@@ -135,6 +145,7 @@ export const BROWSER_TRAITS: Readonly<Record<BrowserName, BrowserTraits>> = {
     pointerWaitsForFrame: true,
     windowClipsViewport: true,
     resendsPageCalls: true,
+    activationIsRealmState: true,
     focus: 'front-tab',
     appLog: 'bidi',
     permissions: ['geolocation', 'local-network-access', 'notifications', 'persistent-storage', 'push', 'screen-wake-lock'],
