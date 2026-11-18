@@ -93,6 +93,13 @@ describe('setCookieOf', () => {
     expect(setCookieOf('sid=x; Domain=.app.test', new URL('https://api.app.test/'))).toMatchObject({ domain: '.app.test' });
   });
 
+  it('stores a cookie with a Domain for every host under it, and one without for its host alone', () => {
+    expect(setCookieOf('sid=x; Domain=app.test', new URL('https://app.test/'))).toMatchObject({ domain: '.app.test' });
+    expect(setCookieOf('sid=x; Domain=APP.test', new URL('https://api.app.test/'))).toMatchObject({ domain: '.app.test' });
+    expect(setCookieOf('sid=x; Domain=', new URL('https://app.test/'))).toMatchObject({ domain: 'app.test' });
+    expect(setCookieOf('sid=x', new URL('https://app.test/'))).toMatchObject({ domain: 'app.test' });
+  });
+
   it('skips a header with no name', () => {
     expect(setCookieOf('=orphan', url)).toBeUndefined();
     expect(setCookieOf('novalue', url)).toBeUndefined();

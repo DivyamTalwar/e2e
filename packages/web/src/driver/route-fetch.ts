@@ -65,7 +65,9 @@ function defaultCookiePath(url: URL): string {
 /**
  * One `Set-Cookie` header of a response from `url` as a cookie to store;
  * undefined for one with no name, or with a `Domain` the response's host does
- * not belong to, which a browser would refuse too.
+ * not belong to, which a browser would refuse too. A cookie with a `Domain`
+ * is for that domain and every host under it, which the jar reads from a
+ * leading dot; one without is for the response's host alone.
  */
 export function setCookieOf(header: string, url: URL): Storage.PartialCookie | undefined {
   const [pair = '', ...attributes] = header.split(';');
@@ -88,7 +90,7 @@ export function setCookieOf(header: string, url: URL): Storage.PartialCookie | u
   return {
     name,
     value: { type: 'string', value: pair.slice(split + 1).trim() },
-    domain: domain === '' ? url.hostname : domain,
+    domain: bare === '' ? url.hostname : `.${bare}`,
     path: path.startsWith('/') ? path : defaultCookiePath(url),
     ...(attribute.has('secure') ? { secure: true } : {}),
     ...(attribute.has('httponly') ? { httpOnly: true } : {}),
