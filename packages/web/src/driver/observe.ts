@@ -26,7 +26,7 @@ import { SECURE_FIELD_SELECTOR, type RawNodeData, type RawObservedNode } from '.
 import { abortError, isStale, releaseQuietly, unlessStale } from '../errors.ts';
 import { childDocuments, inViewport, pageParts, placeInFrame, resolveFrames, scriptedContexts, splitFrames, unparsedSelector, type FramedDocument, type NodeTarget } from './frames.ts';
 import { computedStyle, domReady } from '../in-page/document.ts';
-import { maskSecureFields, unmaskSecureFields } from '../in-page/mask.ts';
+import { maskSecureFields, unmaskSecureFields, type AnimationStop } from '../in-page/mask.ts';
 import type { FrameBox } from '../in-page/create-readers.ts';
 import type { PagePart } from '../in-page/select-chain.ts';
 import type { BidiSession } from './session.ts';
@@ -78,7 +78,7 @@ export async function observe(session: BidiSession, timeoutMs: number, signal: A
     session.refs.clear();
     const remaining = AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, deadline - Date.now()))]);
     const fallbackViewport = await session.viewportSize();
-    const pixels = await maskedPixels(session, fallbackViewport, remaining).catch(() => {
+    const pixels = await maskedPixels(session, fallbackViewport, remaining, 'finish').catch(() => {
       throw cause;
     });
     return {
@@ -104,7 +104,7 @@ async function observeTree(
 ): Promise<EngineSnapshot> {
   const captured = await captureTree(session, context, [], MAX_OBSERVED_NODES, deadline);
   if (signal.aborted) throw abortError(signal, 'observe');
-  const pixels = options?.pixels === true ? await maskedPixels(session, viewport, signal).then((value) => value, () => undefined) : undefined;
+  const pixels = options?.pixels === true ? await maskedPixels(session, viewport, signal, 'finish').then((value) => value, () => undefined) : undefined;
   if (signal.aborted) throw abortError(signal, 'observe');
   session.refs.publish(captured.generation);
   return {
@@ -272,17 +272,20 @@ async function captureTree(session: BidiSession, context: string, framePath: rea
 
 /**
  * A viewport screenshot with every secure field in every document covered,
- * the caret hidden, and animations stopped (`maskSecureFields`). The capture
+ * the caret hidden, and animations stopped as `animations` says
+ * (`maskSecureFields`): an observation's pixels show them where they come to
+ * rest, so two reads of a page compare, and a screenshot kept as evidence
+ * holds them where they are, so taking one changes nothing. The capture
  * fails open nowhere: a document that cannot be masked, a frame that
  * appeared or went away, a field that moved while the screenshot was taken,
  * or a capture the browser failed because its document was replaced under
  * it fails it as `NODE_STALE`, retried on a settled page, and any other
  * failure fails it outright.
  */
-export async function maskedPixels(session: BidiSession, viewport: ViewportSize, signal: AbortSignal): Promise<{ pixels: ObservationPixels; maskedRegionCount: number }> {
+export async function maskedPixels(session: BidiSession, viewport: ViewportSize, signal: AbortSignal, animations: AnimationStop): Promise<{ pixels: ObservationPixels; maskedRegionCount: number }> {
   for (;;) {
     try {
-      return await maskedCapture(session, viewport);
+      return await maskedCapture(session, viewport, animations);
     } catch (cause) {
       if (!isStale(cause)) throw cause;
       if (signal.aborted) throw cause;
@@ -308,7 +311,7 @@ const RECAPTURE_MS = 50;
  * cannot be masked, every other is answered and has its mask taken off
  * before that failure, the first in document order, fails the capture.
  */
-async function maskedCapture(session: BidiSession, viewport: ViewportSize): Promise<{ pixels: ObservationPixels; maskedRegionCount: number }> {
+async function maskedCapture(session: BidiSession, viewport: ViewportSize, animations: AnimationStop): Promise<{ pixels: ObservationPixels; maskedRegionCount: number }> {
   const context = session.requireContext();
   const documents = await session.documentContexts(context);
   const masked: string[] = [];
@@ -326,7 +329,7 @@ async function maskedCapture(session: BidiSession, viewport: ViewportSize): Prom
   try {
     const scripted = await scriptedContexts(session.connection, documents);
     const bare = documents.filter((each) => !scripted.includes(each));
-    const masks = await Promise.allSettled(scripted.map((each) => session.page.run(maskSecureFields, [SECURE_FIELD_SELECTOR, token], each)));
+    const masks = await Promise.allSettled(scripted.map((each) => session.page.run(maskSecureFields, [SECURE_FIELD_SELECTOR, token, animations], each)));
     let count = 0;
     masks.forEach((mask, index) => {
       if (mask.status !== 'fulfilled') return;

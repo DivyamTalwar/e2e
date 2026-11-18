@@ -62,6 +62,12 @@ function blinkTime(): number {
   return animation === undefined ? -1 : Number(animation.currentTime);
 }
 
+/** The blink animation's play state; `none` while the block has none. Runs in the page. */
+function blinkState(): string {
+  const stage: () => Document | ShadowRoot = Reflect.get(window, 'stage');
+  return stage().getElementById('blink')!.getAnimations()[0]?.playState ?? 'none';
+}
+
 /** Starts the slide's move and records the stage's `transitionend`s; answers how far the block has moved, in pixels. Runs in the page. */
 function startSlide(): number {
   const stage: () => Document | ShadowRoot = Reflect.get(window, 'stage');
@@ -144,23 +150,74 @@ describe.each(PLACES)('in %s', (_place, page) => {
   });
 });
 
-it('takes an artifact screenshot with the same animations stopped', async () => {
+it('takes an artifact screenshot with every animation held where it is, and each goes on afterwards', async () => {
   await session.setContent(PLACES[0]![1]);
   expect(await session.browser.evaluate(startSlide)).toBeLessThan(1);
-
-  const image = await screenshot('stopped');
-
-  expect(image.pixelAt(20, 20)).toEqual(GREEN);
-  expect(image.pixelAt(220, 60)).toEqual(BLACK);
-  await expectBlinkRuns();
-});
-
-it('plays a cancelled animation again when the capture fails', async () => {
-  await session.setContent(PLACES[0]![1]);
-  const during: number[] = [];
+  const during: string[] = [];
   aroundCapture({
     before: async () => {
-      during.push(await session.browser.evaluate(blinkTime));
+      during.push(await session.browser.evaluate(blinkState));
+    },
+  });
+  await expectBlinkRuns();
+  const before = await session.browser.evaluate(blinkTime);
+
+  const image = await screenshot('held');
+  vi.restoreAllMocks();
+
+  // The slide is where its ten minute move had it, not at its end, and its transition goes on, with no end event.
+  expect(image.pixelAt(20, 60)).toEqual(BLACK);
+  expect(image.pixelAt(220, 60)).toEqual(WHITE);
+  expect(during).toEqual(['paused']);
+  expect(await session.browser.evaluate(blinkState)).toBe('running');
+  // Back on its clock, the animation is further on than before, where one played again would start over.
+  await expect.poll(() => session.browser.evaluate(blinkTime)).toBeGreaterThan(before);
+  expect(await session.browser.evaluate(transitionEnds)).toEqual([]);
+  expect(await session.browser.evaluate(() => document.getElementById('slide')!.getAnimations().map((animation) => animation.playState))).toEqual(['running']);
+});
+
+it('takes an artifact screenshot of a page that removes a node when its animation ends, and the node stays', async () => {
+  await session.setContent(`<!doctype html>
+    <style>
+      @keyframes fade { to { opacity: 0; } }
+      #toast { animation: fade 20s linear; }
+    </style>
+    <p id="toast">Saved</p>
+    <script>
+      window.events = [];
+      for (const type of ['animationend', 'animationcancel', 'animationstart']) document.addEventListener(type, (event) => window.events.push(event.type));
+      document.getElementById('toast').addEventListener('animationend', (event) => event.target.remove());
+    </script>`);
+  await expect.poll(() => session.browser.evaluate(() => (window as unknown as { events: string[] }).events)).toEqual(['animationstart']);
+
+  await screenshot('toast');
+
+  expect(await session.browser.evaluate(() => ({
+    toast: document.getElementById('toast')?.getAnimations().map((animation) => animation.playState) ?? null,
+    events: (window as unknown as { events: string[] }).events,
+  }))).toEqual({ toast: ['running'], events: ['animationstart'] });
+});
+
+it.each([
+  ['an artifact screenshot', (): Promise<unknown> => session.engine.artifacts!.screenshot!('unmaskable', session.op(5_000))],
+  ['an observation', (): Promise<unknown> => session.engine.observe!(session.op(5_000), { pixels: true })],
+])('sets the animations going again when %s cannot mask a page that broke popovers', async (_capture, take) => {
+  await session.setContent(`${PLACES[0]![1]}<input type="password" value="hunter22"><script>HTMLElement.prototype.showPopover = () => { throw new Error('no popovers here'); };</script>`);
+  await expectBlinkRuns();
+
+  // An observation reads on without the pixels it could not take; a screenshot fails.
+  await take().catch(() => undefined);
+
+  expect(await session.browser.evaluate(heldByCapture)).toBe('0 hosts, 0 sheets, 1 animations');
+  expect(await session.browser.evaluate(blinkState)).toBe('running');
+});
+
+it('sets a held animation going again when the capture fails', async () => {
+  await session.setContent(PLACES[0]![1]);
+  const during: string[] = [];
+  aroundCapture({
+    before: async () => {
+      during.push(await session.browser.evaluate(blinkState));
       throw new Error('capture failed');
     },
   });
@@ -168,8 +225,8 @@ it('plays a cancelled animation again when the capture fails', async () => {
   await expect(session.engine.artifacts!.screenshot!('failed', session.op(5_000))).rejects.toThrow('capture failed');
   vi.restoreAllMocks();
 
-  expect(during).toEqual([-1]);
-  await expectBlinkRuns();
+  expect(during).toEqual(['paused']);
+  expect(await session.browser.evaluate(blinkState)).toBe('running');
 });
 
 it('takes the mask off a document it masked after another document could not be masked', async () => {
@@ -194,7 +251,7 @@ it('takes the mask off a document it masked after another document could not be 
   vi.restoreAllMocks();
 
   expect(await session.browser.evaluate(heldByCapture)).toBe('0 hosts, 0 sheets, 1 animations');
-  await expectBlinkRuns();
+  expect(await session.browser.evaluate(blinkState)).toBe('running');
 });
 
 it('plays a cancelled animation again when the capture goes stale, and stops it again for the capture that follows', async () => {
@@ -214,7 +271,7 @@ it('plays a cancelled animation again when the capture goes stale, and stops it 
     },
   });
 
-  const image = await screenshot('stale');
+  const { image } = await capture();
   vi.restoreAllMocks();
 
   expect(captures).toBe(2);
@@ -435,7 +492,7 @@ it('captures a page that holds an animation its browser will not finish', async 
     <iframe style="display:none" srcdoc="<div id='held'></div><script>document.getElementById('held').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600000 }).updatePlaybackRate(0);</script>"></iframe>`);
   await session.waitForFrames();
 
-  const image = await screenshot('unfinished');
+  const { image } = await capture();
 
   expect(image.pixelAt(20, 20)).toEqual(GREEN);
   await expectBlinkRuns();
@@ -456,7 +513,7 @@ it('plays the other animations again when the page turned one backwards under th
     },
   });
 
-  const image = await screenshot('turned');
+  const { image } = await capture();
   vi.restoreAllMocks();
 
   expect(image.pixelAt(20, 20)).toEqual(GREEN);
