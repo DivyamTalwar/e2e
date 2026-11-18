@@ -99,7 +99,10 @@ function cdpText(object: Protocol.Runtime.RemoteObject): string {
  * specifiers of a leading string are filled from the arguments after it as
  * the console fills them (`%s`, `%d`, `%i`, `%f`, `%o`, `%O`; `%c` takes its
  * style and prints nothing), one with no argument left stays as written,
- * and the arguments no specifier took follow, joined by spaces.
+ * and the arguments no specifier took follow, joined by spaces. A number
+ * specifier prints a number alone: any other argument is `NaN`, where the
+ * console would print the digits a text starts with, since the part of a
+ * secret is not redacted from the app log as the whole of it is.
  */
 export function cdpConsoleText(args: readonly Protocol.Runtime.RemoteObject[]): string {
   const [first, ...rest] = args;
@@ -109,9 +112,10 @@ export function cdpConsoleText(args: readonly Protocol.Runtime.RemoteObject[]): 
     const arg = left.shift();
     if (arg === undefined) return specifier;
     if (specifier === '%c') return '';
-    if (specifier === '%d' || specifier === '%i') return String(Number.parseInt(cdpText(arg), 10));
-    if (specifier === '%f') return String(Number.parseFloat(cdpText(arg)));
-    return cdpText(arg);
+    if (specifier === '%s' || specifier === '%o' || specifier === '%O') return cdpText(arg);
+    if (arg.type === 'bigint') return cdpText(arg);
+    if (arg.type !== 'number') return 'NaN';
+    return String(specifier === '%f' ? Number.parseFloat(cdpText(arg)) : Number.parseInt(cdpText(arg), 10));
   });
   return [head, ...left.map(cdpText)].join(' ');
 }

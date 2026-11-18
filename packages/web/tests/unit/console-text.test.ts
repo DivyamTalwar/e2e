@@ -36,11 +36,17 @@ describe('cdpConsoleText', () => {
   });
 
   it('fills the specifiers of a leading string, leaves one with no argument as written, and appends the arguments none took', () => {
-    expect(cdpConsoleText([text('%s is %d, %i or %f'), text('x'), number(5.9), text('7px'), text('1.5em')])).toBe('x is 5, 7 or 1.5');
+    expect(cdpConsoleText([text('%s is %d, %i or %f'), text('x'), number(5.9), number(7), number(1.5)])).toBe('x is 5, 7 or 1.5');
     expect(cdpConsoleText([text('%c styled'), text('color: red'), text('after'), number(2)])).toBe(' styled after 2');
     expect(cdpConsoleText([text('Sale: 10%off, %s left')])).toBe('Sale: 10%off, %s left');
     expect(cdpConsoleText([text('%o and %O'), object('Object', [{ name: 'a', type: 'number', value: '1' }]), text('raw')])).toBe('{a: 1} and raw');
     expect(cdpConsoleText([text('%d'), text('none')])).toBe('NaN');
+  });
+
+  it('prints a number for a number alone, never the digits a text starts with', () => {
+    expect(cdpConsoleText([text('%d %i %f'), text('4821-secret'), text('7px'), text('1.5em')])).toBe('NaN NaN NaN');
+    expect(cdpConsoleText([text('%d %f'), { type: 'bigint', unserializableValue: '12n' }, { type: 'number', unserializableValue: 'Infinity' }])).toBe('12n Infinity');
+    expect(cdpConsoleText([text('%d'), object('Object', [{ name: 'a', type: 'number', value: '1' }])])).toBe('NaN');
   });
 
   it('shows an object\'s first fields, strings quoted, a nested object as its class, and an ellipsis for what the preview left out', () => {
