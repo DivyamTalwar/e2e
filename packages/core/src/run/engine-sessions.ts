@@ -18,7 +18,7 @@ import type { Secret } from '../types.ts';
 import { createEngineSession } from '../engine/session.ts';
 import type { ArtifactSink } from './fixtures.ts';
 import type { AttemptRecord, RunError } from './records.ts';
-import { adoptSecrets, registerDerivedSecrets, resolveSecretValue, sessionLedger } from './secrecy.ts';
+import { adoptSecrets, registerDerivedSecrets, releaseSessionLedger, resolveSecretValue, sessionLedger } from './secrecy.ts';
 import { isSecret } from '../secrets.ts';
 import { targetIdentity, type SavedSession, type SessionIdentity, type SessionStore } from './sessions.ts';
 import { EngineError } from '../engine/contract.ts';
@@ -295,7 +295,7 @@ export class EngineSessions {
     );
   }
 
-  /** Ends one attempt's isolation within the cleanup budget. */
+  /** Ends one attempt's isolation within the cleanup budget; the session's secrets are its own again from here. */
   private endAttempt(session: TargetSession, attemptId: string): Promise<void> {
     return this.lifecycle(
       'ending the attempt',
@@ -303,7 +303,7 @@ export class EngineSessions {
       'CLEANUP_TIMEOUT',
       NEVER_ABORTS,
       (signal) => session.close(this.op(attemptId, this.config.cleanupTimeout, signal)),
-    );
+    ).finally(() => releaseSessionLedger(session));
   }
 
   /**
