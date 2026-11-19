@@ -884,11 +884,11 @@ export default {
 });
 
 describe('screen.pause() in CI', () => {
-  it('fails the test at the pause with PAUSE_UNAVAILABLE, without waiting', () => {
+  it('fails the test at the pause with PAUSE_IN_CI, without waiting', () => {
     const { dir } = project({ 'tests/pause.e2e.ts': PAUSE_SUITE });
     const ran = e2e(dir, ['run'], { ...ENV, CI: '1' });
     expect(ran.exitCode).toBe(1);
-    expect(ran.stdout).toContain('PAUSE_UNAVAILABLE');
+    expect(ran.stdout).toContain('PAUSE_IN_CI');
     expect(ran.stdout).toContain('tests/pause.e2e.ts:5');
     expect(ran.stdout).not.toContain('Paused in');
   });

@@ -610,14 +610,14 @@ await screen.pause();
 - A test isn't paused in a session that an [MCP](/mcp-server)
   `open_session {test}` opens, in a program on `@e2e-dev/core` or
   `openHost`, or in `run()` from `e2e/runner`. With `CI` set, the test still
-  fails with `PAUSE_UNAVAILABLE` in `run()`, as in `e2e run`.
+  fails with `PAUSE_IN_CI` in `run()`, as in `e2e run`.
 - In `e2e run --watch`, only the current run is cancelled when `q` is pressed
   at a pause or `e2e run --step stop` is run.
 - A locator doesn't have it.
 
 | Throws | When |
 | --- | --- |
-| `PAUSE_UNAVAILABLE` | `CI` is set. Remove the call before you commit, or run the test with `e2e run` in a terminal. A call where a pause isn't allowed fails with its error below instead. |
+| `PAUSE_IN_CI` | `CI` is set. Remove the call before you commit, or run the test with `e2e run` in a terminal. A call where a pause isn't allowed fails with its error below instead. |
 | `INVALID_ARGUMENT` | It is called on a locator or a frame, in an [`afterEach`](/reference/test#aftereach) hook, a fixture teardown, or unawaited code that runs after the body returned. Call it on `screen`, between steps in fixture setup, a `beforeEach` hook, or the test body. |
 | `ACTION_FAILED` | It is called inside an agent step, such as an [`onAction`](/reference/agent#agent-act) hook or a [custom executor](/executors). The step fails with the pause's message, and the test isn't paused. In a [project tool](/tools) on the built-in agent, the refusal goes back to the model as a failed tool result and the step continues. Call it between steps instead. |
 | `ASSERTION_FAILED` | It is called inside an [`expect.poll`](/reference/expect#polling-a-value) read. The read is retried until the poll times out. Call it outside the read. |

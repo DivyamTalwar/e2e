@@ -452,7 +452,7 @@ test('pauses on a frame', async ({ gadget }) => {
     expect(held).toEqual([]);
   }, 60_000);
 
-  it("fails a pause where it isn't allowed with INVALID_ARGUMENT, not PAUSE_UNAVAILABLE, when CI is set", async () => {
+  it("fails a pause where it isn't allowed with INVALID_ARGUMENT, not PAUSE_IN_CI, when CI is set", async () => {
     const { outcome, project } = await runProjectWithConfigFile(
       { 'tests/ci.e2e.ts': `import { test } from 'e2e';\ntest.afterEach(async ({ screen }) => { await screen.pause(); });\ntest('pauses in afterEach in CI', async () => {});\n` },
       {
@@ -471,7 +471,7 @@ test('pauses on a frame', async ({ gadget }) => {
     });
   }, 60_000);
 
-  it('fails a pause with PAUSE_UNAVAILABLE in CI, without asking the hook', async () => {
+  it('fails a pause with PAUSE_IN_CI in CI, without asking the hook', async () => {
     const held: HeldStep[] = [];
     const { outcome, project } = await runProjectWithConfigFile(
       { 'tests/ci.e2e.ts': `import { test } from 'e2e';\ntest('pauses in CI', async ({ screen }) => {\n  await screen.pause();\n});\n` },
@@ -485,7 +485,7 @@ test('pauses on a frame', async ({ gadget }) => {
     );
     project.cleanup();
     const attempt = resultByTitle(outcome, 'pauses in CI').attempts[0];
-    expect(attempt?.error).toMatchObject({ code: 'PAUSE_UNAVAILABLE', source: { file: 'tests/ci.e2e.ts', line: 3 } });
+    expect(attempt?.error).toMatchObject({ code: 'PAUSE_IN_CI', source: { file: 'tests/ci.e2e.ts', line: 3 } });
     expect(held).toEqual([]);
   }, 60_000);
 });

@@ -6,4 +6,4 @@
 Add `screen.pause()` to pause a test at a line, with the app open, until you
 resume it: press Enter in the terminal, or run `e2e run --step next` from
 another shell in the same directory. With `CI` set, the test fails with
-`PAUSE_UNAVAILABLE`.
+`PAUSE_IN_CI`.

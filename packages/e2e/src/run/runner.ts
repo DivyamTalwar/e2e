@@ -86,7 +86,7 @@ type RunHold = {
    * Pauses wait on every attempt, including setup tests. The test's timeout
    * and the run's time limit don't count the time spent waiting.
    *
-   * With `CI` set, the test fails with `PAUSE_UNAVAILABLE` and `ask` isn't called.
+   * With `CI` set, the test fails with `PAUSE_IN_CI` and `ask` isn't called.
    */
   readonly ask: BeforeStep;
   /**

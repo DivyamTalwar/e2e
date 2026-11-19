@@ -67,7 +67,7 @@ test('home', async ({ app, screen }) => {
     assertValidReport(outcome.report);
   });
 
-  it('runs past screen.pause() right away, and fails the test at the pause with PAUSE_UNAVAILABLE when CI is set', async () => {
+  it('runs past screen.pause() right away, and fails the test at the pause with PAUSE_IN_CI when CI is set', async () => {
     const fake = createFakeEngine();
     const fixture = project({ 'tests/pause.e2e.ts': `import { test } from 'e2e';\ntest('pauses', async ({ app, screen }) => {\n  await app.open('/');\n  await screen.pause();\n});\n` });
     const targets = [{ name: 'fake', platform: 'test', engine: fake.engine, app: FAKE_APP }];
@@ -83,7 +83,7 @@ test('home', async ({ app, screen }) => {
       expect(failed.exitCode).toBe(1);
 
       expect(failed.report.run.results[0]?.attempts[0]?.error).toMatchObject({
-        code: 'PAUSE_UNAVAILABLE',
+        code: 'PAUSE_IN_CI',
         source: { file: 'tests/pause.e2e.ts', line: 4 },
       });
     } finally {

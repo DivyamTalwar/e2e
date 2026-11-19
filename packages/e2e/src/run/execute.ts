@@ -493,7 +493,7 @@ export class TargetExecutor extends EngineSessions implements SerialHost {
               ask: (request: StepHoldRequest, signal: AbortSignal) => {
                 if (request.kind === 'pause' && isCiMode(this.options.env)) {
                   throw new TestError(
-                    'PAUSE_UNAVAILABLE',
+                    'PAUSE_IN_CI',
                     withHint(
                       "a test can't be paused while CI is set, since there isn't anyone to resume it",
                       'remove the screen.pause() call before you commit',
