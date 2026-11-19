@@ -718,6 +718,7 @@ export class TargetExecutor extends EngineSessions implements SerialHost {
                     attemptId,
                     artifactsDir: artifacts.dir,
                     title: step.title,
+                    kind: step.kind,
                     source: step.source,
                     warn: (message) => this.options.events?.onNotice?.(message),
                   }),

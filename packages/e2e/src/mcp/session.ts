@@ -672,7 +672,7 @@ export class SessionHost {
           .boolean()
           .optional()
           .describe(
-            "Attach to a test paused at await screen.pause() in an npx e2e run in the server's working directory, and drive the run's browser or device where the test stopped. Every tool is available except run_code, start_recording, and stop_recording. close_session only detaches, so the test stays paused. To resume the test, run npx e2e run --step next in the run's directory, or npx e2e run --step stop to end the run. The session ends then, so attach again at the next pause. Excludes every other option",
+            "Attach to a test paused at await screen.pause() in an npx e2e run in the server's working directory, or held at a step in an npx e2e run --step without a terminal, and drive the run's browser or device where the test stopped. Every tool is available except run_code, start_recording, and stop_recording. close_session only detaches, so the test stays paused. To resume the test, run npx e2e run --step next in the run's directory, or npx e2e run --step stop to end the run. The session ends then, so attach again at the next pause. Excludes every other option",
           ),
       }).strict(),
       readOnly: false,

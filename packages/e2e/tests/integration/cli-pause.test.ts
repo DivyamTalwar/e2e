@@ -433,7 +433,7 @@ test('pauses after a wait', { timeout: 30_000 }, async ({ app, screen }) => {
     await once(dropped, 'connect');
     dropped.write('not a command\n');
     await once(dropped, 'close');
-    expect((await (await mcp(dir)).invoke('open_session', { attach: true })).text).toContain('no test is paused');
+    expect((await (await mcp(dir)).invoke('open_session', { attach: true })).text).toContain('no test is waiting');
     writeFileSync(path.join(dir, 'go'), '');
     await answered;
     const { text, exitCode } = JSON.parse(reply) as { text: string; exitCode: number };
@@ -1129,15 +1129,29 @@ describe('open_session {attach: true}', () => {
     expect(first.isError).toBe(false);
     const second = await (await mcp(dir)).invoke('open_session', { attach: true });
     expect(second.isError).toBe(true);
-    expect(second.text).toContain('SESSION_OPEN: another session is attached to this paused test');
+    expect(second.text).toContain('SESSION_OPEN: another session is attached to this test');
   }, 90_000);
 
-  it('refuses to attach to a run started with e2e run --step', async () => {
-    const { dir } = project({ 'tests/attach.e2e.ts': TYPED_SUITE }, CONFIG);
-    expect(e2e(dir, ['run', '--step']).exitCode).toBe(0);
-    const refused = await (await mcp(dir)).invoke('open_session', { attach: true });
-    expect(refused.isError).toBe(true);
-    expect(refused.text).toContain('NO_SESSION: no e2e run is waiting at screen.pause() in');
+  it('attaches to a step held in an e2e run --step run, and ends the session when the step runs', async () => {
+    const { dir } = project({ 'tests/attach.e2e.ts': TYPED_SUITE.replace('  await screen.pause();\n', '') }, CONFIG);
+    const started = e2e(dir, ['run', '--step']);
+    expect(started.exitCode, started.stdout + started.stderr).toBe(0);
+    const { invoke, call } = await mcp(dir);
+    const opened = await invoke('open_session', { attach: true });
+    expect(opened.isError, opened.text).toBe(false);
+    expect(opened.text).toContain('Attached to "greets after a pause" on target "fake", held at tests/attach.e2e.ts:5.');
+    expect((await call('type', { target: nodeId(opened.text, /textbox "Name"/), value: 'Ada' })).isError).toBe(false);
+
+    const rest = e2e(dir, ['run', '--step', 'rest']);
+    expect(rest.stdout).toContain('The stepped run has ended.');
+    expect(rest.exitCode, rest.stdout).toBe(0);
+    const later = await call('observe');
+    expect(later.isError).toBe(true);
+    expect(later.text).toContain('NO_SESSION');
+    const { run: report } = JSON.parse(readFileSync(path.join(dir, '.e2e', 'report.json'), 'utf8')) as {
+      run: { results: { attempts: { steps: { api: string }[] }[] }[] };
+    };
+    expect(report.results[0]!.attempts[0]!.steps.map((step) => step.api)).toEqual(['app.open', 'session', 'expect.toHaveValue']);
   }, 90_000);
 
   it('detaches on close_session from a run that never hangs up its side', async () => {

@@ -478,7 +478,7 @@ open_session {test: "tests/checkout.e2e.ts:12"}
 
 ## 附加到暂停的测试
 
-使用 `open_session {attach: true}`，会话会附加到服务器工作目录（客户端 MCP 配置中的 `cwd`，参阅[配置](#setup)）中某个 `e2e run` 里在 [`screen.pause()`](/reference/screen#screen-pause) 处暂停的测试。之后，无论运行是否有终端，智能体都会在测试暂停的屏幕上，驱动与测试相同的浏览器或设备。
+使用 `open_session {attach: true}`，会话会附加到服务器工作目录（客户端 MCP 配置中的 `cwd`，参阅[配置](#setup)）中某个 `e2e run` 里在 [`screen.pause()`](/reference/screen#screen-pause) 处暂停的测试。在没有终端的 `e2e run --step` 中，会话会附加到在步骤处暂停的测试。之后，无论运行是否有终端，智能体都会在测试暂停的屏幕上，驱动与测试相同的浏览器或设备。
 
 ```txt
 open_session {attach: true}
@@ -493,7 +493,7 @@ open_session {attach: true}
 
 | 抛出错误 | 何时发生 |
 | --- | --- |
-| `NO_SESSION` | 服务器目录中的 `e2e run` 没有暂停的测试，或该运行以 `--step` 启动。 |
+| `NO_SESSION` | 服务器目录中的 `e2e run` 没有暂停的测试，也没有在步骤处暂停的测试，或该运行是终端中的 `e2e run --step`。 |
 | `SESSION_OPEN` | 另一个会话已附加到该暂停的测试。请先关闭另一个会话。 |
 | `INVALID_ARGUMENT` | `attach` 与其他输入一起使用。请只传入 `attach`。 |
 | `CANCELLED` | 在会话附加之前，客户端取消了请求或断开了连接，或服务器关闭。 |

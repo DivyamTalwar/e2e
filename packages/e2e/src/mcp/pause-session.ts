@@ -51,7 +51,9 @@ export interface PauseSessionsOptions {
   readonly artifactsDir: string;
   /** The paused test's title path, joined with ` › `. */
   readonly title: string;
-  /** Where the test paused. */
+  /** Whether the test waits at a held step or a pause. */
+  readonly kind: 'step' | 'pause';
+  /** Where the test waits. */
   readonly source: SourceLocation | undefined;
   readonly warn: (message: string) => void;
 }
@@ -179,13 +181,14 @@ export class PauseSessions {
     }
 
     const at = source === undefined ? '' : ` at ${source.file}:${source.line}`;
+    const state = this.options.kind === 'pause' ? 'paused' : 'held';
 
     const lines = [
-      `Attached to "${this.options.title}" on target "${target.name}", paused${at}. close_session only detaches, so the test stays paused. To resume the test, run npx e2e run --step next in the run's directory, or npx e2e run --step stop to end the run. The session ends then, so attach again at the next pause.`,
+      `Attached to "${this.options.title}" on target "${target.name}", ${state}${at}. close_session only detaches, so the test stays ${state}. To continue the test, run npx e2e run --step next in the run's directory, or npx e2e run --step stop to end the run. The session ends then, so attach again when the test waits again.`,
       ...fillLines(config),
       `Tools (run one with call {tool, args}; tools {tool} shows a tool's arguments):`,
       ...catalogLines(catalog),
-      'Node ids ("n42") are valid only for the newest observation; every action reports what changed on screen and the test line that repeats it (test_lines returns them all). To keep what you did, put those lines where the test calls screen.pause().',
+      'Node ids ("n42") are valid only for the newest observation; every action reports what changed on screen and the test line that repeats it (test_lines returns them all). To keep what you did, put those lines in the test at the line where it waits.',
     ];
 
     return `${lines.join('\n')}\n\n${first}`;

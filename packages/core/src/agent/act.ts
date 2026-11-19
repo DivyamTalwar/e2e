@@ -79,6 +79,8 @@ export interface DispatchSpec {
   readonly onBeforeAction?: BeforeActionHook | undefined;
   /** The source line to record for a step opened outside the test. */
   readonly source?: SourceLocation | undefined;
+  /** Set `unheld` to start the step right away in a run that holds every step. */
+  readonly unheld?: boolean | undefined;
 }
 
 /** Runs one `agent.act()` call as a harness-dispatched executor step. */
@@ -199,7 +201,7 @@ export async function dispatchAgentStep(
     } finally {
       dispatch.finish();
     }
-  }, { verifies: spec.kind === 'assert', agent: agent.name, source: spec.source });
+  }, { verifies: spec.kind === 'assert', agent: agent.name, source: spec.source, unheld: spec.unheld });
 }
 
 /**

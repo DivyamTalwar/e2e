@@ -66,6 +66,7 @@ export async function openInteractiveStep(runtime: AgentContext, options: Intera
       maxModelCalls: undefined,
       agent: undefined,
       source: options.source,
+      unheld: true,
     },
     agent,
   ).then(

@@ -145,7 +145,7 @@ export function attachToPause(cwd: string, signal: AbortSignal): Promise<PauseAt
       reject(
         new ConfigurationError(
           'NO_SESSION',
-          `no e2e run is waiting at screen.pause() in ${cwd}: the run has ended, hasn't paused yet, or was started with --step. Attach while a test is paused in a run without --step`,
+          `no e2e run is waiting at screen.pause() or a held step in ${cwd}: the run has ended, isn't waiting yet, or is an e2e run --step in a terminal. Attach while a test is paused or held`,
         ),
       );
 

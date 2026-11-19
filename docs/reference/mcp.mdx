@@ -677,8 +677,10 @@ open_session {test: "tests/checkout.e2e.ts:12"}
 With `open_session {attach: true}`, a session is attached to a test that is
 paused at [`screen.pause()`](/reference/screen#screen-pause) in an `e2e run`
 in the server's working directory (`cwd` in the client's MCP config, see
-[Setup](#setup)). The agent then drives the same browser or device as the
-test, on the screen where it paused, whether or not the run has a terminal.
+[Setup](#setup)). In an `e2e run --step` without a terminal, the session is
+attached to the test at its held step. The agent then drives the same
+browser or device as the test, on the screen where it waits, whether or not
+the run has a terminal.
 
 ```txt
 open_session {attach: true}
@@ -713,7 +715,7 @@ open_session {attach: true}
 
 | Throws | When |
 | --- | --- |
-| `NO_SESSION` | There isn't a paused test in an `e2e run` in the server's directory, or the run was started with `--step`. |
+| `NO_SESSION` | There isn't a paused or held test in an `e2e run` in the server's directory, or the run is an `e2e run --step` in a terminal. |
 | `SESSION_OPEN` | Another session is attached to the paused test. Close the other session first. |
 | `INVALID_ARGUMENT` | `attach` with any other input. Pass `attach` alone. |
 | `CANCELLED` | The client cancelled the request or disconnected, or the server shut down, before the session was attached. |
