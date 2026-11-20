@@ -397,26 +397,6 @@
           }
         }
       }
-    },
-    {
-      "if": {
-        "properties": {
-          "methods": {
-            "contains": {
-              "const": "engine/viewportIntersection"
-            }
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "methods": {
-            "contains": {
-              "const": "engine/locate"
-            }
-          }
-        }
-      }
     }
   ]
 }
