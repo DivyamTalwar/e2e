@@ -5,6 +5,5 @@
   "methods": [
     "engine/readStyle"
   ],
-  "selectsDevice": true,
   "isolation": "attempt"
 }
