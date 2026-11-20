@@ -158,27 +158,35 @@ class BootedDevices implements DeviceSource {
 
   /** Every booted device of the platform, by stable id and name, with the session holding it, in agent-device's inventory order. */
   private async inventory(targetName: string, signal: AbortSignal): Promise<BootedDevice[]> {
-    const client = this.createClient(this.session(targetName, 0));
-    const inventory: unknown = await runCommand('devices', () => client.devices.list({ platform: this.platform }), signal);
-    if (!Array.isArray(inventory)) return [];
-    return inventory
-      .filter(
-        (device): device is { id: string; name?: unknown; claimedBy?: { session?: unknown } } =>
-          typeof device === 'object' &&
-          device !== null &&
-          (device as { booted?: unknown }).booted === true &&
-          (device as { platform?: unknown }).platform === this.platform &&
-          typeof (device as { id?: unknown }).id === 'string',
-      )
-      .map((device) => {
-        const session = device.claimedBy?.session;
-        return obj({
-          id: device.id,
-          name: typeof device.name === 'string' ? device.name : device.id,
-          claimedBy: typeof session === 'string' ? session : undefined,
-        });
-      });
+    const devices = await listDevices(this.createClient(this.session(targetName, 0)), this.platform, signal);
+    return devices.filter((device) => device.booted);
   }
+}
+
+/**
+ * Every device of the platform agent-device lists, booted or not, by stable
+ * id and name, with the session holding it, in inventory order.
+ */
+async function listDevices(client: AgentDeviceClient, platform: MobilePlatform, signal: AbortSignal): Promise<(BootedDevice & { readonly booted: boolean })[]> {
+  const inventory: unknown = await runCommand('devices', () => client.devices.list({ platform }), signal);
+  if (!Array.isArray(inventory)) return [];
+  return inventory
+    .filter(
+      (device): device is { id: string; name?: unknown; booted?: unknown; claimedBy?: { session?: unknown } } =>
+        typeof device === 'object' &&
+        device !== null &&
+        (device as { platform?: unknown }).platform === platform &&
+        typeof (device as { id?: unknown }).id === 'string',
+    )
+    .map((device) => {
+      const session = device.claimedBy?.session;
+      return obj({
+        id: device.id,
+        name: typeof device.name === 'string' ? device.name : device.id,
+        booted: device.booted === true,
+        claimedBy: typeof session === 'string' ? session : undefined,
+      });
+    });
 }
 
 export class DevicePool {
@@ -259,11 +267,22 @@ export class DevicePool {
    */
   async prepare(info: EnginePrepareInfo): Promise<EnginePrepareResult> {
     if (info.slots === 0) return {};
-    const source = info.device === undefined ? this.source : new ConfiguredDevices([namedDevice(info.device)]);
-    const bindings = await source.bind(info);
+    const bindings = info.device === undefined ? await this.source.bind(info) : [await this.named(namedDevice(info.device), info)];
     await this.warm(bindings, info);
     this.bound.set(info.targetName, bindings);
     return { workers: bindings.length, env: { [bindingsVariable(info.targetName)]: encodeBindings(bindings) } };
+  }
+
+  /**
+   * The one slot `e2e run --device` binds. A simulator UDID or an emulator
+   * serial selects by id as it is; any other string selects by id when the
+   * inventory lists a device under exactly that id (a phone's USB serial),
+   * since agent-device matches a `device` by name only, and by name otherwise.
+   */
+  private async named(device: string, info: EnginePrepareInfo): Promise<SlotBinding> {
+    if (UDID.test(device) || EMULATOR_SERIAL.test(device)) return { device };
+    const listed = await listDevices(this.createClient(this.session(info.targetName, 0)), this.options.platform, info.signal);
+    return listed.some((entry) => entry.id === device) ? { deviceId: device } : { device };
   }
 
   /**

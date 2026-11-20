@@ -279,15 +279,29 @@ describe('lifecycle', () => {
     const info = (device: string) => ({ runId: 'run-1', targetName: 'ios', projectRoot: PROJECT_ROOT, slots: 2, env: {}, signal: new AbortController().signal, headed: false, device, log: () => undefined });
     for (const configured of [['iPhone 16e', 'iPad Pro 11-inch'], undefined]) {
       const h = harness(configured === undefined ? {} : { device: configured });
+      h.fake.respond('devices.list', () => [{ platform: 'ios', id: '2BBF3F07-AF66-4F95-82AB-BF442506FC89', name: 'iPhone 17 Pro', booted: false }]);
       expect(h.engine.selectsDevice).toBe(true);
       const result = await h.prepare(info('iPhone 17 Pro'));
       // One named device is one worker, whatever the run planned.
       expect(result?.workers).toBe(1);
       expect(h.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios', device: 'iPhone 17 Pro' });
-      expect(h.fake.methods()).not.toContain('devices.list');
       const handed = result?.env ?? {};
       expect(handed[poolVariableIn(handed, 'IOS')]).toBe(JSON.stringify([{ device: 'iPhone 17 Pro' }]));
     }
+  });
+
+  it('binds --device by id when the inventory lists a device under exactly that id, since agent-device matches a device by name only', async () => {
+    const info = (device: string) => ({ runId: 'run-1', targetName: 'ios', projectRoot: PROJECT_ROOT, slots: 1, env: {}, signal: new AbortController().signal, headed: false, device, log: () => undefined });
+    // A phone's id reads as neither a simulator UDID nor an emulator serial.
+    const phone = harness({});
+    phone.fake.respond('devices.list', () => [{ platform: 'ios', id: '00008110-001A2B3C4D5E6F70', name: 'iPhone 15', kind: 'device', booted: true }]);
+    await phone.prepare(info('00008110-001A2B3C4D5E6F70'));
+    expect(phone.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios', udid: '00008110-001A2B3C4D5E6F70' });
+    // A simulator UDID needs no inventory to read as one.
+    const simulator = harness({});
+    await simulator.prepare(info('2BBF3F07-AF66-4F95-82AB-BF442506FC89'));
+    expect(simulator.fake.methods()).not.toContain('devices.list');
+    expect(simulator.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios', udid: '2BBF3F07-AF66-4F95-82AB-BF442506FC89' });
   });
 
   it('warms each device with a plain open and no launch arguments', async () => {
