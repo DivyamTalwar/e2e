@@ -917,16 +917,24 @@ function createPointTools(
       description:
         'Send one key (e.g. "Enter", "Escape", "Tab") to the control at a point in the latest screenshot, for a control the screen does not list.' +
         (keyboard ? ' A listed control under the point gets the key by id; anything else is tapped to focus it and the key goes through the keyboard.' : '') +
-        ' Last resort: when the screen lists the control, press by id.' +
-        (REMOTE_PLATFORMS.has(context.target.platform) ? REMOTE_KEY_HINT : ''),
+        ' Last resort: when the screen lists the control, press by id.',
       inputSchema: z.object({ x, y, key: z.string().min(1).max(64) }),
       execute: ({ x: px, y: py, key }) =>
-        atPoint('press_at', px, py, async (point) => {
-          const found = await focusAt(point, px, py, 'press_at');
-          if (found.kind === 'control') await context.actions.press(found.control, key);
-          else await context.actions.pressKey(key);
-          return isRemoteKey(key) ? `Pressed ${key} on the remote.` : `Pressed ${key} on ${found.summary}.`;
-        }),
+        // A remote button goes to the device, not to a point: it needs no
+        // screenshot, and must not tap whatever lies under the point first.
+        isRemoteKey(key)
+          ? inOrder(() =>
+              perform(pointAttempt('press_at', key), async () => {
+                await context.actions.pressKey(key);
+                return `Pressed ${key} on the remote; it needs no point, so use press without a target next time.`;
+              }),
+            )
+          : atPoint('press_at', px, py, async (point) => {
+              const found = await focusAt(point, px, py, 'press_at');
+              if (found.kind === 'control') await context.actions.press(found.control, key);
+              else await context.actions.pressKey(key);
+              return `Pressed ${key} on ${found.summary}.`;
+            }),
     });
   }
   if (verbs.has('select')) {

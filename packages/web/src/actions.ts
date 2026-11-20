@@ -271,6 +271,17 @@ function isFileInput(element: ElementHandle<Element>): Promise<boolean> {
   });
 }
 
+/** The keyboard key a remote button's name most likely meant in a browser. */
+const KEYBOARD_FOR_REMOTE: Readonly<Partial<Record<string, string>>> = {
+  home: 'Home',
+  up: 'ArrowUp',
+  down: 'ArrowDown',
+  left: 'ArrowLeft',
+  right: 'ArrowRight',
+  select: 'Enter',
+  back: 'Escape',
+};
+
 /**
  * The Playwright spelling of a key in the contract grammar, which Playwright
  * shares for every keyboard key, so those pass as given. A TV remote button
@@ -289,17 +300,11 @@ export function playwrightKey(key: string): string {
   );
 }
 
-/** The keyboard key a remote button's name most likely meant in a browser. */
-const KEYBOARD_FOR_REMOTE: Readonly<Partial<Record<string, string>>> = {
-  home: 'Home',
-  up: 'ArrowUp',
-  down: 'ArrowDown',
-  left: 'ArrowLeft',
-  right: 'ArrowRight',
-  select: 'Enter',
-  back: 'Escape',
-};
-
+/**
+ * Dispatches one deterministic locator action onto a Playwright target with the
+ * platform's own actionability checks. `lookup` resolves the second ref of a
+ * drag; everything else needs only the target.
+ */
 export async function dispatchLocatorAction(
   target: ActionTarget,
   action: LocatorAction,

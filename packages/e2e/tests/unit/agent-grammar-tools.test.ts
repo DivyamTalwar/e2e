@@ -17,7 +17,9 @@ import { createGrammarTools, createVerdictTool, grammarTools } from '@e2e-dev/co
 import { createBuiltInAgent, projectTools } from '@e2e-dev/core/lib/agent/default-agent';
 import { createToolLoopExecutor } from '@e2e-dev/core/lib/agent/tool-loop';
 import { defineTool } from '@e2e-dev/core/lib/agent/tool';
+import { describeAction } from '@e2e-dev/core/lib/agent/actions';
 import { fakeExecutorContext } from '../helpers/fake-executor-context.ts';
+import { redacted } from '../helpers/redacted.ts';
 import { installFakeLoopModel, loopCalls } from '../helpers/fake-loop-model.ts';
 
 it('does not repeat a static assertion opening to request pixels it cannot use', async () => {
@@ -582,5 +584,23 @@ describe('press on a TV remote key', () => {
     expect(keyboardHome).toMatch(/^Pressed Home on the focused field\./);
     expect(keyboardHome).toContain('Screen unchanged since revision');
     expect(pressed).toEqual(['select', 'home', 'up', 'Home']);
+  });
+
+  it('presses a remote key from press_at without tapping the point, and keeps the hint off press_at', async () => {
+    const { context, pressed } = remoteContext('android');
+    const tools = createGrammarTools(context);
+    expect(tools['press_at']!.description).not.toContain('remote');
+    const execute = tools['press_at']!.execute as unknown as (input: { x: number; y: number; key: string }, options: { toolCallId: string; messages: [] }) => Promise<unknown>;
+    // The fake context refuses tapAt and hitTest, so a tap first would fail the call.
+    const said = String(await execute({ x: 10, y: 20, key: 'select' }, { toolCallId: 'call', messages: [] }));
+    expect(said).toMatch(/^Pressed select on the remote; it needs no point/);
+    expect(pressed).toEqual(['select']);
+  });
+
+  it('records a remote key pressed on a node as pressed on the remote', () => {
+    const node = redacted({ ref: { id: 'n1', revision: 'r1' }, role: 'button', name: 'Now playing' });
+    const options = { redact: (text: string) => text, redactCut: (text: string) => text };
+    expect(describeAction({ name: 'press', node, key: 'menu' }, options).summary).toBe('press "menu" on the remote');
+    expect(describeAction({ name: 'press', node, key: 'Enter' }, options).summary).toContain('on button "Now playing"');
   });
 });

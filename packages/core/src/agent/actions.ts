@@ -286,7 +286,7 @@ export function describeAction(action: RecordableAction, redaction: NodeRedactio
       case 'typeSecret':
         return `fill secret ${quote(action.secret)} into ${where}`;
       case 'press':
-        return `press ${safe(action.key)} on ${where}`;
+        return `press ${safe(action.key)} on ${parseKey(action.key)?.key.kind === 'remote' ? 'the remote' : where}`;
       case 'select':
         return `select ${safe(action.value)} in ${where}`;
       case 'check':

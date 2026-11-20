@@ -6,9 +6,9 @@
  */
 
 import type { AgentDeviceClient as DeviceSessionClient } from 'agent-device';
-import type { EngineFixtureContext, Locator, RemoteKeyName } from '@e2e-dev/core/engine';
+import type { EngineFixtureContext, Locator } from '@e2e-dev/core/engine';
 import { appLabel, linkLabel, linkTarget } from './links.ts';
-import { pressRemote, requireRemoteKey } from './remote.ts';
+import { pressRemote, requireRemoteKey, type RemoteKey } from './remote.ts';
 import type { DevicePermission, MobilePlatform, PermissionState } from './options.ts';
 import type { DeviceSelection } from './pool.ts';
 import { unsupported } from './support.ts';
@@ -200,7 +200,7 @@ export interface Device {
    * other button or device is `UNSUPPORTED_CAPABILITY`. A name
    * outside the list is `INVALID_ARGUMENT`.
    */
-  pressRemote(key: RemoteKeyName): Promise<void>;
+  pressRemote(key: RemoteKey): Promise<void>;
   /** Accepts or dismisses the visible system alert. */
   alert(action: 'accept' | 'dismiss'): Promise<void>;
   /**

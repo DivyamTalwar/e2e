@@ -35,6 +35,13 @@ const REMOTE_BUTTONS = {
 } as const satisfies Record<RemoteKeyName, TvRemoteButton>;
 
 /**
+ * A remote key this engine presses. It is the engine's own name for the list,
+ * so the published types still resolve against an `@e2e-dev/core` that
+ * predates `RemoteKeyName`.
+ */
+export type RemoteKey = keyof typeof REMOTE_BUTTONS;
+
+/**
  * The remote keys this engine presses, read from its own table so an older
  * `@e2e-dev/core` without `REMOTE_KEY_NAMES` still loads the engine.
  */
@@ -66,12 +73,12 @@ export function cannotPressNamedKey(name: string): string {
 }
 
 /** Presses one remote button, within the operation's budget. */
-export function pressRemote(client: AgentDeviceClient, key: RemoteKeyName, input: InputBudget): Promise<unknown> {
+export function pressRemote(client: AgentDeviceClient, key: RemoteKey, input: InputBudget): Promise<unknown> {
   return input.send(() => client.command.tvRemote({ button: REMOTE_BUTTONS[key] }));
 }
 
 /** Throws `INVALID_ARGUMENT` unless `key` is one of the remote keys. */
-export function requireRemoteKey(key: unknown): asserts key is RemoteKeyName {
+export function requireRemoteKey(key: unknown): asserts key is RemoteKey {
   if (typeof key === 'string' && Object.hasOwn(REMOTE_BUTTONS, key)) return;
   throw new TestError('INVALID_ARGUMENT', `device.pressRemote(${JSON.stringify(key)}): not a remote key; press one of ${REMOTE_KEYS.join(', ')}`);
 }
