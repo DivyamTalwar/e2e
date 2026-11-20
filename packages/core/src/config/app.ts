@@ -140,6 +140,12 @@ export function checkTargetApp(targetName: string, engine: EngineHandle | undefi
   if (launchArguments !== undefined && (!Array.isArray(launchArguments) || !launchArguments.every((argument) => typeof argument === 'string'))) {
     throw new ConfigurationError('INVALID_CONFIG', `${where}.launchArguments must be an array of strings`);
   }
+  if (permissions === 'all' && engine?.appForms?.includes('permissions-all') !== true) {
+    throw new ConfigurationError(
+      'UNSUPPORTED_CAPABILITY',
+      `${where}.permissions is 'all', and engine ${engine?.name ?? 'none'} does not grant every permission; name each one instead`,
+    );
+  }
   if (permissions !== undefined && permissions !== 'all') {
     if (!isRecord(permissions)) {
       throw new ConfigurationError('INVALID_CONFIG', `${where}.permissions must be 'all' or an object of permission name to grant, deny, or reset`);
@@ -163,7 +169,7 @@ export function checkTargetApp(targetName: string, engine: EngineHandle | undefi
     readyUrl: nonEmptyString(app.readyUrl, `${where}.readyUrl`),
   };
   const { url, bundleId, appPath } = checked;
-  engine?.validateApp?.(obj({ url, bundleId, appPath, launchArguments, permissions }) satisfies EngineAppDeclaration, { targetName });
+  engine?.validateApp?.(obj({ url, bundleId, appPath, launchArguments, ...enginePermissions(permissions) }) satisfies EngineAppDeclaration, { targetName });
   return checked;
 }
 
@@ -308,7 +314,16 @@ export function resolveTargetApp(targetName: string, app: TargetAppDeclaration, 
 export function engineAppInfo(app: ResolvedApp): EngineAppInfo {
   const { base, portRequest, site, bundleId, appPath, launchArguments, permissions } = app;
   const unassigned = portRequest !== undefined && portRequest.port === undefined;
-  return obj({ origin: unassigned ? undefined : base?.origin, site, bundleId, appPath, launchArguments, permissions });
+  return obj({ origin: unassigned ? undefined : base?.origin, site, bundleId, appPath, launchArguments, ...enginePermissions(permissions) });
+}
+
+/**
+ * `app.permissions` as an engine reads it: a map stays `permissions`, and
+ * `'all'` becomes `grantAllPermissions`, so an engine that reads the map
+ * never meets a string there.
+ */
+function enginePermissions(permissions: TargetAppDeclaration['permissions']): Pick<EngineAppInfo, 'permissions' | 'grantAllPermissions'> {
+  return permissions === 'all' ? { grantAllPermissions: true } : obj({ permissions });
 }
 
 /**

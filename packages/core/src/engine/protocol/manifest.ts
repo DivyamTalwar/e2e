@@ -29,6 +29,7 @@ export function describeEngine(engine: EngineHandle): EngineManifest {
     pointerActions: engine.pointerActions,
     tapModifiers: engine.tapModifiers === true ? true : undefined,
     selectsDevice: engine.selectsDevice === true ? true : undefined,
+    appForms: engine.appForms,
     isolation: engine.isolation === 'worker' ? ('worker' as const) : undefined,
   });
 }
@@ -81,6 +82,7 @@ function comparable(manifest: EngineManifest) {
     pointerActions: sorted(manifest.pointerActions),
     tapModifiers: manifest.tapModifiers === true,
     selectsDevice: manifest.selectsDevice === true,
+    appForms: sorted(manifest.appForms),
     isolation: manifest.isolation === 'worker' ? 'worker' : 'attempt',
   };
 }

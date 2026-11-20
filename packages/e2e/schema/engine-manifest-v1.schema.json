@@ -120,6 +120,17 @@
       "description": "prepare binds the device e2e run --device names.",
       "type": "boolean"
     },
+    "appForms": {
+      "description": "Forms of a target's app beyond the baseline the engine takes; the runner refuses one the engine does not list.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "permissions-all"
+        ]
+      }
+    },
     "isolation": {
       "description": "What one attempt leaves for the next: present only as worker, when the engine's fixtures, app, and screen outlive an attempt.",
       "const": "worker"

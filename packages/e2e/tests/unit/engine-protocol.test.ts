@@ -520,18 +520,22 @@ describe('engine protocol', () => {
     expect(schema.properties['methods']?.items?.enum).toEqual([...ENGINE_METHODS]);
     expect(schema.properties['actions']?.items?.enum).toEqual([...LOCATOR_ACTION_KINDS]);
     expect(schema.properties['pointerActions']?.items?.enum).toEqual([...POINTER_ACTION_KINDS]);
+    expect(schema.properties['appForms']?.items?.enum).toEqual(['permissions-all']);
     const validate = new Ajv2020({ strict: false }).compile(schema);
-    const { local } = overLoopback(
+    const { local, remote } = overLoopback(
       toy({
         actions: ['tap'],
         perform: async () => {},
         pointerActions: ['tap'],
         performAt: async () => {},
         keyboard: { type: async () => {}, press: async () => {} },
+        appForms: ['permissions-all'],
         init: async () => {},
       }),
     );
     expect(validate(describeEngine(local))).toBe(true);
+    // The form crosses the wire, so the runner gates `app` on what the remote engine declared.
+    expect(remote.appForms).toEqual(['permissions-all']);
     const base = { name: 'x', version: '1', spiVersion: 1 };
     for (const refused of [
       { ...base, methods: ['engine/observe', 'engine/teleport'] },
@@ -539,6 +543,7 @@ describe('engine protocol', () => {
       { ...base, methods: ['engine/observe'], actions: ['tap'] },
       { ...base, methods: ['engine/observe'], tapModifiers: true },
       { ...base, methods: ['engine/observe'], selectsDevice: true },
+      { ...base, methods: ['engine/observe'], appForms: ['permissions-some'] },
       // The client serves prepare for finish alone, which would drop the device it never forwards.
       { ...base, methods: ['lifecycle/finish'], selectsDevice: true },
       { ...base, methods: ['engine/observe'], pointerActions: ['tap'] },

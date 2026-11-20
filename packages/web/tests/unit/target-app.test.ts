@@ -40,11 +40,12 @@ describe('web() and the target app', () => {
 
   it('takes \'all\' on every browser, granting each permission that browser grants', () => {
     for (const browser of ['chromium', 'firefox', 'webkit'] as const) {
-      expect(() => web({ browser }).validateApp!({ url: 'http://localhost:3000', permissions: 'all' }, { targetName: 'web' })).not.toThrow();
+      expect(() => web({ browser }).validateApp!({ url: 'http://localhost:3000', grantAllPermissions: true }, { targetName: 'web' })).not.toThrow();
     }
-    expect(grantedPermissions('firefox', 'all')).toEqual(['geolocation', 'local-network-access', 'notifications', 'persistent-storage', 'push', 'screen-wake-lock']);
-    expect(grantedPermissions('chromium', 'all')).toContain('clipboard-read');
-    expect(grantedPermissions('webkit', { camera: 'grant' })).toEqual(['camera']);
-    expect(grantedPermissions('webkit', undefined)).toEqual([]);
+    expect(web().appForms).toEqual(['permissions-all']);
+    expect(grantedPermissions('firefox', { grantAllPermissions: true })).toEqual(['geolocation', 'local-network-access', 'notifications', 'persistent-storage', 'push', 'screen-wake-lock']);
+    expect(grantedPermissions('chromium', { grantAllPermissions: true })).toContain('clipboard-read');
+    expect(grantedPermissions('webkit', { permissions: { camera: 'grant' } })).toEqual(['camera']);
+    expect(grantedPermissions('webkit', {})).toEqual([]);
   });
 });

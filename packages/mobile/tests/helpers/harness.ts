@@ -55,8 +55,9 @@ export interface Harness {
   prepare(info: Omit<EnginePrepareInfo, 'app'>): Promise<EnginePrepareResult | void>;
 }
 
-/** The engine's options and its target's app, in one literal: what a test varies. */
-export type HarnessOptions = Partial<MobileOptions> & Pick<EngineAppInfo, 'bundleId' | 'appPath' | 'launchArguments' | 'permissions'>;
+/** The engine's options and its target's app, in one literal: what a test varies. `permissions` takes `'all'` as a target does. */
+export type HarnessOptions = Partial<MobileOptions> &
+  Pick<EngineAppInfo, 'bundleId' | 'appPath' | 'launchArguments'> & { readonly permissions?: EngineAppInfo['permissions'] | 'all' };
 
 /** An engine over the scripted client; `pinned` false leaves the target's `bundleId` out. */
 export function harness(options: HarnessOptions = {}, pinned = true): Harness {
@@ -75,6 +76,12 @@ export function harness(options: HarnessOptions = {}, pinned = true): Harness {
     return fake.client;
   });
   const engine = buildEngine(surface);
-  const app = obj({ bundleId: bundleId ?? (pinned ? 'Settings' : undefined), appPath, launchArguments, permissions });
+  // The runner hands an engine `'all'` as `grantAllPermissions`, never in `permissions`.
+  const app = obj({
+    bundleId: bundleId ?? (pinned ? 'Settings' : undefined),
+    appPath,
+    launchArguments,
+    ...(permissions === 'all' ? { grantAllPermissions: true as const } : { permissions }),
+  });
   return { engine, fake, sessions, connections, surface, app, prepare: (info) => engine.prepare!({ ...info, app }) };
 }

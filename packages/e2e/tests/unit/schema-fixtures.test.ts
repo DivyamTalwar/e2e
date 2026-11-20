@@ -41,6 +41,13 @@ describe.each(schemas)('%s schema', (name) => {
       expect(validate(manifest)).toBe(false);
     });
 
+    it('rejects an app form it does not know', () => {
+      const manifest = readJson('fixtures', 'engine-manifest-v1.valid.json') as { appForms: string[] };
+      expect(manifest.appForms).toEqual(['permissions-all']);
+      manifest.appForms = ['permissions-some'];
+      expect(validate(manifest)).toBe(false);
+    });
+
     it('rejects selectsDevice without lifecycle/prepare', () => {
       const manifest = readJson('fixtures', 'engine-manifest-v1.valid.json') as { methods: string[]; selectsDevice: boolean };
       expect(manifest.selectsDevice).toBe(true);

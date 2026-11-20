@@ -498,7 +498,10 @@ permissions: { camera: 'grant' },
 ```
 
 Each is `'grant'`, `'deny'`, or `'reset'`. `permissions: 'all'` grants
-every permission the target's engine can grant.
+every permission the target's engine can grant. `web()` and `mobile()` take
+it; an engine that does not list it in
+[`appForms`](/reference/engine#app) fails config load with
+`UNSUPPORTED_CAPABILITY`.
 
 - A `mobile()` target sets each one before every fresh launch. See
   [permissions](/reference/mobile#engine).

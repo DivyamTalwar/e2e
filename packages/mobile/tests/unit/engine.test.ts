@@ -2564,6 +2564,28 @@ describe('device fixture', () => {
     }
   });
 
+  it("launches an Android app that declares no permissions under 'all', which has none to grant, and fails on any other refusal", async () => {
+    const declaresNone = new AppError('COMMAND_FAILED', 'Could not read declared permissions for com.example.app, so no permission was changed.', { appPackage: 'com.example.app' });
+    for (const [platform, refusal, launches] of [
+      ['android', declaresNone, true],
+      ['android', new AppError('COMMAND_FAILED', 'adb: device offline'), false],
+      // iOS never reads a manifest, so the same words there are a real failure.
+      ['ios', declaresNone, false],
+    ] as const) {
+      const h = harness({ platform, bundleId: 'com.example.app', permissions: 'all' });
+      h.fake.respond('apps.open', () => ({ session: 's', appName: 'Example', appBundleId: 'com.example.app', identifiers: {} }));
+      await boot(h, platform);
+      await h.engine.startAttempt!({ attemptId: 'a1', artifactsDir, signal: new AbortController().signal, resolveSecret: noSecrets, ...ignoreTrace });
+      h.fake.respond('settings.update', () => {
+        throw refusal;
+      });
+      const restart = h.engine.session!.restart!(operation());
+      if (launches) await expect(restart).resolves.toBeUndefined();
+      else await expect(restart).rejects.toThrow(refusal.message);
+      expect(h.fake.methods().at(-1), `${platform} ${refusal.message}`).toBe(launches ? 'apps.open' : 'settings.update');
+    }
+  });
+
   it('launches any app with its own arguments and permissions, set on that app by name', async () => {
     const h = harness();
     await openAttempt(h);

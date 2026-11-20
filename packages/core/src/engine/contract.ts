@@ -303,6 +303,20 @@ export type LocatorAction =
 export type LocatorActionKind = LocatorAction['kind'];
 
 /** The closed list of action kinds, in contract order; the type is derived from it. */
+/** Every `EngineAppForm`. */
+export const APP_FORMS = ['permissions-all'] as const;
+
+/**
+ * A form of a target's `app` beyond what every engine reads, which an engine
+ * takes by listing it in `Engine.appForms`. The runner refuses the form at
+ * config load on a target whose engine does not list it, so an engine
+ * written before the form existed never meets it.
+ *
+ * - `'permissions-all'`: `app.permissions: 'all'`, which the engine reads as
+ *   `EngineAppInfo.grantAllPermissions`.
+ */
+export type EngineAppForm = (typeof APP_FORMS)[number];
+
 export const LOCATOR_ACTION_KINDS = [
   'tap',
   'doubleTap',

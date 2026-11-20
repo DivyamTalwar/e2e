@@ -9,7 +9,7 @@ import { engineBrand } from '../internal/brands.ts';
 import { ConfigurationError } from '../internal/errors.ts';
 import { obj } from '../internal/objects.ts';
 import { isSecret } from '../secrets.ts';
-import { ENGINE_SPI_VERSION, LOCATOR_ACTION_KINDS, POINTER_ACTION_KINDS } from './contract.ts';
+import { APP_FORMS, ENGINE_SPI_VERSION, LOCATOR_ACTION_KINDS, POINTER_ACTION_KINDS } from './contract.ts';
 import type { Secret } from '../types.ts';
 import type { Engine, EngineCapability, EngineFixtureContext, EngineHandle } from './index.ts';
 
@@ -29,6 +29,7 @@ const KNOWN_KEYS = [
   'pointerActions',
   'tapModifiers',
   'selectsDevice',
+  'appForms',
   'keyboard',
   'fixtures',
   'isolation',
@@ -149,7 +150,7 @@ function declaredSecrets(name: string, value: unknown): readonly Secret[] {
   return Object.freeze(declared);
 }
 
-/** Validates a declared kind list (`actions`, `pointerActions`): a non-empty list of known kinds, each once. */
+/** Validates a declared kind list (`actions`, `pointerActions`, `appForms`): a non-empty list of known kinds, each once. */
 function declaredKinds<Kind extends string>(
   name: string,
   member: string,
@@ -157,7 +158,7 @@ function declaredKinds<Kind extends string>(
   known: readonly Kind[],
 ): readonly Kind[] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw invalid(name, `${member} must be a non-empty array of action kinds (${known.join(', ')})`);
+    throw invalid(name, `${member} must be a non-empty array of kinds (${known.join(', ')})`);
   }
   const seen = new Set<string>();
   for (const kind of value) {
@@ -303,6 +304,7 @@ export function defineEngine<Fixtures extends object = {}>(declared: EngineSpec<
   if (spec.actions !== undefined) handle['actions'] = declaredKinds(name, 'actions', spec.actions, LOCATOR_ACTION_KINDS);
   if (spec.tapModifiers === true) handle['tapModifiers'] = true;
   if (spec.selectsDevice === true) handle['selectsDevice'] = true;
+  if (spec.appForms !== undefined) handle['appForms'] = declaredKinds(name, 'appForms', spec.appForms, APP_FORMS);
   if (spec.isolation === 'worker') handle['isolation'] = 'worker';
   if (spec.pointerActions !== undefined) {
     handle['pointerActions'] = declaredKinds(name, 'pointerActions', spec.pointerActions, POINTER_ACTION_KINDS);

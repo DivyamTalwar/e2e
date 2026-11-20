@@ -60,7 +60,7 @@ import {
   beforeEach,
   describe,
 } from '../../src/index.ts';
-import type { Engine, EngineAttemptContext, EngineCleanupContext, EngineDisposeContext, EngineFixtureContext, EngineHandle, EngineObserveOptions, EngineSnapshot } from '../../src/engine/index.ts';
+import type { Engine, EngineAppInfo, EngineAttemptContext, EngineCleanupContext, EngineDisposeContext, EngineFixtureContext, EngineHandle, EngineObserveOptions, EngineSnapshot } from '../../src/engine/index.ts';
 import {
   BASE_RULES,
   createGrammarTools,
@@ -239,6 +239,12 @@ customExecutorObservation.keyboardVisible satisfies boolean | undefined;
 ({ targets: [{ engine, app: { bundleId: 'dev.shop.app', permissions: { camera: 'allow' } } }] }) satisfies E2EConfig;
 // @ts-expect-error `'all'` is the one shorthand; anything else names each permission
 ({ targets: [{ engine, app: { bundleId: 'dev.shop.app', permissions: 'every' } }] }) satisfies E2EConfig;
+// @ts-expect-error an engine reads `'all'` as grantAllPermissions, so a third-party engine reading the map never meets a string
+({ permissions: 'all' }) satisfies EngineAppInfo;
+({ grantAllPermissions: true }) satisfies EngineAppInfo;
+({ appForms: ['permissions-all'] }) satisfies Partial<Engine>;
+// @ts-expect-error appForms names only the forms the contract defines
+({ appForms: ['permissions-some'] }) satisfies Partial<Engine>;
 // @ts-expect-error launch arguments are the strings the launch command takes
 ({ targets: [{ engine, app: { bundleId: 'dev.shop.app', launchArguments: [1] } }] }) satisfies E2EConfig;
 // @ts-expect-error the app URL is the target's app.url, not a key of the target itself

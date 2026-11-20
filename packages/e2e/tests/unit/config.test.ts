@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { discoverConfig } from '../../src/config/load.ts';
 import { isCiMode, type CliOverrides } from '@e2e-dev/core/lib/config/resolve';
+import { engineAppInfo } from '@e2e-dev/core/lib/config/app';
 import { resolveConfig } from '../../src/config/resolve-run.ts';
 import { ConfigurationError, defineEngine } from '@e2e-dev/core/lib/engine/index';
 import { protocolEngine } from '@e2e-dev/core/lib/engine/protocol/client';
@@ -525,7 +526,19 @@ describe('resolveConfig', () => {
       launchArguments: ['-e2e'],
       permissions: { camera: 'grant' },
     });
-    expect(resolveApp({ bundleId: 'dev.shop.app', permissions: 'all' }).permissions).toBe('all');
+  });
+
+  it("takes permissions 'all' only on an engine that lists the form, and hands it to the engine as grantAllPermissions", () => {
+    const seen: unknown[] = [];
+    const granting = defineEngine({ name: 'granting', version: '1.0.0', spiVersion: 1, appForms: ['permissions-all'], validateApp: (app) => void seen.push(app) });
+    const target = resolve({ targets: [{ ...WEB, engine: granting, app: { bundleId: 'dev.shop.app', permissions: 'all' } }] }).targets[0]!;
+    expect(target.app.permissions).toBe('all');
+    // An engine that reads the map never meets a string there.
+    expect(seen).toEqual([{ bundleId: 'dev.shop.app', grantAllPermissions: true }]);
+    expect(engineAppInfo(target.app)).toEqual({ bundleId: 'dev.shop.app', grantAllPermissions: true });
+    expect(() => resolveApp({ bundleId: 'dev.shop.app', permissions: 'all' })).toThrow(
+      expect.objectContaining({ code: 'UNSUPPORTED_CAPABILITY', message: expect.stringContaining("app.permissions is 'all', and engine fake does not grant every permission") }),
+    );
   });
 
   it("hands the declaration to the engine's validateApp, which names the target", () => {

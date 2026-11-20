@@ -53,6 +53,7 @@ export { isRefusedLinkScheme, sameSite, siteOf, urlMatches } from '../internal/u
 export { obj, type WithoutUndefined } from '../internal/objects.ts';
 import type { AppPermissionState, Expectable, Locator, Screen, Secret } from '../types.ts';
 import type {
+  EngineAppForm,
   EngineSpiVersion,
   LocatorAction,
   LocatorActionKind,
@@ -169,12 +170,15 @@ export interface EngineAppInfo {
   readonly appPath?: string;
   /** Arguments every fresh launch passes the app. */
   readonly launchArguments?: readonly string[];
+  /** Permissions the app holds, by name; what each state means is the engine's (a device sets them before every fresh launch). */
+  readonly permissions?: Readonly<Record<string, AppPermissionState>>;
   /**
-   * Permissions the app holds, by name; what each state means is the
-   * engine's (a device sets them before every fresh launch). `'all'` grants
-   * every permission the engine can grant.
+   * The target asked for every permission the engine can grant
+   * (`app.permissions: 'all'`), so `permissions` is absent. Only an engine
+   * whose `appForms` lists `'permissions-all'` sees it: the runner refuses
+   * `'all'` at config load on a target whose engine does not.
    */
-  readonly permissions?: Readonly<Record<string, AppPermissionState>> | 'all';
+  readonly grantAllPermissions?: true;
 }
 
 /**
@@ -877,6 +881,8 @@ export interface Engine {
    * anything is prepared.
    */
   readonly selectsDevice?: boolean;
+  /** The forms of a target's `app` the engine takes beyond the baseline; see `EngineAppForm`. */
+  readonly appForms?: readonly EngineAppForm[];
   /** capability: keyboard - requires observation. Input to whatever holds focus; see `EngineKeyboard`. */
   readonly keyboard?: EngineKeyboard;
   /**

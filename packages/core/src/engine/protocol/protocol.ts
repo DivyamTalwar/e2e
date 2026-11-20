@@ -14,7 +14,7 @@
  */
 
 import { E2EError, ConfigurationError, ERROR_CATEGORIES, InfrastructureError, TestError, asEngineError, isE2EError } from '../../internal/errors.ts';
-import { ENGINE_ERROR_CODES, EngineError, type EngineErrorCode, type EngineSpiVersion, type LocatorActionKind, type PointerActionKind } from '../contract.ts';
+import { ENGINE_ERROR_CODES, EngineError, type EngineAppForm, type EngineErrorCode, type EngineSpiVersion, type LocatorActionKind, type PointerActionKind } from '../contract.ts';
 import type { Engine, EngineSnapshot } from '../index.ts';
 import { RPC_ERRORS, isRpcErrorObject, type RpcErrorObject } from './connection.ts';
 
@@ -118,6 +118,8 @@ export interface EngineManifest {
   readonly tapModifiers?: boolean;
   /** See `Engine.selectsDevice`. */
   readonly selectsDevice?: boolean;
+  /** See `Engine.appForms`. */
+  readonly appForms?: readonly EngineAppForm[];
   /** See `Engine.isolation`; left out for `attempt`. */
   readonly isolation?: 'worker';
 }

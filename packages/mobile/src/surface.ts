@@ -46,7 +46,7 @@ import {
   ConfigurationError,
   TestError,
 } from '@e2e-dev/core/engine';
-import { isAppNotRunning, isSnapshotPresentationFailure, isUnreadableCapture, ORIGIN_UNKNOWN_BOUNDS, ORIGIN_WARNING, runCommand, staleOr } from './errors.ts';
+import { isAppNotRunning, isNoDeclaredPermissions, isSnapshotPresentationFailure, isUnreadableCapture, ORIGIN_UNKNOWN_BOUNDS, ORIGIN_WARNING, runCommand, staleOr } from './errors.ts';
 import { pointerInteraction, DEFAULT_LONG_PRESS_MS } from './actions.ts';
 import { resolveExpression } from './locate.ts';
 import {
@@ -890,7 +890,7 @@ export class AgentDeviceSurface {
     // permission change there would terminate the app it means to keep.
     const configured = relaunch && app === this.pinnedApp;
     const launchArguments = options.launchArguments ?? (configured ? this.app.launchArguments : undefined);
-    const permissions = options.permissions ?? (configured ? this.app.permissions : undefined);
+    const permissions = options.permissions ?? (configured ? (this.app.grantAllPermissions === true ? 'all' : this.app.permissions) : undefined);
     if (permissions !== undefined) await this.presetPermissions(app, permissions, signal);
     await this.open(app, relaunch, launchArguments, signal);
   }
@@ -916,11 +916,17 @@ export class AgentDeviceSurface {
    * terminates a running app whose permission changed, and Android one whose
    * permission was revoked, so a change after the launch would leave the
    * test on no screen. `'all'` is one agent-device `all` grant on either
-   * platform; `LaunchPermissions` says what it grants on each.
+   * platform; `LaunchPermissions` says what it grants on each. An Android
+   * app that declares no permissions has none to grant, which agent-device
+   * reports as a failure.
    */
   private async presetPermissions(app: string, permissions: LaunchPermissions, signal: AbortSignal): Promise<void> {
     if (permissions === 'all') {
-      await this.permission('all', 'grant', app, signal);
+      try {
+        await this.permission('all', 'grant', app, signal);
+      } catch (error) {
+        if (this.options.platform !== 'android' || !isNoDeclaredPermissions(error)) throw error;
+      }
       return;
     }
     const entries = Object.entries(permissions).filter(

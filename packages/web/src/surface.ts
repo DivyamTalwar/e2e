@@ -542,7 +542,7 @@ export class PlaywrightSurface {
     const routes: StoredRoute[] = [];
     const initScripts = this.configuredInitScripts.forAttempt();
     // `validateApp` admitted only grants.
-    const granted = grantedPermissions(this.browserName, this.app.permissions);
+    const granted = grantedPermissions(this.browserName, this.app);
     this.latch = new ErrorLatch();
     const dialogs = new DialogRouter(this.latch);
     this.routes = routes;

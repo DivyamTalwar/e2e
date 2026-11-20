@@ -227,6 +227,8 @@ export interface Engine {
    * for the target before anything is prepared.
    */
   readonly selectsDevice?: boolean;
+  /** The forms of a target's `app` the engine takes beyond the baseline; see `EngineAppForm`. */
+  readonly appForms?: readonly EngineAppForm[];
   /** capability: keyboard - requires observation. Input to whatever holds focus; see `EngineKeyboard`. */
   readonly keyboard?: EngineKeyboard;
   /**
@@ -1275,6 +1277,12 @@ export function parseKey(key: string): ParsedKey | undefined;
 
 `CommandConfig` 从 `e2e` 导出，而非 `e2e/engine`。
 
+引擎在 `appForms` 中列出上述字段之外的 `app` 形式，即可接收该形式。运行器在未列出该形式的引擎上拒绝它，因此在该形式出现之前编写的引擎永远不会收到它。
+
+```ts
+type EngineAppForm = 'permissions-all';
+```
+
 #### `validateApp`
 
 在加载配置时同步检查声明的应用。
@@ -1350,12 +1358,15 @@ export interface EngineAppInfo {
   readonly appPath?: string;
   /** Arguments every fresh launch passes the app. */
   readonly launchArguments?: readonly string[];
+  /** Permissions the app holds, by name; what each state means is the engine's (a device sets them before every fresh launch). */
+  readonly permissions?: Readonly<Record<string, AppPermissionState>>;
   /**
-   * Permissions the app holds, by name; what each state means is the
-   * engine's (a device sets them before every fresh launch). `'all'` grants
-   * every permission the engine can grant.
+   * The target asked for every permission the engine can grant
+   * (`app.permissions: 'all'`), so `permissions` is absent. Only an engine
+   * whose `appForms` lists `'permissions-all'` sees it: the runner refuses
+   * `'all'` at config load on a target whose engine does not.
    */
-  readonly permissions?: Readonly<Record<string, AppPermissionState>> | 'all';
+  readonly grantAllPermissions?: true;
 }
 ```
 

@@ -307,6 +307,20 @@ export function isAppNotInstalled(error: unknown): boolean {
 }
 
 /**
+ * True for a translated Android `permission all grant` agent-device refused
+ * because `dumpsys package` lists no requested permissions for the app,
+ * which is how an app that declares none reads (agent-device 0.21.41).
+ */
+export function isNoDeclaredPermissions(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    isAgentDeviceError(error.cause) &&
+    typeof details(error.cause).appPackage === 'string' &&
+    error.cause.message.startsWith('Could not read declared permissions')
+  );
+}
+
+/**
  * Runs one agent-device command under an abort signal and translates its
  * failure onto the engine taxonomy: the one boundary every command crosses.
  */
