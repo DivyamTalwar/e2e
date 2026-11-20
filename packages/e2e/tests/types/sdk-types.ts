@@ -256,6 +256,9 @@ declare const tokenFromEnv: string | undefined;
 ({ targets: [{ engine, app: { bundleId: 'dev.shop.app', launchArguments: { locale: { language: 'fr' } } } }] }) satisfies E2EConfig;
 // @ts-expect-error a list value holds strings only
 ({ targets: [{ engine, app: { bundleId: 'dev.shop.app', launchArguments: { languages: [1] } } }] }) satisfies E2EConfig;
+// @ts-expect-error an engine reads an object as namedLaunchArguments, so launchArguments stays the list a third-party engine reads
+({ launchArguments: { AppleLocale: 'fr_FR' } }) satisfies EngineAppInfo;
+({ namedLaunchArguments: { AppleLocale: 'fr_FR', e2e: true } }) satisfies EngineAppInfo;
 
 // @ts-expect-error the app URL is the target's app.url, not a key of the target itself
 ({ targets: [{ engine, url: 'http://localhost:3000' }] }) satisfies E2EConfig;

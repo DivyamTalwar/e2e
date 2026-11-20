@@ -83,3 +83,8 @@ function describe(value: unknown): string {
 function fail(code: 'INVALID_CONFIG' | 'INVALID_ARGUMENT', message: string): never {
   throw code === 'INVALID_CONFIG' ? new ConfigurationError(code, message) : new TestError(code, message);
 }
+
+/** Whether checked launch arguments are the list form. `Array.isArray` alone narrows a readonly list to `any[]`. */
+export function isLaunchArgumentList(launchArguments: ResolvedLaunchArguments): launchArguments is readonly string[] {
+  return Array.isArray(launchArguments);
+}

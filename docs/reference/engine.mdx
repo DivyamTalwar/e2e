@@ -1379,6 +1379,7 @@ the declaration to [`validateApp`](#validateapp) at config load.
 | the site of `url` | `info.app.site` in `prepare` and `init` |
 | `bundleId`, `appPath`, `launchArguments`, `permissions` | `validateApp`, and `info.app` in `prepare` and `init`, as the target declared them |
 | `permissions: 'all'` | `grantAllPermissions: true`, with no `permissions`, for an engine whose `appForms` lists `'permissions-all'`. On any other engine it is `UNSUPPORTED_CAPABILITY` at config load |
+| `launchArguments` as an object | `namedLaunchArguments`, with no `launchArguments`, for an engine whose `appForms` lists `'named-launch-arguments'`. On any other engine it is `UNSUPPORTED_CAPABILITY` at config load |
 | `command`, `readyUrl` | Never. The runner starts the app. |
 
 `CommandConfig` is exported from `e2e`, not `e2e/engine`.
@@ -1388,7 +1389,7 @@ An engine takes a form of `app` beyond these fields by listing it in
 written before the form existed never receives it.
 
 ```ts
-type EngineAppForm = 'permissions-all';
+type EngineAppForm = 'permissions-all' | 'named-launch-arguments';
 ```
 
 #### `validateApp`
@@ -1479,7 +1480,16 @@ export interface EngineAppInfo {
   /** The build to install, as the target declared it; relative to `projectRoot`. */
   readonly appPath?: string;
   /** Arguments every fresh launch passes the app. */
-  readonly launchArguments?: ResolvedLaunchArguments;
+  readonly launchArguments?: readonly string[];
+  /**
+   * The target gave its launch arguments as an object of argument name to
+   * value (`app.launchArguments: { AppleLocale: 'fr_FR' }`), so
+   * `launchArguments` is absent and the engine spells each entry for its
+   * platform. Only an engine whose `appForms` lists
+   * `'named-launch-arguments'` sees it: the runner refuses the object at
+   * config load on a target whose engine does not.
+   */
+  readonly namedLaunchArguments?: Readonly<Record<string, LaunchArgumentValue>>;
   /** Permissions the app holds, by name; what each state means is the engine's (a device sets them before every fresh launch). */
   readonly permissions?: Readonly<Record<string, AppPermissionState>>;
   /**

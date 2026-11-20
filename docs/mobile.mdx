@@ -130,10 +130,10 @@ The device keeps its own language. Add one target per language:
   `['-AppleLanguages', '(fr)', '-AppleLocale', 'fr_FR']`.
 - The app must ship the language. If it doesn't, iOS shows its development
   language.
-- Android has no launch argument for the language. `AppleLanguages` or
-  `AppleLocale` in an object on an Android target fails at config load. On
-  a hosted device, set `language` and `locale` on `browserstack()` or
-  `testmu()`. On a local device, set the device's language before the run.
+- Android has no launch argument for the language, and takes launch
+  arguments as a list only. On a hosted device, set `language` and `locale`
+  on `browserstack()` or `testmu()`. On a local device, set the device's
+  language before the run.
 
 ### Expo development builds
 

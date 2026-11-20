@@ -1280,7 +1280,7 @@ export function parseKey(key: string): ParsedKey | undefined;
 エンジンは、上記以外の `app` の形を `appForms` に列挙して受け取ります。ランナーは、その形を列挙していないエンジンでは拒否するため、その形より前に書かれたエンジンが受け取ることはありません。
 
 ```ts
-type EngineAppForm = 'permissions-all';
+type EngineAppForm = 'permissions-all' | 'named-launch-arguments';
 ```
 
 #### `validateApp`
@@ -1366,7 +1366,16 @@ export interface EngineAppInfo {
   /** The build to install, as the target declared it; relative to `projectRoot`. */
   readonly appPath?: string;
   /** Arguments every fresh launch passes the app. */
-  readonly launchArguments?: ResolvedLaunchArguments;
+  readonly launchArguments?: readonly string[];
+  /**
+   * The target gave its launch arguments as an object of argument name to
+   * value (`app.launchArguments: { AppleLocale: 'fr_FR' }`), so
+   * `launchArguments` is absent and the engine spells each entry for its
+   * platform. Only an engine whose `appForms` lists
+   * `'named-launch-arguments'` sees it: the runner refuses the object at
+   * config load on a target whose engine does not.
+   */
+  readonly namedLaunchArguments?: Readonly<Record<string, LaunchArgumentValue>>;
   /** Permissions the app holds, by name; what each state means is the engine's (a device sets them before every fresh launch). */
   readonly permissions?: Readonly<Record<string, AppPermissionState>>;
   /**

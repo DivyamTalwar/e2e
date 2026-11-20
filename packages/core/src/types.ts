@@ -1349,13 +1349,10 @@ export interface CommandConfig {
 export type AppPermissionState = 'grant' | 'deny' | 'reset';
 
 /**
- * One value in the object form of `launchArguments`. On iOS
- * `{ AppleLocale: 'fr_FR' }` is `-AppleLocale fr_FR`, `{ e2e: true }` is
- * `-e2e YES`, and `{ AppleLanguages: ['fr', 'de'] }` is
- * `-AppleLanguages (fr, de)`. On Android each value is an `am start` extra
- * of its type: `{ e2e: true }` is `--ez e2e true`, `{ retries: 3 }` is
- * `--ei retries 3`, `{ locale: 'fr_FR' }` is `--es locale fr_FR`, and a list
- * is `--esa tags a,b`.
+ * One value in the object form of `launchArguments`, which the engine
+ * spells for its platform. On iOS `{ AppleLocale: 'fr_FR' }` is
+ * `-AppleLocale fr_FR`, `{ e2e: true }` is `-e2e YES`, and
+ * `{ AppleLanguages: ['fr', 'de'] }` is `-AppleLanguages (fr, de)`.
  */
 export type LaunchArgumentValue = string | number | boolean | readonly string[];
 

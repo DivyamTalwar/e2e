@@ -5,7 +5,7 @@
  * `init` for one worker slot.
  */
 
-import { obj, type EngineAppInfo, type EngineHandle, type EnginePrepareInfo, type EnginePrepareResult } from '@e2e-dev/core/engine';
+import { obj, type EngineAppInfo, type EngineHandle, type EnginePrepareInfo, type EnginePrepareResult, type ResolvedLaunchArguments } from '@e2e-dev/core/engine';
 import { buildEngine } from '../../src/engine.ts';
 import type { MobileOptions } from '../../src/options.ts';
 import type { DeviceConnection } from '../../src/bindings.ts';
@@ -55,9 +55,12 @@ export interface Harness {
   prepare(info: Omit<EnginePrepareInfo, 'app'>): Promise<EnginePrepareResult | void>;
 }
 
-/** The engine's options and its target's app, in one literal: what a test varies. `permissions` takes `'all'` as a target does. */
+/** The engine's options and its target's app, in one literal: what a test varies. `launchArguments` takes an object and `permissions` `'all'`, as a target does. */
 export type HarnessOptions = Partial<MobileOptions> &
-  Pick<EngineAppInfo, 'bundleId' | 'appPath' | 'launchArguments'> & { readonly permissions?: EngineAppInfo['permissions'] | 'all' };
+  Pick<EngineAppInfo, 'bundleId' | 'appPath'> & {
+    readonly launchArguments?: ResolvedLaunchArguments;
+    readonly permissions?: EngineAppInfo['permissions'] | 'all';
+  };
 
 /** An engine over the scripted client; `pinned` false leaves the target's `bundleId` out. */
 export function harness(options: HarnessOptions = {}, pinned = true): Harness {
@@ -76,12 +79,15 @@ export function harness(options: HarnessOptions = {}, pinned = true): Harness {
     return fake.client;
   });
   const engine = buildEngine(surface);
-  // The runner hands an engine `'all'` as `grantAllPermissions`, never in `permissions`.
-  const app = obj({
+  // The runner hands an engine an object as `namedLaunchArguments` and `'all'` as `grantAllPermissions`, never in the baseline fields.
+  const named = launchArguments !== undefined && !Array.isArray(launchArguments) ? (launchArguments as EngineAppInfo['namedLaunchArguments']) : undefined;
+  const app: EngineAppInfo = obj({
     bundleId: bundleId ?? (pinned ? 'Settings' : undefined),
     appPath,
-    launchArguments,
-    ...(permissions === 'all' ? { grantAllPermissions: true as const } : { permissions }),
+    launchArguments: named === undefined ? (launchArguments as EngineAppInfo['launchArguments']) : undefined,
+    namedLaunchArguments: named,
+    permissions: permissions === 'all' ? undefined : permissions,
+    grantAllPermissions: permissions === 'all' ? (true as const) : undefined,
   });
   return { engine, fake, sessions, connections, surface, app, prepare: (info) => engine.prepare!({ ...info, app }) };
 }

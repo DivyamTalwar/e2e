@@ -7,7 +7,7 @@
 import type { EngineAppDeclaration, EngineAppInfo, EngineHandle } from '../engine/index.ts';
 import { ConfigurationError } from '../internal/errors.ts';
 import { obj } from '../internal/objects.ts';
-import { checkLaunchArguments } from '../internal/launch-arguments.ts';
+import { checkLaunchArguments, isLaunchArgumentList } from '../internal/launch-arguments.ts';
 import { rejectUnknownKeys } from '../internal/options.ts';
 import { didYouMean } from '../internal/suggest.ts';
 import { isImplicitTestHost, isRefusedLinkScheme, normalizeBaseUrl, portOf, requestsFreePort, siteOf, withPort, type NormalizedBaseUrl } from '../internal/urls.ts';
@@ -139,6 +139,12 @@ export function checkTargetApp(targetName: string, engine: EngineHandle | undefi
     throw new ConfigurationError('INVALID_CONFIG', `${where}.environment must be one of test, staging, production, got ${JSON.stringify(environment)}`);
   }
   const launchArguments = checkLaunchArguments(`${where}.launchArguments`, app.launchArguments);
+  if (launchArguments !== undefined && !isLaunchArgumentList(launchArguments) && engine?.appForms?.includes('named-launch-arguments') !== true) {
+    throw new ConfigurationError(
+      'UNSUPPORTED_CAPABILITY',
+      `${where}.launchArguments is an object, and engine ${engine?.name ?? 'none'}${engine?.platform === undefined ? '' : ` on ${engine.platform}`} takes only a list of strings; give the arguments as a list`,
+    );
+  }
   if (permissions === 'all' && engine?.appForms?.includes('permissions-all') !== true) {
     throw new ConfigurationError(
       'UNSUPPORTED_CAPABILITY',
@@ -168,7 +174,7 @@ export function checkTargetApp(targetName: string, engine: EngineHandle | undefi
     readyUrl: nonEmptyString(app.readyUrl, `${where}.readyUrl`),
   };
   const { url, bundleId, appPath } = checked;
-  engine?.validateApp?.(obj({ url, bundleId, appPath, launchArguments, ...enginePermissions(permissions) }) satisfies EngineAppDeclaration, { targetName });
+  engine?.validateApp?.(obj({ url, bundleId, appPath, ...engineForms(checked) }) satisfies EngineAppDeclaration, { targetName });
   return checked;
 }
 
@@ -309,18 +315,29 @@ export function resolveTargetApp(targetName: string, app: TargetAppDeclaration, 
  * report it on port `0`.
  */
 export function engineAppInfo(app: ResolvedApp): EngineAppInfo {
-  const { base, portRequest, site, bundleId, appPath, launchArguments, permissions } = app;
+  const { base, portRequest, site, bundleId, appPath } = app;
   const unassigned = portRequest !== undefined && portRequest.port === undefined;
-  return obj({ origin: unassigned ? undefined : base?.origin, site, bundleId, appPath, launchArguments, ...enginePermissions(permissions) });
+  return obj({ origin: unassigned ? undefined : base?.origin, site, bundleId, appPath, ...engineForms(app) });
 }
 
 /**
- * `app.permissions` as an engine reads it: a map stays `permissions`, and
- * `'all'` becomes `grantAllPermissions`, so an engine that reads the map
- * never meets a string there.
+ * The `app` fields with a wider form, as an engine reads them: a list of
+ * launch arguments stays `launchArguments` and an object becomes
+ * `namedLaunchArguments`; a permissions map stays `permissions` and `'all'`
+ * becomes `grantAllPermissions`. The baseline fields keep their types, so
+ * an engine never meets a form it did not list in `appForms`.
  */
-function enginePermissions(permissions: TargetAppDeclaration['permissions']): Pick<EngineAppInfo, 'permissions' | 'grantAllPermissions'> {
-  return permissions === 'all' ? { grantAllPermissions: true } : obj({ permissions });
+function engineForms({
+  launchArguments,
+  permissions,
+}: Pick<TargetAppDeclaration, 'launchArguments' | 'permissions'>): Pick<EngineAppInfo, 'launchArguments' | 'namedLaunchArguments' | 'permissions' | 'grantAllPermissions'> {
+  const list = launchArguments === undefined || isLaunchArgumentList(launchArguments);
+  return obj({
+    launchArguments: list ? launchArguments : undefined,
+    namedLaunchArguments: list ? undefined : launchArguments,
+    permissions: permissions === 'all' ? undefined : permissions,
+    grantAllPermissions: permissions === 'all' ? (true as const) : undefined,
+  });
 }
 
 /**

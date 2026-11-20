@@ -304,7 +304,7 @@ export type LocatorActionKind = LocatorAction['kind'];
 
 /** The closed list of action kinds, in contract order; the type is derived from it. */
 /** Every `EngineAppForm`. */
-export const APP_FORMS = ['permissions-all'] as const;
+export const APP_FORMS = ['permissions-all', 'named-launch-arguments'] as const;
 
 /**
  * A form of a target's `app` beyond what every engine reads, which an engine
@@ -314,6 +314,9 @@ export const APP_FORMS = ['permissions-all'] as const;
  *
  * - `'permissions-all'`: `app.permissions: 'all'`, which the engine reads as
  *   `EngineAppInfo.grantAllPermissions`.
+ * - `'named-launch-arguments'`: `app.launchArguments` as an object of
+ *   argument name to value, which the engine reads as
+ *   `EngineAppInfo.namedLaunchArguments`.
  */
 export type EngineAppForm = (typeof APP_FORMS)[number];
 

@@ -544,15 +544,28 @@ describe('resolveConfig', () => {
   });
 
   it('takes launch arguments as an object of name to string, number, boolean, or list of strings, and leaves out an undefined value', () => {
+    const seen: unknown[] = [];
+    const spelling = defineEngine({ name: 'spelling', version: '1.0.0', spiVersion: 1, appForms: ['named-launch-arguments'], validateApp: (app) => void seen.push(app) });
+    const named = (launchArguments: TargetApp['launchArguments']) => resolve({ targets: [{ ...WEB, engine: spelling, app: { bundleId: 'dev.shop.app', launchArguments } }] }).targets[0]!.app;
     const launchArguments = { AppleLanguages: ['fr'], AppleLocale: 'fr_FR', e2e: true, retries: 3, skipOnboarding: undefined };
-    expect(resolveApp({ bundleId: 'dev.shop.app', launchArguments }).launchArguments).toEqual({
+    expect(named(launchArguments).launchArguments).toEqual({
       AppleLanguages: ['fr'],
       AppleLocale: 'fr_FR',
       e2e: true,
       retries: 3,
     });
-    expect(resolveApp({ bundleId: 'dev.shop.app', launchArguments: {} }).launchArguments).toEqual({});
-    expect(resolveApp({ bundleId: 'dev.shop.app', launchArguments: Object.assign(Object.create(null), { e2e: true }) }).launchArguments).toEqual({ e2e: true });
+    expect(named({}).launchArguments).toEqual({});
+    expect(named(Object.assign(Object.create(null), { e2e: true })).launchArguments).toEqual({ e2e: true });
+    // The engine reads the object as namedLaunchArguments; `launchArguments` stays a list for an engine that never listed the form.
+    expect(seen[0]).toEqual({ bundleId: 'dev.shop.app', namedLaunchArguments: { AppleLanguages: ['fr'], AppleLocale: 'fr_FR', e2e: true, retries: 3 } });
+    expect(engineAppInfo(named(['-e2e', 'YES']))).toEqual({ bundleId: 'dev.shop.app', launchArguments: ['-e2e', 'YES'] });
+    expect(() => resolveApp({ bundleId: 'dev.shop.app', launchArguments: { e2e: true } })).toThrow(
+      expect.objectContaining({ code: 'UNSUPPORTED_CAPABILITY', message: expect.stringContaining('app.launchArguments is an object, and engine fake takes only a list of strings') }),
+    );
+    const listOnly = defineEngine({ name: 'mobile', version: '1.0.0', spiVersion: 1, platform: 'android' });
+    expect(() => resolve({ targets: [{ name: 'pixel', engine: listOnly, app: { bundleId: 'dev.shop.app', launchArguments: { e2e: true } } }] })).toThrow(
+      'target "pixel" app.launchArguments is an object, and engine mobile on android takes only a list of strings; give the arguments as a list',
+    );
 
     const shape = 'target "web" app.launchArguments must be an array of strings or an object of argument name to string, number, boolean, or array of strings';
     expect(() => resolveApp({ launchArguments: 'fr_FR' } as never)).toThrow(`${shape}, got a string`);
@@ -580,7 +593,7 @@ describe('resolveConfig', () => {
     expect(() => resolveApp({ launchArguments: { retries: Number.NaN } })).toThrow(`${value('retries')} NaN`);
     expect(() => resolveApp({ launchArguments: { retries: 2 ** 53 } })).toThrow(`${value('retries')} a number beyond 2^53 - 1`);
     expect(() => resolveApp({ launchArguments: { ratio: -1e300 } })).toThrow(`${value('ratio')} a number beyond 2^53 - 1`);
-    expect(resolveApp({ bundleId: 'dev.shop.app', launchArguments: { retries: 2 ** 53 - 1, ratio: -1.5 } }).launchArguments).toEqual({ retries: 2 ** 53 - 1, ratio: -1.5 });
+    expect(named({ retries: 2 ** 53 - 1, ratio: -1.5 }).launchArguments).toEqual({ retries: 2 ** 53 - 1, ratio: -1.5 });
     expect(() => resolveApp({ launchArguments: { retries: null } } as never)).toThrow(`${value('retries')} null`);
     expect(() => resolveApp({ launchArguments: { when: new Date(0) } } as never)).toThrow(`${value('when')} a Date`);
   });

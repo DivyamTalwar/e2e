@@ -52,7 +52,7 @@ export type {
 export { Deadline, pollCondition, stepTimeout, withTimeout, withinCleanupBudget, type PollConditionOptions } from '../internal/time.ts';
 export { isRefusedLinkScheme, sameSite, siteOf, urlMatches } from '../internal/urls.ts';
 export { obj, type WithoutUndefined } from '../internal/objects.ts';
-import type { AppPermissionState, Expectable, Locator, ResolvedLaunchArguments, Screen, Secret } from '../types.ts';
+import type { AppPermissionState, Expectable, Locator, LaunchArgumentValue, Screen, Secret } from '../types.ts';
 import type {
   EngineAppForm,
   EngineSpiVersion,
@@ -170,7 +170,16 @@ export interface EngineAppInfo {
   /** The build to install, as the target declared it; relative to `projectRoot`. */
   readonly appPath?: string;
   /** Arguments every fresh launch passes the app. */
-  readonly launchArguments?: ResolvedLaunchArguments;
+  readonly launchArguments?: readonly string[];
+  /**
+   * The target gave its launch arguments as an object of argument name to
+   * value (`app.launchArguments: { AppleLocale: 'fr_FR' }`), so
+   * `launchArguments` is absent and the engine spells each entry for its
+   * platform. Only an engine whose `appForms` lists
+   * `'named-launch-arguments'` sees it: the runner refuses the object at
+   * config load on a target whose engine does not.
+   */
+  readonly namedLaunchArguments?: Readonly<Record<string, LaunchArgumentValue>>;
   /** Permissions the app holds, by name; what each state means is the engine's (a device sets them before every fresh launch). */
   readonly permissions?: Readonly<Record<string, AppPermissionState>>;
   /**

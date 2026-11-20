@@ -136,23 +136,10 @@ describe('manifest', () => {
     expect(() => validateApp!({ url: 'http://127.0.0.1:3000' }, info)).toThrowError(expect.objectContaining({ message: expect.not.stringContaining('10.0.2.2') }));
   });
 
-  it('refuses an iOS launch argument in an object on an Android target, and passes a list through', () => {
-    const info = { targetName: 'pixel' };
-    const android = harness({ platform: 'android' }).engine.validateApp!;
-    const ios = harness().engine.validateApp!;
-    const app = (launchArguments: unknown) => ({ bundleId: 'com.example.app', launchArguments }) as never;
-
-    expect(() => android(app({ AppleLocale: 'fr_FR' }), info)).toThrowError(
-      expect.objectContaining({
-        code: 'INVALID_CONFIG',
-        message: `target "pixel" app.launchArguments.AppleLocale is an iOS launch argument, and Android reads none of Apple's; set the device's language before the run, or language and locale on a hosted device provider`,
-      }),
-    );
-
-    expect(() => android(app({ AppleLanguages: ['fr'] }), info)).toThrowError(expect.objectContaining({ code: 'INVALID_CONFIG' }));
-    expect(() => android(app({ e2e: true, locale: 'fr_FR' }), info)).not.toThrow();
-    expect(() => android(app(['-AppleLocale', 'fr_FR']), info)).not.toThrow();
-    expect(() => ios(app({ AppleLocale: 'fr_FR', AppleLanguages: ['fr'] }), { targetName: 'ios' })).not.toThrow();
+  it('takes a launch-argument object on iOS only, where the process arguments carry it as typed', () => {
+    expect(harness().engine.appForms).toEqual(['permissions-all', 'named-launch-arguments']);
+    // An am start extra's type is the app's to know, so Android takes the list form, and the runner refuses an object at config load.
+    expect(harness({ platform: 'android' }).engine.appForms).toEqual(['permissions-all']);
   });
 
   it('rejects a permission name or state it does not know on the target, naming the nearest name', () => {
@@ -2605,7 +2592,7 @@ describe('device fixture', () => {
     }
   });
 
-  it('spells a launch-argument object for the platform on every fresh launch of the pinned app, and sends nothing for an empty object', async () => {
+  it('spells a launch-argument object as iOS process arguments on every fresh launch of the pinned app, and sends nothing for an empty object', async () => {
     const launchArguments = { AppleLanguages: ['fr', 'en-GB'], AppleLocale: 'fr_FR', e2e: true, retries: 3 };
     const ios = harness({ bundleId: 'com.example.app', launchArguments });
     await openAttempt(ios);
@@ -2618,24 +2605,13 @@ describe('device fixture', () => {
       launchArgs: ['-AppleLanguages', '(fr, en-GB)', '-AppleLocale', 'fr_FR', '-e2e', 'YES', '-retries', '3'],
     });
 
-    const android = harness({ platform: 'android', bundleId: ANDROID_APP_PACKAGE, launchArguments: { e2e: true, locale: 'fr_FR', retries: 3, tags: ['a', 'b'] } });
-
-    await openAttempt(android);
-    await android.engine.session!.restart!(operation());
-    expect(android.fake.lastArgs('apps.open')).toEqual({
-      platform: 'android',
-      app: ANDROID_APP_PACKAGE,
-      relaunch: true,
-      launchArgs: ['--ez', 'e2e', 'true', '--es', 'locale', 'fr_FR', '--ei', 'retries', '3', '--esa', 'tags', 'a,b'],
-    });
-
     const empty = harness({ bundleId: 'com.example.app', launchArguments: {} });
     await openAttempt(empty);
     await empty.engine.session!.restart!(operation());
     expect(empty.fake.lastArgs('apps.open')).toEqual({ platform: 'ios', app: 'com.example.app', relaunch: true });
   });
 
-  it('launches any app with its own arguments, a list or an object spelled for the platform, and permissions set on that app by name', async () => {
+  it('launches any app with its own arguments, a list or an object spelled for iOS, and permissions set on that app by name', async () => {
     const h = harness();
     await openAttempt(h);
     const device = fixture(h);
@@ -2655,7 +2631,7 @@ describe('device fixture', () => {
     ]);
   });
 
-  it('refuses openApp launch arguments of the wrong shape, or ones Android cannot carry, before any device command', async () => {
+  it('refuses openApp launch arguments of the wrong shape, or an object on Android, before any device command', async () => {
     const ios = harness();
     await openAttempt(ios);
     const device = fixture(ios);
@@ -2670,11 +2646,10 @@ describe('device fixture', () => {
     await openAttempt(android);
     const pixel = fixture(android);
     const sent = android.fake.calls.length;
-    await expect(pixel.openApp('com.other', { relaunch: true, launchArguments: { AppleLocale: 'fr_FR' } })).rejects.toMatchObject({
+    await expect(pixel.openApp('com.other', { relaunch: true, launchArguments: { e2e: true } })).rejects.toMatchObject({
       code: 'INVALID_ARGUMENT',
-      message: expect.stringContaining('device.openApp({ launchArguments }).AppleLocale is an iOS launch argument'),
+      message: expect.stringContaining("device.openApp({ launchArguments }) is an object, which only an iOS app takes; on Android give the am start arguments as a list"),
     });
-    await expect(pixel.openApp('com.other', { relaunch: true, launchArguments: { tags: ['a,b'] } })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
     expect(android.fake.calls.length).toBe(sent);
   });
 

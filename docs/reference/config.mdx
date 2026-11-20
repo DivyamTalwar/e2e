@@ -481,17 +481,18 @@ environment: 'staging', // default: 'test' for a local host or no URL, else 'pro
 
 Arguments every fresh launch passes the app: `app.open()`, `app.restart()`,
 and `app.clearState()`. Give a list of strings, the arguments themselves, or
-an object of argument name to value. On iOS an entry becomes `-name value`.
-On Android it becomes an `am start` extra of the value's type: `--es` for a
-string, `--ez` for a boolean, `--ei` for a whole number (`--el` beyond Java's
-`int`), `--ef` for a fraction, `--esa` for a list.
+an object of argument name to value, which the engine spells for its
+platform. `mobile()` takes an object on iOS, where an entry becomes
+`-name value`; on Android it takes the list form only. An engine that does
+not list `'named-launch-arguments'` in [`appForms`](/reference/engine#app)
+fails config load on an object with `UNSUPPORTED_CAPABILITY`.
 
 ```ts
 launchArguments: ['-e2e', 'YES'],
 ```
 
 ```ts
-launchArguments: { AppleLanguages: ['fr'], AppleLocale: 'fr_FR', e2e: true },
+launchArguments: { AppleLanguages: ['fr'], AppleLocale: 'fr_FR', e2e: true }, // iOS
 ```
 
 ```ts
