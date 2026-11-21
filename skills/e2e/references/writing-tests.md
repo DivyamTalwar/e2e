@@ -108,8 +108,8 @@ act or the assertions.
 
 `test` registers everything, and `describe`, `beforeEach`, `afterEach`,
 `beforeAll`, and `afterAll` are also top-level imports of the same functions
-(`import { describe, beforeEach } from 'e2e'`; `@e2e-dev/web` and
-`@e2e-dev/mobile` export `test`, `describe`, and the hooks typed with their fixture; a
+(`import { describe, beforeEach } from 'e2e'`; `@e2e-dev/web`,
+`@e2e-dev/mobile`, and `@e2e-dev/desktop` export `test`, `describe`, and the hooks typed with their fixture; a
 `test.extend()` chain registers hooks that see its fixtures through
 `test.beforeEach`). Everything registers at import, so a `describe` body is
 synchronous (`async` is a `COLLECTION_ERROR`).
@@ -213,6 +213,7 @@ configured model, else `MODEL_UNAVAILABLE` (topic `agent`). `platform`
 (`string`): always, hooks included; `web`, `ios`, `android`, or an engine's
 label. `browser` (`Browser`): browser targets, import `test` from `@e2e-dev/web`.
 `device` (`Device`): device targets, import `test` from `@e2e-dev/mobile`.
+`desktop` (`Desktop`): desktop targets, import `test` from `@e2e-dev/desktop`.
 `session` (`SetupSession`): only in `test.setup`.
 
 ### app
@@ -329,8 +330,10 @@ Coordinates are CSS pixels, for what the tree does not list: `tap({ position:
 `INVALID_ARGUMENT`), `screen.tapAt({ x, y })` taps a viewport point,
 `screen.doubleTapAt({ x, y })` double-taps a viewport point,
 `screen.swipe({ from, to, duration? })` swipes along a path,
-`screen.swipe({ direction, momentum? })` swipes the viewport. Prefer a
-locator; a point moves with the layout.
+`screen.swipe({ direction, momentum? })` swipes the viewport. Viewport
+points also take percentages from `'0%'` through `'100%'`, rounded to the
+nearest pixel: `{ x: '50%', y: '50%' }`. Prefer a locator; a point moves with
+the layout.
 
 ### Reads
 
@@ -345,7 +348,7 @@ drops out, `<br>` is a space); `toHaveText` reads the same. `isChecked()` on a
 node that cannot be checked (a button), and `inputValue()` on one that holds
 no value (a heading), throw `ACTION_FAILED`. `waitFor({ state?: 'attached' | 'detached' | 'visible' | 'hidden', timeout? })` waits
 within `actionTimeout`, else `LOCATOR_NOT_FOUND`. For a value that has to
-settle use `expect`, not a read. Reading a password field's value or
+settle use `expect`, not a read. Reading a secure field's value or
 attributes is `POLICY_DENIED`, as is `toHaveAttribute` on one, negated too.
 
 `screen.tree()` returns the whole screen as the agent reads it (one node
@@ -401,7 +404,7 @@ typed; prefer it when the app already has a schema for the response.
 
 `toHaveText` compares the whole normalized text, `toContainText` a substring
 or RegExp, `toHaveValue` a form control's value as is, whitespace included
-(it fails on a node with none); on a password field all three are
+(it fails on a node with none); on a secure field all three are
 `POLICY_DENIED`, never a comparison against `''`. List forms:
 `toHaveText(['Alpha', /^Beta/])` needs exactly two matches with those texts
 in order; `toContainText(['Alpha', 'Beta'])` needs each entry in a distinct
