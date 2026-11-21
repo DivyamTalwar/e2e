@@ -259,7 +259,14 @@ interface StepProgressIdentity {
 
 /** One progress payload before the recorder attaches its identity. */
 export type StepProgressFact =
-  | { readonly phase: 'start'; readonly kind: StepKind; readonly api: string; readonly label: string }
+  | {
+      readonly phase: 'start';
+      readonly kind: StepKind;
+      readonly api: string;
+      readonly label: string;
+      /** Where the test called the step, as its record has it; absent when the call site is not in the project. */
+      readonly source?: SourceLocation;
+    }
   | {
       readonly phase: 'end';
       readonly kind: StepKind;
@@ -747,7 +754,7 @@ export class StepRecorder {
     for (const { line, at } of this.earlyNavigations.splice(0)) this.fileNavigation(record, line, at);
     if (stack !== undefined) this.stacks.set(record.id, stack);
     this.owners.set(record.id, this.owner);
-    this.publish(record, { phase: 'start', kind, api, label });
+    this.publish(record, { phase: 'start', kind, api, label, ...(record.source === undefined ? {} : { source: record.source }) });
     return record;
   }
 
@@ -1072,7 +1079,7 @@ export class StepRecorder {
    */
   guest(step: Pick<StepRecord, 'kind' | 'api' | 'label' | 'actor'> & { readonly source: SourceLocation | undefined }): GuestRecord {
     const record = this.file({ ...step, label: this.redactText(step.label) });
-    this.publish(record, { phase: 'start', kind: record.kind, api: record.api, label: record.label });
+    this.publish(record, { phase: 'start', kind: record.kind, api: record.api, label: record.label, ...(record.source === undefined ? {} : { source: record.source }) });
     return {
       tell: (progress) => {
         if (progress.phase === 'event') this.push(record, progress.event);
