@@ -611,6 +611,16 @@ describe('press on a TV remote key', () => {
     expect(pressed).toEqual(['select']);
   });
 
+  it('sends a remote key from press_at to the point when the engine has no pressKey route', async () => {
+    const { context, pressed } = remoteContext(true, ['press']);
+    const tools = createGrammarTools(context);
+    const execute = tools['press_at']!.execute as unknown as (input: { x: number; y: number; key: string }, options: { toolCallId: string; messages: [] }) => Promise<unknown>;
+    // The point path wants a screenshot first; the remote path never does.
+    const said = String(await execute({ x: 10, y: 20, key: 'select' }, { toolCallId: 'call', messages: [] }));
+    expect(said).toMatch(/^No screenshot has been taken in this step: press_at coordinates/);
+    expect(pressed).toEqual([]);
+  });
+
   it('records a remote key pressed on a node as pressed on the remote', () => {
     const node = redacted({ ref: { id: 'n1', revision: 'r1' }, role: 'button', name: 'Now playing' });
     const options = { redact: (text: string) => text, redactCut: (text: string) => text };

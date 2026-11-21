@@ -890,7 +890,9 @@ function createPointTools(
       execute: ({ x: px, y: py, key }) =>
         // A remote button goes to the device, not to a point: it needs no
         // screenshot, and must not tap whatever lies under the point first.
-        isRemoteKey(key)
+        // Without pressKey the engine has no targetless route, so the key
+        // goes to the control under the point like any other.
+        verbs.has('pressKey') && isRemoteKey(key)
           ? inOrder(() =>
               perform(
                 pointAttempt('press_at', key),
