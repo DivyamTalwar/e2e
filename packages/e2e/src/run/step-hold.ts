@@ -13,7 +13,7 @@ import type { StepHoldRequest } from '@e2e-dev/core/lib/run/steps';
 import type { OperationContext, TargetSession } from '@e2e-dev/core/lib/engine/surface';
 import type { HeldTestAttachment } from './step-attachment-wire.ts';
 import { traceScreen, type TraceScreenOptions } from '@e2e-dev/core/lib/run/step-screens';
-import type { PausedStep, RunEventOf } from './events.ts';
+import type { PausedKey, PausedStep, RunEventOf } from './events.ts';
 
 /** A step held before it runs, or a paused test, as the runner's `hold` hook sees it. */
 export interface HeldStep extends Omit<StepHold, 'number'> {
@@ -37,12 +37,6 @@ export interface NumberedStep {
   readonly number: number;
 }
 
-/** One key a prompt offers, and what it does, in the words a person reads. */
-export interface PromptKey {
-  readonly key: string;
-  readonly does: string;
-}
-
 /** The held steps one key lets run, as the prompt shows them. */
 export interface StepPrompt {
   /** One step, or every step held together, as in one `Promise.all`. */
@@ -53,28 +47,17 @@ export interface StepPrompt {
    */
   readonly holdSteps: boolean;
   /** What the keyboard does now, in the order to list it. Empty when no keyboard answers the prompt: `e2e run --step` commands do. */
-  readonly keys: readonly PromptKey[];
-}
-
-/** One run of one test on one target, as the events name it. */
-type RunningTest = Pick<RunEventOf<'paused'>, 'testId' | 'agent' | 'repeat' | 'target'>;
-
-/** Whether two events are about the same run of the same test. */
-export function sameTest(one: RunningTest, other: RunningTest): boolean {
-  return one.testId === other.testId && one.agent === other.agent && one.repeat === other.repeat && one.target === other.target;
+  readonly keys: readonly PausedKey[];
 }
 
 /** The `paused` event of `prompt`: its test, the calls that wait, and the keys a keyboard takes. */
-export function pausedFact(prompt: StepPrompt): Omit<RunEventOf<'paused'>, 'type'> {
-  const waits = ({ step, number }: NumberedStep): PausedStep => ({
-    number,
-    api: step.api,
-    label: step.label,
-    ...(step.source === undefined ? {} : { source: step.source }),
-  });
+function pausedFact(prompt: StepPrompt): RunEventOf<'paused'> {
+  const waits = ({ step, number }: NumberedStep): PausedStep =>
+    Object.freeze({ number, api: step.api, label: step.label, ...(step.source === undefined ? {} : { source: step.source }) });
   const [first, ...rest] = prompt.steps;
   const { step } = first;
   return {
+    type: 'paused',
     testId: step.testId,
     agent: step.agent,
     repeat: step.repeat,
@@ -82,8 +65,57 @@ export function pausedFact(prompt: StepPrompt): Omit<RunEventOf<'paused'>, 'type
     title: step.title,
     reason: step.kind === 'pause' ? 'pause' : 'step',
     attachId: step.attachId,
-    steps: [waits(first), ...rest.map(waits)],
-    keys: prompt.keys,
+    steps: Object.freeze([waits(first), ...rest.map(waits)] as const),
+    keys: Object.freeze(prompt.keys.map((key) => Object.freeze({ ...key }))),
+  };
+}
+
+/** One run of one test on one target, as the events name it. */
+type TestRun = Pick<RunEventOf<'paused'>, 'testId' | 'agent' | 'repeat' | 'target'>;
+
+/** The `paused` and `resumed` events of one run. */
+export interface PauseEvents {
+  /** The `hold` hook shows `prompt`, or takes its prompt down. */
+  show(prompt: StepPrompt | undefined): void;
+  /** A test's result is in: a wait of its own is over. */
+  testEnded(test: TestRun): void;
+  /** The run is over: an open wait ends, and nothing shown later is told. */
+  end(): void;
+}
+
+/**
+ * Tells a run's reporters which test waits for a person. The `hold` hook
+ * says when a wait begins and ends; one still open when its test or the
+ * run ends is ended here, so every `paused` gets its `resumed`, before the
+ * next test's `paused` and before `run-finished`.
+ */
+export function pauseEvents(emit: (fact: RunEventOf<'paused'> | RunEventOf<'resumed'>) => void): PauseEvents {
+  let paused: RunEventOf<'paused'> | undefined;
+  let ended = false;
+  const same = (test: TestRun): boolean =>
+    paused !== undefined && paused.testId === test.testId && paused.agent === test.agent && paused.repeat === test.repeat && paused.target === test.target;
+  const resume = (): void => {
+    if (paused === undefined) return;
+    const { testId, agent, repeat, target } = paused;
+    paused = undefined;
+    emit({ type: 'resumed', testId, agent, repeat, target });
+  };
+  return {
+    show(prompt) {
+      if (ended) return;
+      const next = prompt === undefined ? undefined : pausedFact(prompt);
+      if (next === undefined || !same(next)) resume();
+      if (next === undefined) return;
+      paused = next;
+      emit(next);
+    },
+    testEnded(test) {
+      if (same(test)) resume();
+    },
+    end() {
+      resume();
+      ended = true;
+    },
   };
 }
 

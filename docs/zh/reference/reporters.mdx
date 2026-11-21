@@ -412,6 +412,7 @@ type RunEventFact =
 - `output` 参见[输出](#output)，`paused` 和 `resumed` 参见[暂停](#pauses)。
 - `test-finished` 携带完整结果记录，包括每次尝试的产物。
 - `explore` 仅出现在 `e2e explore` 运行中：`started`、`planning`、`step-started`、`step-finished`、`finding` 和 `finished`。完整记录位于报告的 `run.explore` 中。
+- 事件是冻结的，所有报告器收到的是同一个对象。要修改的内容请先复制。
 - 新事件类型会陆续加入。处理你认识的类型，忽略其余类型；将 `switch` 的 `default` 分支留空。
 
 ### 已收集的测试
@@ -437,7 +438,7 @@ interface CollectedTestInfo {
 
 - `tests` 按选择顺序，为每个测试、目标和代理的组合包含一项。被过滤器、`--grep` 或分片排除的测试为 `filtered`。
 - 会运行的 `test` 运行 `repeatEach` 次：没有 `--repeat-each` 时为 1。`setup` 测试只运行一次。
-- `total` 统计所有项。`files` 按文件和目标统计 `run` 和 `skip` 的项，因此报告器能知道某个文件的结果何时齐全。两者都会按重复次数统计重复运行的测试。
+- `total` 统计运行收集到的所有测试。`files` 按文件和目标统计 `run` 和 `skip` 的项，因此报告器能知道某个文件的结果何时齐全。两者都会按重复次数统计重复运行的测试。
 - 该事件的 `at` 是运行的开始时间，即报告中的 `startedAt`。
 
 ### 测试与尝试
@@ -511,7 +512,7 @@ onEvent(event) {
 - 测试的输出带有 `target`。`pair` 标识当时正在运行的测试，在测试之间为 undefined。
 - 没有 `target` 的输出来自运行期间的运行器进程：加载中的测试文件、测试过滤器、其他报告器。
 - 除非有[交互式](#interactive)报告器在运行，运行器也会在 stderr 上打印输出。只记录输出的报告器不会让终端静默。
-- 报告器在处理 `output` 事件时，或在其中启动的工作中打印的内容，会原样打印到终端，不会再作为事件返回。
+- 报告器在处理 `output` 事件时，或在其中启动的工作中打印的内容，不会再作为事件返回。运行器会对其脱敏，并打印到 stderr。
 
 ### 暂停
 
@@ -562,6 +563,7 @@ bunx e2e run --reporter list,junit
 
 - 配置为 `reporters: ['list', junit({ outputFile: 'reports/junit.xml' })]` 时，`--reporter junit` 只运行该 `junit`，仍写入 `reports/junit.xml`。
 - 如果配置中没有[交互式](#interactive)报告器，就没有运行视图。运行错误仍会输出到 stderr，每条格式为 `CODE: message`。
+- 配置中有自己的交互式报告器时，`--reporter list` 和 `--reporter dot` 会被拒绝：最多只能有一个交互式报告器。
 
 ## 报告器在哪里运行
 

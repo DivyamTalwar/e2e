@@ -65,7 +65,7 @@ import {
 import { leftOutTests } from './left-out.ts';
 import { ExploreView } from './list-explore.ts';
 import { isShownEvent, type ConfiguredModel, type FileGroup, type PausedTest, type ReplayNotice, type RunningTest, type TestLine } from './list-model.ts';
-import { pausedLine, replayLine, replayNotices, stepLine, stepPromptRows } from './list-steps.ts';
+import { pauseLinePrinter, replayLine, replayNotices, stepLine, stepPromptRows } from './list-steps.ts';
 import { LiveWindow } from './live-window.ts';
 import { repeatGroups, repeatLine, repeatSummary, type RepeatRun } from './repeats.ts';
 import { RunningTree } from './running-tree.ts';
@@ -365,8 +365,8 @@ export class ListReporter {
   private stepping = false;
   /** The test waiting for a key now, shown under its test with the keys below the summary. */
   private pausedAt: RunEventOf<'paused'> | undefined;
-  /** The pause line printed last without a live window, so the same wait told again prints nothing. */
-  private printedPause: string | undefined;
+  /** Prints a wait as one permanent line, without a live window. */
+  private readonly printPause = pauseLinePrinter((line) => this.print(line));
   private readonly failures: Failure[] = [];
   private readonly skippedFailures: Failure[] = [];
   /** Every result a test filter left out, in the order they arrived, for the `Left out` row. */
@@ -479,7 +479,7 @@ export class ListReporter {
         else this.testOutput(event);
         break;
       case 'paused':
-        // With no key to press, commands answer the wait and print it themselves.
+        // With no key to press there is no prompt to draw: commands answer the wait.
         this.showPaused(event.keys.length === 0 ? undefined : event);
         break;
       case 'resumed':
@@ -521,9 +521,7 @@ export class ListReporter {
   private showPaused(paused: RunEventOf<'paused'> | undefined): void {
     this.pausedAt = paused;
     if (!this.live) {
-      const line = paused === undefined ? undefined : pausedLine(paused);
-      if (line !== undefined && line !== this.printedPause) this.print(line);
-      this.printedPause = line;
+      this.printPause(paused);
       return;
     }
     this.window.redraw();

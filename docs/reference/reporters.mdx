@@ -571,6 +571,8 @@ type RunEventFact =
 - `explore` appears only in an `e2e explore` run: `started`, `planning`,
   `step-started`, `step-finished`, `finding`, and `finished`. The record of
   all of it is `run.explore` in the report.
+- An event is frozen, and every reporter gets the same object. Copy what
+  you want to change.
 - New event types are added over time. Handle the types you know and ignore
   the rest; leave the `default` branch of a `switch` empty.
 
@@ -600,9 +602,10 @@ interface CollectedTestInfo {
   Tests a filter, `--grep`, or a shard left out are `filtered`.
 - A `test` that runs does so `repeatEach` times: 1 without `--repeat-each`.
   A `setup` test runs one time.
-- `total` counts every entry, and `files` the `run` and `skip` ones per
-  file and target, so a reporter knows when a file's results are complete.
-  Both count a repeated test one time for each repeat.
+- `total` counts every test the run collected, and `files` the `run` and
+  `skip` ones per file and target, so a reporter knows when a file's results
+  are complete. Both count a repeated test one time for each repeat, where
+  `tests` lists it one time.
 - The event's `at` is the run's start, the report's `startedAt`.
 
 ### Tests and attempts
@@ -697,8 +700,8 @@ onEvent(event) {
   prints output on stderr. A reporter that only records output never
   silences the terminal.
 - What a reporter prints while it handles an `output` event, or from work
-  it starts there, goes to the terminal as written. It never comes back as
-  an event.
+  it starts there, never comes back as an event. The runner redacts it and
+  prints it on stderr.
 
 ### Pauses
 
@@ -765,6 +768,8 @@ bunx e2e run --reporter list,junit
   `reports/junit.xml`.
 - A config with no [interactive](#interactive) reporter has no run view.
   Run errors still print on stderr, each as `CODE: message`.
+- A config with an interactive reporter of its own refuses `--reporter list`
+  and `--reporter dot`: one reporter at most is interactive.
 
 ## Where a reporter runs
 

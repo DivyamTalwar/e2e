@@ -346,28 +346,19 @@ function rejectWatchIn(command: Command, reporters: readonly Reporter[] | undefi
 /**
  * Where `--step` cannot work: it waits at every step, so not in CI; its
  * prompt is one at a time, so one worker; and it cannot share the keyboard
- * with `--watch`. Beside the json reporter it needs a terminal for the
- * prompt, which is then on stderr: without one, later commands print the
- * run's output, the document among it.
+ * with `--watch`. Whether it can run beside the json reporter is the
+ * runner's call, which knows the config's reporters too.
  */
-function rejectStepIn(command: Command, options: { watch?: boolean; workers?: number; reporter?: readonly Reporter[] }): void {
+function rejectStepIn(command: Command, options: { watch?: boolean; workers?: number }): void {
   const refuse = (why: string): never => command.error(`error: --step ${why}`, { exitCode: 2 });
   if (isCiMode(process.env)) refuse('waits at every step, so it is refused in CI (CI is set)');
   if (options.watch === true) refuse('cannot be combined with --watch: both read the keyboard');
   if (options.workers !== undefined && options.workers > 1) refuse('runs one test at a time, so it cannot be combined with --workers above 1');
-  if (options.reporter?.includes('json') === true && !hasTerminal(stepPromptStream(options.reporter))) {
-    refuse('cannot be combined with --reporter json without a terminal: the steps would land in its stdout document');
-  }
 }
 
-/** Where a stepped run draws its prompt: stderr beside the json reporter, which keeps stdout, so `--reporter json > report.json` still steps. */
-function stepPromptStream(reporters: readonly Reporter[] | undefined): 'stdout' | 'stderr' {
-  return reporters?.includes('json') === true ? 'stderr' : 'stdout';
-}
-
-/** Whether a person can answer a prompt: stdin and the stream it is drawn on are both a terminal. Without one, the run steps from later commands (`step-control.ts`). */
-function hasTerminal(promptOn: 'stdout' | 'stderr' = 'stdout'): boolean {
-  return process.stdin.isTTY === true && process[promptOn].isTTY === true;
+/** Whether `--step` can read keys: stdin and stdout are both a terminal. Without one, the run steps from later commands (`step-control.ts`). */
+function hasTerminal(): boolean {
+  return process.stdin.isTTY === true && process.stdout.isTTY === true;
 }
 
 /**
@@ -804,8 +795,7 @@ function createProgram(version: string, telemetry: Telemetry, updateCheck: Updat
         if (options.watch === true) rejectWatchIn(command, options.reporter);
         if (options.step === true) rejectStepIn(command, options);
         const serveLog = options.step === true ? options.stepServe : undefined;
-        const terminal = hasTerminal(options.step === true ? stepPromptStream(options.reporter) : 'stdout');
-        if (options.step === true && serveLog === undefined && !terminal) {
+        if (options.step === true && serveLog === undefined && !hasTerminal()) {
           await driveStepped(command, async () => {
             const { startStepped } = await import('./step-control.ts');
             return startStepped(stepAddress(process.cwd()), process.argv.slice(2));
@@ -857,7 +847,7 @@ function createProgram(version: string, telemetry: Telemetry, updateCheck: Updat
               base,
               version,
               () => signals.escalate(),
-              terminal ? process.stdin : undefined,
+              hasTerminal() ? process.stdin : undefined,
               undefined,
               { holdSteps: options.step === true },
             );

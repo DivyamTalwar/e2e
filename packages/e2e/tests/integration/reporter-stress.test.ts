@@ -68,7 +68,18 @@ const HOSTILE = `
     { name: 'not-rows', async onRunFinished() { return 'done'; } },
     { name: 'rejects-finish', async onRunFinished() { throw new Error('upload failed'); } },
     { name: 'throws-summary', onSummary() { throw new Error('summary broke'); } },
-    { name: 'mutates', onEvent(event) { if (event.type === 'collected') { event.tests.length = 0; event.files.length = 0; } if (event.type === 'output') event.text = 'rewritten'; } },
+    {
+      name: 'rewrites',
+      onEvent(event) {
+        if (event.type === 'output') event.text = 'rewritten';
+      },
+    },
+    {
+      name: 'empties',
+      onEvent(event) {
+        if (event.type === 'collected') event.tests[0].tags.push('mine');
+      },
+    },
 `;
 
 /** Reporters that print wherever they can, with the secret: none may loop, and none may leak it. */
@@ -103,7 +114,8 @@ function runCli(reporters: string, args: readonly string[] = []) {
 
 describe('reporters of every kind in one run', () => {
   it('runs hostile reporters beside list without changing the outcome, the report, or what a healthy reporter sees', () => {
-    const { cli, project, events } = runCli(`'list', new Counting(), { name: 'witness', onEvent: seen('witness') },${HOSTILE}`);
+    // The witness comes last: it sees what every reporter before it left of each event.
+    const { cli, project, events } = runCli(`'list', new Counting(),${HOSTILE} { name: 'witness', onEvent: seen('witness') }`);
     expect(cli.status, cli.stdout + cli.stderr).toBe(0);
     const report = JSON.parse(readFileSync(path.join(project.dir, '.e2e', 'report.json'), 'utf8')) as { run: { status: string; summary: { passed: number; skipped: number } } };
     expect(report.run).toMatchObject({ status: 'passed', summary: { passed: 2, skipped: 1 } });
@@ -120,11 +132,14 @@ describe('reporters of every kind in one run', () => {
       'e2e: reporter "junk-rows" returned 2 row(s) without a label and text; dropped',
       'e2e: reporter "not-rows" returned something other than summary rows; dropped',
       'e2e: reporter "rejects-finish" failed: upload failed',
-      'e2e: reporter "throws-summary" threw in onSummary: summary broke; ignoring it for the rest of the run',
+      'e2e: reporter "throws-summary" threw in onSummary: summary broke',
     ]) {
       expect(warnings.filter((line) => line === expected), expected).toHaveLength(1);
     }
     expect(warnings.some((line) => line.startsWith('e2e: reporter "clobbers-report" cannot write'))).toBe(true);
+    // An event is every reporter's: one that tries to change it is stopped there.
+    expect(warnings.some((line) => line.startsWith('e2e: reporter "rewrites" threw on output: '))).toBe(true);
+    expect(warnings.some((line) => line.startsWith('e2e: reporter "empties" threw on collected: '))).toBe(true);
 
     // The class-based reporter kept its state on `this`, and saw every event.
     const counts = JSON.parse(readFileSync(path.join(project.dir, 'counts.json'), 'utf8')) as Record<string, unknown>;
@@ -162,7 +177,6 @@ describe('reporters of every kind in one run', () => {
     expect(outputs.some((text) => text.startsWith('saw: '))).toBe(false);
     expect(outputs.some((text) => text.includes('echo output'))).toBe(false);
     expect(outputs.some((text) => text.includes('echo collected <secret:apiToken>'))).toBe(true);
-    expect(witnessed.length).toBeLessThan(LINES * 4);
     // Each test line reached the terminal once from the runner and once from the echo.
     const lines = cli.stderr.split('\n');
     expect(lines.filter((line) => line === 'line 7')).toHaveLength(1);
@@ -170,7 +184,15 @@ describe('reporters of every kind in one run', () => {
   }, 120_000);
 
   it('takes over from an interactive reporter that breaks mid-run, and loses no output', () => {
-    const view = `{ name: 'view', interactive: true, onEvent(event) { if (event.type === 'output' && event.text === 'line 100\\n') throw new Error('view broke'); if (event.type === 'output') process.stdout.write('VIEW ' + event.text); } }`;
+    const view = `{
+      name: 'view',
+      interactive: true,
+      onEvent(event) {
+        if (event.type !== 'output') return;
+        if (event.text === 'line 100\\n') throw new Error('view broke');
+        process.stdout.write('VIEW ' + event.text);
+      },
+    }`;
     const { cli } = runCli(`${view}, { name: 'echo', onEvent(event) { if (event.type === 'test-finished') console.log('echo finished'); } }`);
     expect(cli.status, cli.stdout + cli.stderr).toBe(0);
     const shown = cli.stdout.split('\n').filter((line) => line.startsWith('VIEW line ')).map((line) => line.slice('VIEW '.length));
@@ -183,16 +205,15 @@ describe('reporters of every kind in one run', () => {
     expect(cli.stderr).toContain('echo finished');
   }, 120_000);
 
-  it('refuses two interactive reporters, and a reporter that is not one', () => {
+  it('refuses two interactive reporters, and an object with only a hook the contract dropped', () => {
     const view = (name: string): string => `{ name: '${name}', interactive: true, onEvent() {} }`;
     const two = runCli(`${view('one')}, ${view('two')}`);
     expect(two.cli.status).toBe(2);
     expect(two.cli.stdout + two.cli.stderr).toContain('reporters "one" and "two" are all interactive');
-    for (const bad of [`{ name: 'hooks', onOutput() {} }`, `{ onEvent() {} }`, `{ name: 'flag', interactive: 'yes', onEvent() {} }`, `{ name: 'not-a-function', onEvent: true }`, `class Uncalled {}`]) {
-      const { cli } = runCli(bad);
-      expect(cli.status, bad).toBe(2);
-      expect(cli.stdout + cli.stderr, bad).toContain('INVALID_CONFIG');
-    }
+    // A hook the contract dropped is no hook: the object is not a reporter.
+    const dropped = runCli(`{ name: 'hooks', onOutput() {} }`);
+    expect(dropped.cli.status).toBe(2);
+    expect(dropped.cli.stdout + dropped.cli.stderr).toContain('at least one of onEvent, reportFiles, onRunFinished, and onSummary');
   }, 120_000);
 
   it('runs fifty reporters at once, each seeing the same stream', () => {

@@ -17,6 +17,8 @@ New in the event stream:
 - `paused` and `resumed` say when a test waits at a `--step` prompt or `screen.pause()`.
 - `output` events include what the runner process prints, with no `target`.
 
-`--step` works with the json reporter in a terminal, also with `> report.json`. After a second Ctrl-C, `reportFiles` has 5 seconds left.
+Events are frozen: every reporter gets the same object.
+
+`--step` works with the json reporter in a terminal. After a second Ctrl-C, `reportFiles` has 5 seconds left.
 
 `@e2e-dev/html-reporter` writes `report.html` through `reportFiles` and needs `e2e` 0.24.1 or later.

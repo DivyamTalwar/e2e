@@ -774,8 +774,10 @@ describe('hold.ask ending a hold', () => {
     expect(signals.every((signal) => signal.aborted)).toBe(true);
   }, 60_000);
 
-  it('steps beside the json reporter: the prompt on stderr, only the report on stdout', async () => {
+  it('steps beside the json reporter in a terminal: the prompt on stderr, only the report on stdout', async () => {
     const written = { stdout: '', stderr: '' };
+    const tty = process.stderr.isTTY;
+    process.stderr.isTTY = true;
     const spies = (['stdout', 'stderr'] as const).map((stream) =>
       vi.spyOn(process[stream], 'write').mockImplementation((chunk) => ((written[stream] += String(chunk)), true)),
     );
@@ -799,23 +801,30 @@ describe('hold.ask ending a hold', () => {
       project.cleanup();
       expect(outcome.exitCode).toBe(0);
     } finally {
+      process.stderr.isTTY = tty;
       for (const spy of spies) spy.mockRestore();
     }
     expect(written.stderr).toMatch(/^paused \(\w+\) at step 1 of waits \[.+\]: app\.open "\/held" \(tests\/held\.e2e\.ts:2\) · press enter to run this step, q to quit$/m);
     expect(JSON.parse(written.stdout)).toMatchObject({ schemaVersion: 'report-1', run: { status: 'passed' } });
   }, 60_000);
 
-  it('refuses the json reporter when commands answer the steps, whose output would hold the document', async () => {
+  it.each([
+    ['commands answer the steps', { commands: true as const }, true],
+    ['nobody reads stderr', {}, false],
+  ])('refuses the json reporter when %s', async (_why, extra, stderrTty) => {
+    const tty = process.stderr.isTTY;
+    process.stderr.isTTY = stderrTty;
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     try {
       const { outcome, project } = await runProjectWithConfigFile(
         { 'tests/any.e2e.ts': `import { test } from 'e2e';\ntest('never runs', async () => {});\n` },
-        { configSource: workerFakeConfigSource(1, `\n  reporters: ['json'],`), runOptions: { hold: { ask: () => Promise.resolve(), steps: true, commands: true }, quiet: false } },
+        { configSource: workerFakeConfigSource(1, `\n  reporters: ['json'],`), runOptions: { hold: { ask: () => Promise.resolve(), steps: true, ...extra }, quiet: false } },
       );
       project.cleanup();
       expect(outcome.exitCode).toBe(2);
-      expect(outcome.report.run.errors[0]).toMatchObject({ code: 'INVALID_CONFIG', message: expect.stringContaining('--step without a terminal cannot run with the reporter "json"') });
+      expect(outcome.report.run.errors[0]).toMatchObject({ code: 'INVALID_CONFIG', message: expect.stringContaining('--step cannot run with the reporter "json" without a terminal') });
     } finally {
+      process.stderr.isTTY = tty;
       stdout.mockRestore();
     }
   }, 60_000);

@@ -42,13 +42,13 @@ import { builtinReporter } from '../report/builtin.ts';
 import { builtinId } from '../report/builtin-id.ts';
 import { failureLine } from '../report/format.ts';
 import { writeJsonReport } from '../report/write.ts';
-import { createRunEventEmitter, toEventResult, type CollectedTestInfo, type RunEvent, type RunEventOf, type RunEventSink, type RunExitCode, type RunStatus, type RunEventFact, type SetupOutcome, type SetupStep } from './events.ts';
+import { toEventResult, type CollectedTestInfo, type RunEventSink, type RunExitCode, type RunStatus, type RunEventFact, type SetupOutcome, type SetupStep } from './events.ts';
 import { allocateAppPorts } from './app-ports.ts';
 import { inProcessSpawner } from './in-process.ts';
 import { cleanupErrorsOf, someSkippedAfterFailure, tracedResultIds, type ResultRecord, type RunError, type SerialGroupRecord } from '@e2e-dev/core/lib/run/records';
 import { runUnits, type TargetFailure } from './scheduler.ts';
-import { pausedFact, sameTest, type BeforeStep, type StepPrompt } from './step-hold.ts';
-import { finishReporters, hostReporters } from './reporter-host.ts';
+import { pauseEvents, type BeforeStep } from './step-hold.ts';
+import { hostReporters } from './reporter-host.ts';
 import { buildWorkPlans, nonRunResult, orderWorkPlans, plannedSlots, type TargetWorkPlan, type TimeLimit } from './units.ts';
 import { SessionStore } from '@e2e-dev/core/lib/run/sessions';
 import { outputLayout } from '@e2e-dev/core/lib/run/output';
@@ -96,7 +96,7 @@ type RunHold = {
   /**
    * Set when later commands answer the holds, each printing the run's
    * output since the one before (`e2e run --step` without a terminal). The
-   * json reporter is refused then: the steps would land in its document.
+   * json reporter is refused then: its document would land among the steps.
    */
   readonly commands?: true;
 };
@@ -545,33 +545,17 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
       .map((id) => builtinReporter(id, fallbackIds.includes('json') ? 'stderr' : 'stdout'))
       .filter((reporter, index, all) => reporter.interactive !== true || all.findIndex((other) => other.interactive === true) === index);
   const activeReporters = configured.filter((reporter) => options.quiet !== true || reporter.interactive !== true);
-  const host = hostReporters(activeReporters, { processOutput, quiet: options.quiet === true, redact: redactStaticSecrets(loaded.config?.allSecrets) });
-  const hostSink = options.onEvent;
-  const emit = createRunEventEmitter(
-    [
-      ...host.sinks,
-      // The host's sink prints as the reporters' do while it is handed output: never back into the events.
-      ...(hostSink === undefined
-        ? []
-        : [{ name: 'onEvent', onEvent: (event: RunEvent) => (event.type === 'output' && processOutput !== undefined ? processOutput.passThrough(() => hostSink(event)) : hostSink(event)) }]),
-    ],
-    host.warn,
-  );
+  const reporters = hostReporters(activeReporters, {
+    processOutput,
+    quiet: options.quiet === true,
+    redact: redactStaticSecrets(loaded.config?.allSecrets),
+    onEvent: options.onEvent,
+  });
+  const { emit } = reporters;
   // Until the run is over, what user code prints in this process is an
   // `output` event like a test's, with no target.
   processOutput?.showThrough({ show: (stream, text) => emit({ type: 'output', stream, text }), end: () => undefined });
-  /**
-   * The test waiting for a person, between its `paused` and `resumed`. The
-   * `hold` hook says when a wait begins; the runner ends one itself when
-   * its test or the run ends first, so every `paused` gets its `resumed`.
-   */
-  let paused: Omit<RunEventOf<'paused'>, 'type'> | undefined;
-  const resume = (): void => {
-    if (paused === undefined) return;
-    const { testId, agent, repeat, target } = paused;
-    paused = undefined;
-    emit({ type: 'resumed', testId, agent, repeat, target });
-  };
+  const pauses = pauseEvents(emit);
 
   /** Records one run-level error once: into the report and onto the stream. */
   const recordRunError = (runError: RunError): void => {
@@ -587,7 +571,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
   /** Records one result: into the report and onto the stream. */
   const recordResult = (result: ResultRecord): void => {
     results.push(result);
-    if (paused !== undefined && sameTest(paused, { testId: result.test.id, agent: result.agent, repeat: result.repeat, target: result.target.name })) resume();
+    pauses.testEnded({ testId: result.test.id, agent: result.agent, repeat: result.repeat, target: result.target.name });
     emit({ type: 'test-finished', result: toEventResult(result) });
   };
 
@@ -801,7 +785,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     // with the file a host reads afterwards.
     const status = report.run.status;
     setSecretRegistry(undefined);
-    resume();
+    pauses.end();
     emit({
       type: 'run-finished',
       status,
@@ -817,7 +801,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     // An interactive reporter prints run errors, and a run that stopped
     // before its tests writes no file to read them in, so otherwise they go
     // to stderr.
-    if (!host.showsRun() && options.quiet !== true) {
+    if (!reporters.showsRun() && options.quiet !== true) {
       for (const error of report.run.errors) process.stderr.write(failureLine(error));
     }
     if (debug.enabled) {
@@ -831,8 +815,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     // print under the summary. A config that never loaded still has the
     // built-in reporters, resolved against the working directory.
     const outputDir = loaded.config?.output ?? path.resolve(cwd, options.output ?? '.e2e');
-    await finishReporters(
-      activeReporters,
+    await reporters.finish(
       {
         report,
         status,
@@ -846,7 +829,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
         ...(lastRun === undefined ? {} : { lastRun }),
         redact: redactStaticSecrets(loaded.config?.allSecrets),
       },
-      { timeoutMs: options.reporterTimeout ?? REPORTER_TIMEOUT_MS, force: forceController.signal, host },
+      { timeoutMs: options.reporterTimeout ?? REPORTER_TIMEOUT_MS, force: forceController.signal },
     );
     return { exitCode, status, report, reportPath, aiTracePath, results, config: loaded.config };
   };
@@ -855,9 +838,10 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     recordFailure(loaded.error, 'config');
     return finish();
   }
-  if (options.hold?.steps === true && options.hold.commands === true && activeReporters.some((reporter) => builtinId(reporter) === 'json')) {
+  // Beside the json reporter the prompt is on stderr, which a person must be reading.
+  if (options.hold?.steps === true && activeReporters.some((reporter) => builtinId(reporter) === 'json') && (options.hold.commands === true || process.stderr.isTTY !== true)) {
     recordFailure(
-      new ConfigurationError('INVALID_CONFIG', '--step without a terminal cannot run with the reporter "json": the steps would land in its stdout document'),
+      new ConfigurationError('INVALID_CONFIG', '--step cannot run with the reporter "json" without a terminal: its prompt is on stderr, and commands that step the run would print the report among the steps'),
       'config',
     );
     return finish();
@@ -1164,16 +1148,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
             envFor: workerEnvFor(plans, env),
           });
 
-    // A test waiting for a person is a `paused` event, and `resumed` once
-    // it goes on.
     const hold = options.hold;
-    const showStep = (prompt: StepPrompt | undefined): void => {
-      const next = prompt === undefined ? undefined : pausedFact(prompt);
-      if (next === undefined || (paused !== undefined && !sameTest(paused, next))) resume();
-      if (next === undefined) return;
-      paused = next;
-      emit({ type: 'paused', ...next });
-    };
     pendingNonRun = [];
     appExitTargets = await debug.time('scheduler', () =>
       runUnits({
@@ -1182,7 +1157,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
         ...(options.maxFailures === undefined ? {} : { maxFailures: options.maxFailures }),
         ...(timeLimit === undefined ? {} : { timeLimit }),
         spawn,
-        ...(hold === undefined ? {} : { beforeStep: (step, context) => hold.ask(step, { ...context, show: showStep }) }),
+        ...(hold === undefined ? {} : { beforeStep: (step, context) => hold.ask(step, { ...context, show: pauses.show }) }),
         interruptGraceMs: config.timeout + config.cleanupTimeout,
         interruptSignal: interrupted,
         forceSignal: forceController.signal,
@@ -1583,8 +1558,8 @@ function collectedTests(projectRoot: string, selection: Selection): CollectedTes
       kind: pair.test.kind,
       title: pair.test.title,
       // Copies: an event's arrays are a reporter's to keep, never the collected test's own.
-      titlePath: [...pair.test.titlePath],
-      tags: [...pair.test.tags],
+      titlePath: Object.freeze([...pair.test.titlePath]),
+      tags: Object.freeze([...pair.test.tags]),
       ...(source === undefined ? {} : { source }),
       ...(pair.test.serialId === undefined ? {} : { serialId: pair.test.serialId }),
       disposition: pair.disposition,

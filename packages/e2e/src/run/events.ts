@@ -96,6 +96,12 @@ export interface CollectedTestInfo {
   readonly reason?: string;
 }
 
+/** One key a waiting test's prompt offers, and what it does, in the words a person reads. */
+export interface PausedKey {
+  readonly key: string;
+  readonly does: string;
+}
+
 /** One call a `paused` test waits at. */
 export interface PausedStep {
   /** Its expected position in the trace; 0 for a pause. */
@@ -275,7 +281,7 @@ export type RunEventFact =
       /** The calls that wait: one, or every step held together, as in one `Promise.all`. A pause is numbered 0. */
       readonly steps: readonly [PausedStep, ...PausedStep[]];
       /** What the keyboard does now, in the order a prompt lists it; empty when no keyboard is read. */
-      readonly keys: readonly { readonly key: string; readonly does: string }[];
+      readonly keys: readonly PausedKey[];
     }
   | {
       /** The test of the last `paused` is running again, or it ended. Every `paused` gets one before the next test's `paused` and before `run-finished`. */
@@ -385,11 +391,10 @@ export function toEventResult(record: ResultRecord): RunEventResult {
  * configured, so call sites never branch.
  */
 export function createRunEventEmitter(
-  subscribers: readonly (RunEventSubscriber | undefined)[],
+  subscribers: readonly RunEventSubscriber[],
   warn: (line: string) => void = (line) => void process.stderr.write(line),
 ): (fact: RunEventFact) => void {
-  const active = subscribers.filter((subscriber) => subscriber !== undefined);
-  if (active.length === 0) return () => undefined;
+  if (subscribers.length === 0) return () => undefined;
   let seq = 0;
   // A sink that emits while it is handed an event, as one that prints does,
   // waits its turn: every sink sees the events in `seq` order.
@@ -405,7 +410,7 @@ export function createRunEventEmitter(
     warn(`e2e: reporter "${subscriber.name}" threw on ${event.type}: ${errorMessage(cause)}; ignoring it for the rest of the run\n`);
   };
   const deliver = (event: RunEvent): void => {
-    for (const subscriber of active) {
+    for (const subscriber of subscribers) {
       if (quarantined.has(subscriber)) continue;
       try {
         const result = subscriber.onEvent(event);
@@ -419,7 +424,8 @@ export function createRunEventEmitter(
   };
   return (fact) => {
     seq += 1;
-    pending.push({ seq, at: timestamp(), ...fact });
+    // Frozen: every sink is handed the same object, and none may rewrite it for the next.
+    pending.push(Object.freeze({ seq, at: timestamp(), ...fact }));
     if (delivering) return;
     delivering = true;
     try {

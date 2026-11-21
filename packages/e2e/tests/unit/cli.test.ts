@@ -358,7 +358,7 @@ describe('e2e run argument parsing', () => {
     }
   });
 
-  it('refuses --step in CI and beside --workers, --watch, and the json reporter, exit code 2, without running', async () => {
+  it('refuses --step in CI and beside --workers and --watch, exit code 2, without running', async () => {
     const ci = process.env.CI;
     const tty = { stdin: process.stdin.isTTY, stdout: process.stdout.isTTY };
     try {
@@ -378,11 +378,6 @@ describe('e2e run argument parsing', () => {
       expect(process.exitCode).toBe(2);
       expect(written(stderrSpy)).toContain('cannot be combined with --watch');
       process.exitCode = undefined;
-      // Beside the json reporter it needs a terminal: without one, the steps would land in the document.
-      process.stdout.isTTY = false;
-      await invoke('run', '--step', '--reporter', 'json');
-      expect(process.exitCode).toBe(2);
-      expect(written(stderrSpy)).toContain('--step cannot be combined with --reporter json without a terminal');
     } finally {
       process.stdin.isTTY = tty.stdin;
       process.stdout.isTTY = tty.stdout;

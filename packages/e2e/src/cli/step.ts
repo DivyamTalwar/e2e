@@ -6,7 +6,8 @@
  */
 
 import type { Keypress } from './keyboard.ts';
-import type { BeforeStep, HeldStep, NumberedStep, PromptKey, StepHoldContext, StepPrompt } from '../run/step-hold.ts';
+import type { PausedKey } from '../run/events.ts';
+import type { BeforeStep, HeldStep, NumberedStep, StepHoldContext, StepPrompt } from '../run/step-hold.ts';
 import { pairKey } from '../run/units.ts';
 
 /** Screen and app log views available at the step prompt. */
@@ -48,7 +49,7 @@ export function stepKeyOf(press: Keypress): StepKey | undefined {
 }
 
 /** The prompt's keys other than Enter, in `--watch`'s words. */
-const STEP_KEYS: readonly (PromptKey & { readonly needs: 'viewer' | 'steps' | undefined })[] = [
+const STEP_KEYS: readonly (PausedKey & { readonly needs: 'viewer' | 'steps' | undefined })[] = [
   { key: 's', does: 'show the screen', needs: 'viewer' },
   { key: 'l', does: 'show the app log', needs: 'viewer' },
   { key: 'n', does: 'run this test without holding steps', needs: 'steps' },
@@ -261,7 +262,7 @@ export class StepGate {
 }
 
 /** The keys a prompt lists: Enter, then `h` and `q`, or every key once `h` asked for them. */
-export function stepPromptKeys(prompt: { pause: boolean; steps: number; help: boolean; holdSteps: boolean; viewer: boolean }): PromptKey[] {
+export function stepPromptKeys(prompt: { pause: boolean; steps: number; help: boolean; holdSteps: boolean; viewer: boolean }): PausedKey[] {
   const enter = { key: 'enter', does: prompt.pause ? 'resume' : prompt.steps === 1 ? 'run this step' : `run these ${prompt.steps} steps` };
   if (!prompt.help) return [enter, { key: 'h', does: 'show help' }, { key: 'q', does: 'quit' }];
   const offered = STEP_KEYS.filter(({ needs }) => needs === undefined || (needs === 'viewer' ? prompt.viewer : prompt.holdSteps));

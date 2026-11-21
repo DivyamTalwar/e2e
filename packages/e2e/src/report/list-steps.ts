@@ -123,8 +123,8 @@ export function stepPromptRows(pc: Colors, paused: Paused): string[] {
   return [pc.dim(`Paused (${paused.attachId}) at ${at}`), ...rows.map((line) => `  ${line}`)];
 }
 
-/** A waiting test as one plain line, for a terminal with no live window to show it in. */
-export function pausedLine(paused: Paused): string {
+/** A waiting test as one plain line. */
+function pausedLine(paused: Paused): string {
   const pause = paused.reason === 'pause';
   const numbers = paused.steps.map(({ number }) => number).join(', ');
   const steps = paused.steps.map((step) => heldCall(step, pause));
@@ -132,6 +132,21 @@ export function pausedLine(paused: Paused): string {
   const at = pause ? 'in' : `at ${paused.steps.length === 1 ? 'step' : 'steps'} ${numbers} of`;
   return `paused (${paused.attachId}) ${at} ${bounded(paused.title)} [${bounded(paused.target)}]: ` +
     `${steps.join('; ')} · press ${keys}`;
+}
+
+/**
+ * Prints a waiting test as one line through `write`, for a terminal with no
+ * live window: once per wait, and again when its steps or keys change, as
+ * after `h`. A wait no keyboard answers prints nothing: the commands that
+ * answer it print it themselves.
+ */
+export function pauseLinePrinter(write: (line: string) => void): (paused: Paused | undefined) => void {
+  let printed: string | undefined;
+  return (paused) => {
+    const line = paused === undefined || paused.keys.length === 0 ? undefined : pausedLine(paused);
+    if (line !== undefined && line !== printed) write(line);
+    printed = line;
+  };
 }
 
 /**

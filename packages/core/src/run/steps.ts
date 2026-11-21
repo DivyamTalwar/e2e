@@ -1103,12 +1103,6 @@ export class StepRecorder {
   }
 
   /** Publishes a phase with the owning record's identity, including nested and finishing steps. */
-  /** Tells that `record`'s step began, from where the test called it. */
-  private publishStart(record: StepRecord): void {
-    const { kind, api, label, source } = record;
-    this.publish(record, { phase: 'start', kind, api, label, ...(source === undefined ? {} : { source }) });
-  }
-
   private publish(record: StepRecord, fact: StepProgressFact): void {
     if (this.onProgress === undefined && this.mirror === undefined) return;
     const progress: StepProgress = {
@@ -1123,5 +1117,11 @@ export class StepRecorder {
     };
     this.onProgress?.(progress);
     this.mirror?.(progress, record);
+  }
+
+  /** Tells that `record`'s step began, from where the test called it. */
+  private publishStart(record: StepRecord): void {
+    const { kind, api, label, source } = record;
+    this.publish(record, { phase: 'start', kind, api, label, ...(source === undefined ? {} : { source }) });
   }
 }

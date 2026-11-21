@@ -10,7 +10,7 @@ import { userFrame } from '../../src/report/code-frame.ts';
 import type { CacheWrite } from '@e2e-dev/core/lib/cache/context';
 import type { RunEventFact, RunEventOf, RunEventResult } from '../../src/run/events.ts';
 import { stepPromptKeys } from '../../src/cli/step.ts';
-import { pausedFact, type HeldStep, type NumberedStep, type StepPrompt } from '../../src/run/step-hold.ts';
+import { pauseEvents, type HeldStep, type NumberedStep, type PauseEvents, type StepPrompt } from '../../src/run/step-hold.ts';
 import type { ResultStatus, AttemptRecord, SerialGroupRecord, SerialMemberRecord } from '@e2e-dev/core/lib/run/records';
 
 // eslint-disable-next-line no-control-regex
@@ -149,30 +149,18 @@ function runStarted(
   };
 }
 
-/** Tells `reporter` of `prompt` as the runner does: a `paused` event, or `resumed` for the test of the last one. */
-let pausedLast: ReturnType<typeof pausedFact> | undefined;
+/** Tells `reporter` of `shown` as the runner does: a `paused` event, or `resumed` for the test of the last one. */
 type ShownPrompt = Pick<StepPrompt, 'steps' | 'holdSteps'> & { help: boolean; viewer?: boolean; keyboard?: false };
+const pausesOf = new WeakMap<ListReporter, PauseEvents>();
 function showStepPrompt(reporter: ListReporter, shown: ShownPrompt | undefined): void {
-  const prompt: StepPrompt | undefined =
-    shown === undefined
-      ? undefined
-      : {
-          steps: shown.steps,
-          holdSteps: shown.holdSteps,
-          keys:
-            shown.keyboard === false
-              ? []
-              : stepPromptKeys({ pause: shown.steps[0].step.kind === 'pause', steps: shown.steps.length, help: shown.help, holdSteps: shown.holdSteps, viewer: shown.viewer === true }),
-        };
-  if (prompt === undefined) {
-    if (pausedLast === undefined) return;
-    const { testId, agent, repeat, target } = pausedLast;
-    pausedLast = undefined;
-    reporter.handle({ type: 'resumed', testId, agent, repeat, target });
-    return;
-  }
-  pausedLast = pausedFact(prompt);
-  reporter.handle({ type: 'paused', ...pausedLast });
+  const pauses = pausesOf.get(reporter) ?? pauseEvents(reporter.handle);
+  pausesOf.set(reporter, pauses);
+  if (shown === undefined) return pauses.show(undefined);
+  const keys =
+    shown.keyboard === false
+      ? []
+      : stepPromptKeys({ pause: shown.steps[0].step.kind === 'pause', steps: shown.steps.length, help: shown.help, holdSteps: shown.holdSteps, viewer: shown.viewer === true });
+  pauses.show({ steps: shown.steps, holdSteps: shown.holdSteps, keys });
 }
 
 function plan(files: { file: string; target?: string; tests: number }[]): RunEventFact {
