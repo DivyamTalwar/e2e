@@ -4385,6 +4385,21 @@ describe('deterministic actions', () => {
       expect(h.fake.lastArgs('interactions.press')).toEqual({ ref: '@e12~s4' });
     });
 
+    it('does not skip the rest check for a repeated row that sits where a look-alike sat before the gesture', async () => {
+      const h = harness({ transition: { gesture: 800 } });
+      await openAttempt(h);
+      await sleep(1_000);
+      // Four 'Add' rows before the scroll, at 200 to 500.
+      h.fake.respond('capture.snapshot', async () => screenOf([200, 300, 400, 500], 1, 'Add'));
+      await h.engine.perform!((await screenRootOf(h)).ref, { kind: 'swipe', direction: 'down' }, test());
+      // They sit a row lower in the read that resolves the tap, so the first now sits where the second was, and they are still moving after it.
+      const { times } = scrollScreen(h, byRead([[300, 400, 500, 600], [330, 430, 530, 630], [350, 450, 550, 650], [350, 450, 550, 650]]), { label: 'Add' });
+      await tapOnScreen(h, test(), 'Add');
+      // Taken for the control that was already there, it would be tapped on the first read, with no wait for the list to stop.
+      expect(times).toHaveLength(4);
+      expect(h.fake.lastArgs('interactions.press')).toEqual({ ref: '@e11~s4' });
+    });
+
     it.each([
       ['the newest read', false, 2],
       ['a read that a newer one has replaced', true, 4],

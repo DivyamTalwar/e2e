@@ -1514,7 +1514,8 @@ export class AgentDeviceSurface {
    * Waits for a control that arrived or moved with the last action until the
    * budget of that action's kind has passed. Controls already present at the
    * same place need no wait, unless keyboard state changed: a keyboard change
-   * can precede the app's relayout.
+   * can precede the app's relayout. After a gesture that holds only for a
+   * control with no look-alikes, since a look-alike may have moved into its place.
    *
    * After a gesture the budget is only the least wait. The control is then
    * read until it is seen at rest, see {@link atRest}. After any other action
@@ -1535,7 +1536,9 @@ export class AgentDeviceSurface {
     const until = kind === 'gesture' ? Math.max(floor, GESTURE_REST_CAP_MS) : floor;
     if (since >= until) return false;
     const before = this.screenBeforeAction;
-    if (before !== undefined && before.keyboardVisible === entry.keyboardVisible && this.samePlace(entry, before.index) !== undefined) return false;
+    // After a gesture a repeated row can sit where a look-alike sat before it, so "same place" is no proof the list stood still.
+    const repeated = kind === 'gesture' && before !== undefined && (lookalikes(entry, before.index).length > 1 || this.sightingAt(entry).length > 1);
+    if (before !== undefined && !repeated && before.keyboardVisible === entry.keyboardVisible && this.samePlace(entry, before.index) !== undefined) return false;
     if (since < floor) await this.waitOutTransition(operation, budget);
     if (kind !== 'gesture') return true;
     return this.atRest(entry, operation, budget, this.lastActionAt + until, input, holdMs);
