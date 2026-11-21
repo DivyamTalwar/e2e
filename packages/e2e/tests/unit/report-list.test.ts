@@ -9,6 +9,7 @@ import { ListReporter } from '../../src/report/list.ts';
 import { userFrame } from '../../src/report/code-frame.ts';
 import type { CacheWrite } from '@e2e-dev/core/lib/cache/context';
 import type { RunEventFact, RunEventOf, RunEventResult } from '../../src/run/events.ts';
+import { stepPromptKeys } from '../../src/cli/step.ts';
 import { pausedFact, type HeldStep, type NumberedStep, type StepPrompt } from '../../src/run/step-hold.ts';
 import type { ResultStatus, AttemptRecord, SerialGroupRecord, SerialMemberRecord } from '@e2e-dev/core/lib/run/records';
 
@@ -150,7 +151,19 @@ function runStarted(
 
 /** Tells `reporter` of `prompt` as the runner does: a `paused` event, or `resumed` for the test of the last one. */
 let pausedLast: ReturnType<typeof pausedFact> | undefined;
-function showStepPrompt(reporter: ListReporter, prompt: StepPrompt | undefined): void {
+type ShownPrompt = Pick<StepPrompt, 'steps' | 'holdSteps'> & { help: boolean; viewer?: boolean; keyboard?: false };
+function showStepPrompt(reporter: ListReporter, shown: ShownPrompt | undefined): void {
+  const prompt: StepPrompt | undefined =
+    shown === undefined
+      ? undefined
+      : {
+          steps: shown.steps,
+          holdSteps: shown.holdSteps,
+          keys:
+            shown.keyboard === false
+              ? []
+              : stepPromptKeys({ pause: shown.steps[0].step.kind === 'pause', steps: shown.steps.length, help: shown.help, holdSteps: shown.holdSteps, viewer: shown.viewer === true }),
+        };
   if (prompt === undefined) {
     if (pausedLast === undefined) return;
     const { testId, agent, repeat, target } = pausedLast;
@@ -1502,10 +1515,13 @@ describe('ListReporter', () => {
         ]);
         showStepPrompt(reporter, { steps: [{ step: held, number: 0 }], help: true, holdSteps: false, viewer: true });
         const help = chunks.at(-1)!.replace(ANSI_PATTERN, '').split('\n').filter((line) => line.trim() !== '');
-        // The keys share a row while they fit the terminal.
-        expect(help.slice(-2)).toEqual([
+        // More than three keys get a row each.
+        expect(help.slice(-5)).toEqual([
           'Paused (k3f9) at screen.pause()',
-          '  press enter to resume, press s to show the screen, press l to show the app log, press q to quit',
+          '  press enter to resume',
+          '  press s to show the screen',
+          '  press l to show the app log',
+          '  press q to quit',
         ]);
       } finally {
         restore();
@@ -1528,12 +1544,11 @@ describe('ListReporter', () => {
         source: { file: 'tests/coffee.e2e.ts', line: 9, column: 3 },
       };
 
-      // The title path `collected` listed names the test, and a wait no keyboard answers prints nothing.
-      reporter.handle({ ...plan([]), tests: [{ testId: 't1', target: 'chromium', agent: 'default', file: 'tests/coffee.e2e.ts', title: 'orders a drink', titlePath: ['coffee', 'orders a drink'], tags: [], disposition: 'run' }] } as RunEventFact);
+      // A wait no keyboard answers prints nothing.
       showStepPrompt(reporter, { steps: [{ step: held, number: 0 }], help: false, holdSteps: false, keyboard: false });
       showStepPrompt(reporter, { steps: [{ step: held, number: 0 }], help: false, holdSteps: false });
       expect(lines).toEqual([
-        'paused (k3f9) in coffee › orders a drink [chromium]: screen.pause() (tests/coffee.e2e.ts:9) · press enter to resume, h to show help, q to quit',
+        'paused (k3f9) in orders a drink [chromium]: screen.pause() (tests/coffee.e2e.ts:9) · press enter to resume, h to show help, q to quit',
       ]);
     });
 

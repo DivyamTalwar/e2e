@@ -242,6 +242,8 @@ export class ConfigLoadHold {
 export class RunnerOutput {
   /** Each stream redacted on its own, across writes: a value split over two writes is still caught. */
   private readonly redactors: Readonly<Record<OutputStream, StreamRedactor>>;
+  /** The same for what is written inside `passThrough`, kept apart so it never waits behind, or completes, what the view holds. */
+  private readonly passRedactors: Readonly<Record<OutputStream, StreamRedactor>>;
   private readonly loadHold = new ConfigLoadHold();
   private view: OutputView | undefined;
   /** Set in the async contexts whose writes go to the terminal as written: see `passThrough`. */
@@ -253,6 +255,7 @@ export class RunnerOutput {
     ledger: SecretLedger,
   ) {
     this.redactors = { stdout: new StreamRedactor(ledger), stderr: new StreamRedactor(ledger) };
+    this.passRedactors = { stdout: new StreamRedactor(ledger), stderr: new StreamRedactor(ledger) };
   }
 
   /**
@@ -261,7 +264,7 @@ export class RunnerOutput {
    * config loads. Answers what the terminal did.
    */
   write(stream: OutputStream, chunk: string | Uint8Array, callback?: () => void): boolean {
-    if (this.passing.getStore() === true) return this.terminal[stream === 'stdout' ? this.stdoutTo : stream](chunk, callback);
+    if (this.passing.getStore() === true) return this.toTerminal(stream, this.passRedactors[stream].push(chunk), callback);
     if (this.loadHold.hold(stream, chunk)) {
       if (callback !== undefined) process.nextTick(callback);
       return true;
@@ -299,9 +302,8 @@ export class RunnerOutput {
   /**
    * Runs `hook`, a reporter being handed output, so that what it writes,
    * and what the work it starts writes, even after the run or in the next
-   * `--watch` run, goes to the terminal as written: past the config hold,
-   * the view, and the redactors, so it neither interleaves with what they
-   * hold nor comes back to the reporter.
+   * `--watch` run, goes to the terminal, redacted, past the config hold and
+   * the view, so it never comes back to the reporter.
    */
   passThrough<T>(hook: () => T): T {
     return this.passing.run(true, hook);
@@ -332,7 +334,7 @@ export class RunnerOutput {
    * runner handed it to the reporters itself, and none shows it.
    */
   print(stream: OutputStream, text: string): void {
-    this.terminal[stream === 'stdout' ? this.stdoutTo : stream](text);
+    this.toTerminal(stream, text);
   }
 
   /** Releases what is still held, redacted, to the terminal. Later writes stay redacted; only a tail a later write could complete into a value is held. */
@@ -356,6 +358,15 @@ export class RunnerOutput {
   private release(): void {
     this.emit('stdout', this.redactors.stdout.flush());
     this.emit('stderr', this.redactors.stderr.flush());
+    this.toTerminal('stdout', this.passRedactors.stdout.flush());
+    this.toTerminal('stderr', this.passRedactors.stderr.flush());
+  }
+
+  /** Writes redacted text to the terminal; nothing to write still calls back. */
+  private toTerminal(stream: OutputStream, text: string, callback?: () => void): boolean {
+    if (text !== '') return this.terminal[stream === 'stdout' ? this.stdoutTo : stream](text, callback);
+    if (callback !== undefined) process.nextTick(callback);
+    return true;
   }
 
   private emit(stream: OutputStream, text: string, callback?: () => void): boolean {
@@ -364,6 +375,6 @@ export class RunnerOutput {
       if (callback !== undefined) process.nextTick(callback);
       return true;
     }
-    return this.terminal[stream === 'stdout' ? this.stdoutTo : stream](text, callback);
+    return this.toTerminal(stream, text, callback);
   }
 }

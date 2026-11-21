@@ -109,29 +109,28 @@ export function heldStepRows(pc: Colors, paused: Paused, maxWidth: number): stri
   });
 }
 
-/**
- * Formats the heading and keys below the live summary in the style of the
- * watch prompt: the keys on one row when they fit `maxWidth`, else a row each.
- */
-export function stepPromptRows(pc: Colors, paused: Paused, maxWidth: number): string[] {
+/** Up to this many keys share a row under the heading; more get a row each. */
+const KEYS_ON_ONE_ROW = 3;
+
+/** Formats the heading and keys below the live summary in the style of the watch prompt. */
+export function stepPromptRows(pc: Colors, paused: Paused): string[] {
   const [first, ...rest] = paused.steps;
   const at = paused.reason === 'pause'
     ? 'screen.pause()'
     : rest.length === 0 ? `step ${first.number}` : `steps ${paused.steps.map(({ number }) => number).join(', ')}`;
   const keys = paused.keys.map(({ key, does }) => `${pc.dim('press')} ${pc.bold(key)} ${pc.dim(`to ${does}`)}`);
-  const row = keys.join(`${pc.dim(',')} `);
-  const rows = visibleWidth(row) + 2 <= maxWidth ? [row] : keys;
+  const rows = keys.length > KEYS_ON_ONE_ROW ? keys : [keys.join(`${pc.dim(',')} `)];
   return [pc.dim(`Paused (${paused.attachId}) at ${at}`), ...rows.map((line) => `  ${line}`)];
 }
 
-/** A waiting test as one plain line, for a terminal with no live window to show it in. `title` is the test's title path. */
-export function pausedLine(paused: Omit<Paused, 'type'>, title: string): string {
+/** A waiting test as one plain line, for a terminal with no live window to show it in. */
+export function pausedLine(paused: Paused): string {
   const pause = paused.reason === 'pause';
   const numbers = paused.steps.map(({ number }) => number).join(', ');
   const steps = paused.steps.map((step) => heldCall(step, pause));
   const keys = paused.keys.map(({ key, does }) => `${key} to ${does}`).join(', ');
   const at = pause ? 'in' : `at ${paused.steps.length === 1 ? 'step' : 'steps'} ${numbers} of`;
-  return `paused (${paused.attachId}) ${at} ${bounded(title)} [${bounded(paused.target)}]: ` +
+  return `paused (${paused.attachId}) ${at} ${bounded(paused.title)} [${bounded(paused.target)}]: ` +
     `${steps.join('; ')} · press ${keys}`;
 }
 

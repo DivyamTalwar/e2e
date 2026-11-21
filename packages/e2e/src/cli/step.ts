@@ -6,7 +6,7 @@
  */
 
 import type { Keypress } from './keyboard.ts';
-import type { BeforeStep, HeldStep, NumberedStep, StepHoldContext, StepPrompt } from '../run/step-hold.ts';
+import type { BeforeStep, HeldStep, NumberedStep, PromptKey, StepHoldContext, StepPrompt } from '../run/step-hold.ts';
 import { pairKey } from '../run/units.ts';
 
 /** Screen and app log views available at the step prompt. */
@@ -46,6 +46,15 @@ export function stepKeyOf(press: Keypress): StepKey | undefined {
       return undefined;
   }
 }
+
+/** The prompt's keys other than Enter, in `--watch`'s words. */
+const STEP_KEYS: readonly (PromptKey & { readonly needs: 'viewer' | 'steps' | undefined })[] = [
+  { key: 's', does: 'show the screen', needs: 'viewer' },
+  { key: 'l', does: 'show the app log', needs: 'viewer' },
+  { key: 'n', does: 'run this test without holding steps', needs: 'steps' },
+  { key: 'a', does: 'run all without holding steps', needs: 'steps' },
+  { key: 'q', does: 'quit', needs: undefined },
+];
 
 /** What `e2e run --step <action>` asks a stepped run without a terminal to do (`step-control.ts`). */
 export const STEP_ACTIONS = ['next', 'rest', 'stop'] as const;
@@ -243,12 +252,18 @@ export class StepGate {
     const [first, ...rest] = this.queue;
     if (first === undefined) return undefined;
     const numbered = ({ step, number }: Waiting): NumberedStep => ({ step, number });
-    return {
-      steps: [numbered(first), ...rest.filter((waiting) => samePrompt(waiting.step, first.step)).map(numbered)],
-      help: this.help,
-      holdSteps: this.holdSteps,
-      ...(this.viewer ? { viewer: true } : {}),
-      ...(this.keyboard ? {} : { keyboard: false }),
-    };
+    const steps: [NumberedStep, ...NumberedStep[]] = [numbered(first), ...rest.filter((waiting) => samePrompt(waiting.step, first.step)).map(numbered)];
+    const keys = this.keyboard
+      ? stepPromptKeys({ pause: first.step.kind === 'pause', steps: steps.length, help: this.help, holdSteps: this.holdSteps, viewer: this.viewer })
+      : [];
+    return { steps, holdSteps: this.holdSteps, keys };
   }
+}
+
+/** The keys a prompt lists: Enter, then `h` and `q`, or every key once `h` asked for them. */
+export function stepPromptKeys(prompt: { pause: boolean; steps: number; help: boolean; holdSteps: boolean; viewer: boolean }): PromptKey[] {
+  const enter = { key: 'enter', does: prompt.pause ? 'resume' : prompt.steps === 1 ? 'run this step' : `run these ${prompt.steps} steps` };
+  if (!prompt.help) return [enter, { key: 'h', does: 'show help' }, { key: 'q', does: 'quit' }];
+  const offered = STEP_KEYS.filter(({ needs }) => needs === undefined || (needs === 'viewer' ? prompt.viewer : prompt.holdSteps));
+  return [enter, ...offered.map(({ key, does }) => ({ key, does }))];
 }

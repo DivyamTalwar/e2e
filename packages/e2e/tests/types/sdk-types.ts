@@ -382,12 +382,15 @@ junit({ output: 'reports' });
   onEvent: (event) => {
     if (event.type === 'output') {
       void process[event.stream].write(`${event.target ?? 'runner'} ${event.pair?.testId ?? ''} ${event.text}`);
+      // The runner's own output names no test.
+      if (event.target === undefined) event.pair satisfies undefined;
     }
     if (event.type === 'collected') {
       event.repeatEach satisfies number;
       event.tests[0]?.titlePath satisfies readonly string[] | undefined;
       event.tests[0]?.source?.line satisfies number | undefined;
       event.tests[0]?.disposition satisfies 'run' | 'skip' | 'filtered' | undefined;
+      event.tests[0]?.kind satisfies 'test' | 'setup' | undefined;
     }
     if (event.type === 'step' && event.progress.phase === 'start') {
       event.progress.source?.file satisfies string | undefined;
@@ -397,13 +400,14 @@ junit({ output: 'reports' });
       event.steps[0].label satisfies string;
       event.steps[0].source?.line satisfies number | undefined;
       event.attachId satisfies string;
+      event.title satisfies string;
       event.keys[0]?.does satisfies string | undefined;
       // @ts-expect-error reporters only observe a pause: the event has no way to answer it
       event.attach;
     }
     if (event.type === 'resumed') event.testId satisfies string;
   },
-  onSummary: (rows) => void rows.map((row) => row.label),
+  onSummary: (rows, finished) => void process.stdout.write(`${rows.length} ${finished.report.run.status}\n`),
 }) satisfies Reporter;
 // @ts-expect-error output is an event, not a hook of its own
 ({ name: 'logs', onOutput: () => undefined }) satisfies Reporter;

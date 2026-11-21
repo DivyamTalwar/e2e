@@ -42,7 +42,7 @@ export default {
 | `INVALID_CONFIG` | `list`、`dot`、`json`、`junit`、`markdown` 以外の ID を指定した場合。 |
 | `INVALID_CONFIG` | `junit()` の代わりに `junit` と書くなど、ファクトリーを呼び出していない場合。 |
 | `INVALID_CONFIG` | エントリーが ID でも、`name` と 1 つ以上のフックを持つオブジェクトでもない場合。 |
-| `INVALID_CONFIG` | `list` と `dot` を併用した場合、またはどちらかを 2 回指定した場合。 |
+| `INVALID_CONFIG` | `list` と `dot` のように、[インタラクティブ](#interactive)なレポーターが複数ある場合。 |
 | `INVALID_CONFIG` | `json` と併用する `list` または `dot` に `stream: 'stdout'` を指定した場合。 |
 
 #### `list`
@@ -209,7 +209,7 @@ export default {
 | [`onEvent`](#onevent) | `(event: RunEvent) => void` |
 | [`reportFiles`](#reportfiles) | `(run, signal) => ReportFile[]` |
 | [`onRunFinished`](#onrunfinished) | `(run, signal) => Promise<…>` |
-| [`onSummary`](#onsummary) | `(rows: ReporterSummary) => void` |
+| [`onSummary`](#onsummary) | `(rows, run) => void` |
 
 ```ts
 interface Reporter {
@@ -218,7 +218,7 @@ interface Reporter {
   onEvent?(event: RunEvent): void;
   reportFiles?(run: FinishedRun, signal: AbortSignal): readonly ReportFile[] | Promise<readonly ReportFile[]>;
   onRunFinished?(run: FinishedRun, signal: AbortSignal): Promise<ReporterSummary | void>;
-  onSummary?(rows: ReporterSummary): void;
+  onSummary?(rows: ReporterSummary, run: FinishedRun): void;
 }
 ```
 
@@ -246,6 +246,7 @@ interactive: true, // default: false
 - その他のレポーターが [`onSummary`](#onsummary) 以外で出力した内容は、コードの出力として扱います。ランナーが秘匿し、stderr に表示します。
 - インタラクティブなレポーターの `onEvent` が例外を投げるか reject すると、実行の残りの間はランナーが代わりに表示します。
 - 2 回目の Ctrl-C でも、その `onRunFinished` は止まりません。出力がローカルだからです。
+- インタラクティブにできるレポーターは 1 つだけです。
 - [`e2e/runner`](/reference/runner) で埋め込んだ実行では、インタラクティブなレポーターをすべて実行しません。コードが出力した内容は元のストリームのままです。
 
 #### `onEvent`
@@ -365,7 +366,7 @@ type ReporterSummary = readonly { label: string; text: string }[];
 
 #### `onSummary`
 
-すべてのレポーターのサマリー行を受け取ります。組み込みレポーターが先で、その後に他のレポーターが `reporters` の順に続きます。各レポーターについて、ラベル付きのレポートファイルの行、次に `onRunFinished` が返した行の順です。
+すべてのレポーターのサマリー行を受け取ります。組み込みレポーターが先で、その後に他のレポーターが `reporters` の順に続きます。各レポーターについて、ラベル付きのレポートファイルの行、次に `onRunFinished` が返した行の順です。第 2 引数は[完了した実行](#onrunfinished)です。
 
 ```ts
 onSummary(rows) {
@@ -391,7 +392,7 @@ type RunEventFact =
   | { type: 'setup'; step: SetupStep; state: 'finished'; durationMs; outcome?: 'reused' | 'failed' | 'timed-out' }
   | { type: 'test-started'; testId; agent; repeat; title; file; serialId; target }
   | { type: 'step'; testId; agent; repeat; target; progress: StepProgress }
-  | { type: 'paused'; testId; agent; repeat; target; reason: 'step' | 'pause'; attachId; steps: PausedStep[]; keys: { key; does }[] }
+  | { type: 'paused'; testId; agent; repeat; target; title; reason: 'step' | 'pause'; attachId; steps: PausedStep[]; keys: { key; does }[] }
   | { type: 'resumed'; testId; agent; repeat; target }
   | { type: 'test-finished'; result: RunEventResult }
   | { type: 'serial-group'; group: SerialGroupRecord }
@@ -423,6 +424,7 @@ interface CollectedTestInfo {
   readonly target: string;
   readonly agent: string;
   readonly file: string;    // from the project root, POSIX separators
+  readonly kind: 'test' | 'setup'; // `setup` saves a session for other tests
   readonly title: string;
   readonly titlePath: readonly string[]; // the describe titles, then the title
   readonly tags: readonly string[];
@@ -434,7 +436,7 @@ interface CollectedTestInfo {
 ```
 
 - `tests` には、テスト、ターゲット、エージェントの組ごとに 1 件が選択順に入ります。フィルター、`--grep`、シャードで除外したテストは `filtered` です。
-- 各テストは `repeatEach` 回実行します。`--repeat-each` がなければ 1 です。
+- 実行する `test` は `repeatEach` 回実行します。`--repeat-each` がなければ 1 です。`setup` テストは 1 回だけ実行します。
 - `total` はすべての件数です。`files` は `run` と `skip` の件数をファイルとターゲットごとに数えるため、レポーターはファイルの結果がそろった時点を判断できます。どちらも、繰り返すテストを繰り返しの回数分数えます。
 - このイベントの `at` が実行の開始時刻で、レポートの `startedAt` と一致します。
 
@@ -535,6 +537,8 @@ interface PausedStep {
 - `steps` には 1 つの呼び出し、または 1 つの `Promise.all` のようにまとめて保留したすべてのステップが入ります。
 - `keys` は、キーボードで今できる操作をプロンプトの表示順に並べます。例: `{ key: 'enter', does: 'run this step' }`。[コマンドでステップ実行する](/debugging#step-through-a-test-without-a-terminal)場合のように、キーボードを読み取らないときは空です。
 - 待機中のテストは 1 つずつ表示します。同じテストの 2 つ目の `paused` は最初のものを置き換えます。ステップが加わったか、キーが変わった場合です。
+- すべての `paused` には `resumed` が対応します。テストや実行が先に終わった場合も同じです。
+- `title` は、テストのタイトルパスを ` › ` で連結したものです。
 - [MCP でアタッチする](/reference/mcp#attaching-to-a-held-test)には `attachId` を使います。ID は、その試行の中で何度一時停止しても変わりません。
 - [インタラクティブ](#interactive)なレポーターがなければ、キーボードで応答する一時停止は stderr にも 1 行で出力されます。
 

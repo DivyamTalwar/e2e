@@ -47,7 +47,7 @@ so a reporter of your own can do anything they do.
 | `INVALID_CONFIG` | An id other than `list`, `dot`, `json`, `junit`, or `markdown`. |
 | `INVALID_CONFIG` | A factory not called, such as `junit` for `junit()`. |
 | `INVALID_CONFIG` | An entry that is neither an id nor an object with a `name` and at least one hook. |
-| `INVALID_CONFIG` | `list` and `dot` together, or one of them twice. |
+| `INVALID_CONFIG` | More than one [interactive](#interactive) reporter, such as `list` and `dot`. |
 | `INVALID_CONFIG` | `list` or `dot` given `stream: 'stdout'` beside `json`. |
 
 #### `list`
@@ -278,7 +278,7 @@ export default {
 | [`onEvent`](#onevent) | `(event: RunEvent) => void` |
 | [`reportFiles`](#reportfiles) | `(run, signal) => ReportFile[]` |
 | [`onRunFinished`](#onrunfinished) | `(run, signal) => Promise<…>` |
-| [`onSummary`](#onsummary) | `(rows: ReporterSummary) => void` |
+| [`onSummary`](#onsummary) | `(rows, run) => void` |
 
 ```ts
 interface Reporter {
@@ -287,7 +287,7 @@ interface Reporter {
   onEvent?(event: RunEvent): void;
   reportFiles?(run: FinishedRun, signal: AbortSignal): readonly ReportFile[] | Promise<readonly ReportFile[]>;
   onRunFinished?(run: FinishedRun, signal: AbortSignal): Promise<ReporterSummary | void>;
-  onSummary?(rows: ReporterSummary): void;
+  onSummary?(rows: ReporterSummary, run: FinishedRun): void;
 }
 ```
 
@@ -331,6 +331,7 @@ interactive: true, // default: false
 - Once an interactive reporter's `onEvent` throws or rejects, the runner
   prints for it for the rest of the run.
 - A second Ctrl-C never stops its `onRunFinished`: its output is local.
+- One reporter at most can be interactive.
 - A run embedded through [`e2e/runner`](/reference/runner) skips every
   interactive reporter, and what your code prints stays on its own stream.
 
@@ -492,7 +493,8 @@ does not carry them.
 
 Receives the summary rows of every reporter, the built-ins first, then the
 others in `reporters` order: each labeled report file's, then what its
-`onRunFinished` returned.
+`onRunFinished` returned. The second argument is the
+[finished run](#onrunfinished).
 
 ```ts
 onSummary(rows) {
@@ -522,7 +524,7 @@ type RunEventFact =
   | { type: 'run-hold'; heldMs: number; heldSince: number | null }
   | { type: 'test-started'; testId; agent; repeat; title; file; serialId; target }
   | { type: 'step'; testId; agent; repeat; target; progress: StepProgress }
-  | { type: 'paused'; testId; agent; repeat; target; reason: 'step' | 'pause'; attachId; steps: PausedStep[]; keys: { key; does }[] }
+  | { type: 'paused'; testId; agent; repeat; target; title; reason: 'step' | 'pause'; attachId; steps: PausedStep[]; keys: { key; does }[] }
   | { type: 'resumed'; testId; agent; repeat; target }
   | { type: 'test-finished'; result: RunEventResult }
   | { type: 'serial-group'; group: SerialGroupRecord }
@@ -583,6 +585,7 @@ interface CollectedTestInfo {
   readonly target: string;
   readonly agent: string;
   readonly file: string;    // from the project root, POSIX separators
+  readonly kind: 'test' | 'setup'; // `setup` saves a session for other tests
   readonly title: string;
   readonly titlePath: readonly string[]; // the describe titles, then the title
   readonly tags: readonly string[];
@@ -595,7 +598,8 @@ interface CollectedTestInfo {
 
 - `tests` has one entry per test, target, and agent, in selection order.
   Tests a filter, `--grep`, or a shard left out are `filtered`.
-- Each test runs `repeatEach` times: 1 without `--repeat-each`.
+- A `test` that runs does so `repeatEach` times: 1 without `--repeat-each`.
+  A `setup` test runs one time.
 - `total` counts every entry, and `files` the `run` and `skip` ones per
   file and target, so a reporter knows when a file's results are complete.
   Both count a repeated test one time for each repeat.
@@ -728,6 +732,9 @@ interface PausedStep {
   keyboard is read, as in a run [stepped by commands](/debugging#step-through-a-test-without-a-terminal).
 - Tests that wait show one at a time. A second `paused` for the same test
   replaces the first: a step joined it, or the keys changed.
+- Every `paused` gets a `resumed`, also when the test or the run ends
+  first.
+- `title` is the test's title path joined with ` › `.
 - Use `attachId` to [attach over MCP](/reference/mcp#attaching-to-a-held-test).
   It stays the same across pauses of the attempt.
 - Unless an [interactive](#interactive) reporter runs, a pause the keyboard

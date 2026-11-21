@@ -49,10 +49,10 @@ export function resolveConfig(
  * factory's reporter with default options. `--reporter` replaces the
  * built-ins only, keeping the options of one the config configured: a
  * third-party reporter has no id to name on the command line, so a CI flag
- * choosing `list,junit` never drops the upload a config asked for. One of
- * `list` and `dot` at most shows the run: its id, or its factory called
- * without a `stream`, prints to stderr beside `json`, leaving stdout to
- * the report. An id named twice runs once.
+ * choosing `list,junit` never drops the upload a config asked for. One
+ * interactive reporter at most shows the run. A `list` or `dot` id, or
+ * its factory called without a `stream`, prints to stderr beside `json`,
+ * leaving stdout to the report. An id named twice runs once.
  * Workers resolve this too and never call a reporter, which the factories
  * allow: constructing one has no side effects.
  */
@@ -89,16 +89,16 @@ function resolveReporters(raw: E2EConfig, cli: RunCliOverrides): readonly Report
         });
   const stream = chosen.some((entry) => entry.id === 'json') ? 'stderr' : 'stdout';
   const reporters = [...chosen.map((entry) => entry.reporter ?? builtinReporter(entry.id, stream)), ...others];
-  const views = chosen.filter((entry) => entry.id === 'list' || entry.id === 'dot');
-  if (views.length > 1) {
-    const names = views.map((entry) => `"${entry.id}"`);
+  const showing = reporters.filter((reporter) => reporter.interactive === true);
+  if (showing.length > 1) {
+    const names = showing.map((reporter) => `"${reporter.name}"`);
     throw new ConfigurationError(
       'INVALID_CONFIG',
-      `reporters ${names.slice(0, -1).join(', ')} and ${names.at(-1)} both show the run in the terminal, where they would print everything twice; run one of them`,
+      `reporters ${names.slice(0, -1).join(', ')} and ${names.at(-1)} are all interactive: each would show the run in the terminal, everything printed twice; run one of them`,
     );
   }
   // A view by id moved to stderr above; one told to print to stdout would garble the document.
-  const onStdout = views.find((entry) => entry.reporter !== undefined && builtinMark(entry.reporter)?.stream === 'stdout');
+  const onStdout = chosen.find((entry) => entry.reporter !== undefined && builtinMark(entry.reporter)?.stream === 'stdout');
   if (onStdout !== undefined && chosen.some((entry) => entry.id === 'json')) {
     throw new ConfigurationError(
       'INVALID_CONFIG',

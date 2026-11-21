@@ -789,7 +789,7 @@ describe('hold.ask ending a hold', () => {
             hold: {
               steps: true,
               ask: async (step, { show }) => {
-                show({ steps: [{ step, number: 1 }], help: false, holdSteps: true });
+                show({ steps: [{ step, number: 1 }], holdSteps: true, keys: [{ key: 'enter', does: 'run this step' }, { key: 'q', does: 'quit' }] });
                 show(undefined);
               },
             },
@@ -801,7 +801,7 @@ describe('hold.ask ending a hold', () => {
     } finally {
       for (const spy of spies) spy.mockRestore();
     }
-    expect(written.stderr).toMatch(/^paused \(\w+\) at step 1 of waits \[.+\]: app\.open "\/held" \(tests\/held\.e2e\.ts:2\) · press enter to run this step, h to show help, q to quit$/m);
+    expect(written.stderr).toMatch(/^paused \(\w+\) at step 1 of waits \[.+\]: app\.open "\/held" \(tests\/held\.e2e\.ts:2\) · press enter to run this step, q to quit$/m);
     expect(JSON.parse(written.stdout)).toMatchObject({ schemaVersion: 'report-1', run: { status: 'passed' } });
   }, 60_000);
 
@@ -810,7 +810,7 @@ describe('hold.ask ending a hold', () => {
     try {
       const { outcome, project } = await runProjectWithConfigFile(
         { 'tests/any.e2e.ts': `import { test } from 'e2e';\ntest('never runs', async () => {});\n` },
-        { configSource: workerFakeConfigSource(1, `\n  reporters: ['json'],`), runOptions: { hold: { ask: () => Promise.resolve(), steps: true, keyboard: false }, quiet: false } },
+        { configSource: workerFakeConfigSource(1, `\n  reporters: ['json'],`), runOptions: { hold: { ask: () => Promise.resolve(), steps: true, commands: true }, quiet: false } },
       );
       project.cleanup();
       expect(outcome.exitCode).toBe(2);
@@ -840,8 +840,8 @@ describe('hold.ask ending a hold', () => {
           hold: {
             steps: true,
             ask: async (step, { show }) => {
-              show({ steps: [{ step, number: 1 }], help: false, holdSteps: true, keyboard: false });
-              show({ steps: [{ step, number: 1 }], help: true, holdSteps: true });
+              show({ steps: [{ step, number: 1 }], holdSteps: true, keys: [] });
+              show({ steps: [{ step, number: 1 }], holdSteps: true, keys: [{ key: 'enter', does: 'run this step' }, { key: 'q', does: 'quit' }] });
               show(undefined);
             },
           },
@@ -852,7 +852,7 @@ describe('hold.ask ending a hold', () => {
     expect(outcome.exitCode).toBe(0);
     expect(seen).toEqual([
       'paused step 1:app.open:tests/held.e2e.ts keys=',
-      'paused step 1:app.open:tests/held.e2e.ts keys=enter,n,a,q',
+      'paused step 1:app.open:tests/held.e2e.ts keys=enter,q',
       'resumed true',
     ]);
   }, 60_000);
@@ -872,7 +872,7 @@ describe('hold.ask ending a hold', () => {
             hold: {
               steps: true,
               ask: async (step, { show }) => {
-                show({ steps: [{ step, number: 1 }], help: false, holdSteps: true });
+                show({ steps: [{ step, number: 1 }], holdSteps: true, keys: [{ key: 'enter', does: 'run this step' }, { key: 'q', does: 'quit' }] });
                 await sleep(200);
                 shownWhileHeld = stderr.some((text) => text.startsWith(`paused (${step.attachId}) at step 1 of waits`));
                 show(undefined);

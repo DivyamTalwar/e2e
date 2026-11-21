@@ -367,8 +367,6 @@ export class ListReporter {
   private pausedAt: RunEventOf<'paused'> | undefined;
   /** The pause line printed last without a live window, so the same wait told again prints nothing. */
   private printedPause: string | undefined;
-  /** Each test's title path as `collected` listed it, joined, by test id. */
-  private readonly titlePaths = new Map<string, string>();
   private readonly failures: Failure[] = [];
   private readonly skippedFailures: Failure[] = [];
   /** Every result a test filter left out, in the order they arrived, for the `Left out` row. */
@@ -478,7 +476,7 @@ export class ListReporter {
         break;
       case 'output':
         if (event.target === undefined) this.processOutput(event.stream, event.text);
-        else this.testOutput({ ...event, target: event.target });
+        else this.testOutput(event);
         break;
       case 'paused':
         // With no key to press, commands answer the wait and print it themselves.
@@ -523,7 +521,7 @@ export class ListReporter {
   private showPaused(paused: RunEventOf<'paused'> | undefined): void {
     this.pausedAt = paused;
     if (!this.live) {
-      const line = paused === undefined ? undefined : pausedLine(paused, this.titlePaths.get(paused.testId) ?? this.paused()?.test.title ?? paused.testId);
+      const line = paused === undefined ? undefined : pausedLine(paused);
       if (line !== undefined && line !== this.printedPause) this.print(line);
       this.printedPause = line;
       return;
@@ -549,7 +547,7 @@ export class ListReporter {
    * only lines a newline has ended print; the rest waits for the next write,
    * the test's result, or the end of the run.
    */
-  private testOutput(event: RunEventOf<'output'> & { readonly target: string }): void {
+  private testOutput(event: Extract<RunEventOf<'output'>, { target: string }>): void {
     if (this.dots !== undefined) {
       this.dots.show(event.stream, event.text);
       return;
@@ -685,7 +683,6 @@ export class ListReporter {
    */
   private collected(event: RunEventOf<'collected'>): void {
     this.startedAt = new Date();
-    for (const test of event.tests) this.titlePaths.set(test.testId, test.titlePath.join(' › '));
     for (const planned of event.files) {
       this.group(planned.file, planned.target).planned = planned.tests;
     }
@@ -1171,7 +1168,7 @@ export class ListReporter {
     if (this.explore !== undefined) {
       return this.explore.liveRows(this.exploreBadge(), running[0]?.current?.events, this.summaryRows(false), Date.now(), room);
     }
-    const footer = this.pausedAt === undefined ? [] : stepPromptRows(this.pc, this.pausedAt, terminalColumns()).slice(0, terminalRows() - 1);
+    const footer = this.pausedAt === undefined ? [] : stepPromptRows(this.pc, this.pausedAt).slice(0, terminalRows() - 1);
 
     return this.tree.render(running, this.summaryRows(false), Date.now(), room, { setup: this.inFlight, paused: this.paused(), footer });
   }

@@ -42,7 +42,7 @@ export default {
 | `INVALID_CONFIG` | ID 不是 `list`、`dot`、`json`、`junit` 或 `markdown`。 |
 | `INVALID_CONFIG` | 工厂函数未被调用，例如写成 `junit` 而不是 `junit()`。 |
 | `INVALID_CONFIG` | 条目既不是 ID，也不是包含 `name` 和至少一个钩子的对象。 |
-| `INVALID_CONFIG` | 同时使用 `list` 和 `dot`，或其中一个指定了两次。 |
+| `INVALID_CONFIG` | 有多个[交互式](#interactive)报告器，例如 `list` 和 `dot`。 |
 | `INVALID_CONFIG` | 与 `json` 同时使用的 `list` 或 `dot` 指定了 `stream: 'stdout'`。 |
 
 #### `list`
@@ -209,7 +209,7 @@ export default {
 | [`onEvent`](#onevent) | `(event: RunEvent) => void` |
 | [`reportFiles`](#reportfiles) | `(run, signal) => ReportFile[]` |
 | [`onRunFinished`](#onrunfinished) | `(run, signal) => Promise<…>` |
-| [`onSummary`](#onsummary) | `(rows: ReporterSummary) => void` |
+| [`onSummary`](#onsummary) | `(rows, run) => void` |
 
 ```ts
 interface Reporter {
@@ -218,7 +218,7 @@ interface Reporter {
   onEvent?(event: RunEvent): void;
   reportFiles?(run: FinishedRun, signal: AbortSignal): readonly ReportFile[] | Promise<readonly ReportFile[]>;
   onRunFinished?(run: FinishedRun, signal: AbortSignal): Promise<ReporterSummary | void>;
-  onSummary?(rows: ReporterSummary): void;
+  onSummary?(rows: ReporterSummary, run: FinishedRun): void;
 }
 ```
 
@@ -246,6 +246,7 @@ interactive: true, // default: false
 - 其他报告器在 [`onSummary`](#onsummary) 之外打印的内容视为你的代码的输出：运行器会对其脱敏，并打印到 stderr。
 - 交互式报告器的 `onEvent` 抛出异常或返回被拒绝的 Promise 后，运行器会在本次运行的剩余时间内代它打印。
 - 第二次 Ctrl-C 不会停止它的 `onRunFinished`：它的输出在本地。
+- 最多只能有一个交互式报告器。
 - 通过 [`e2e/runner`](/reference/runner) 嵌入的运行不会运行任何交互式报告器，你的代码打印的内容留在原来的流上。
 
 #### `onEvent`
@@ -365,7 +366,7 @@ type ReporterSummary = readonly { label: string; text: string }[];
 
 #### `onSummary`
 
-接收所有报告器的摘要行：先是内置报告器，再按 `reporters` 顺序是其他报告器；每个报告器先是其带标签的报告文件的行，再是其 `onRunFinished` 返回的行。
+接收所有报告器的摘要行：先是内置报告器，再按 `reporters` 顺序是其他报告器；每个报告器先是其带标签的报告文件的行，再是其 `onRunFinished` 返回的行。第二个参数是[已完成的运行](#onrunfinished)。
 
 ```ts
 onSummary(rows) {
@@ -391,7 +392,7 @@ type RunEventFact =
   | { type: 'setup'; step: SetupStep; state: 'finished'; durationMs; outcome?: 'reused' | 'failed' | 'timed-out' }
   | { type: 'test-started'; testId; agent; repeat; title; file; serialId; target }
   | { type: 'step'; testId; agent; repeat; target; progress: StepProgress }
-  | { type: 'paused'; testId; agent; repeat; target; reason: 'step' | 'pause'; attachId; steps: PausedStep[]; keys: { key; does }[] }
+  | { type: 'paused'; testId; agent; repeat; target; title; reason: 'step' | 'pause'; attachId; steps: PausedStep[]; keys: { key; does }[] }
   | { type: 'resumed'; testId; agent; repeat; target }
   | { type: 'test-finished'; result: RunEventResult }
   | { type: 'serial-group'; group: SerialGroupRecord }
@@ -423,6 +424,7 @@ interface CollectedTestInfo {
   readonly target: string;
   readonly agent: string;
   readonly file: string;    // from the project root, POSIX separators
+  readonly kind: 'test' | 'setup'; // `setup` saves a session for other tests
   readonly title: string;
   readonly titlePath: readonly string[]; // the describe titles, then the title
   readonly tags: readonly string[];
@@ -434,7 +436,7 @@ interface CollectedTestInfo {
 ```
 
 - `tests` 按选择顺序，为每个测试、目标和代理的组合包含一项。被过滤器、`--grep` 或分片排除的测试为 `filtered`。
-- 每个测试运行 `repeatEach` 次：没有 `--repeat-each` 时为 1。
+- 会运行的 `test` 运行 `repeatEach` 次：没有 `--repeat-each` 时为 1。`setup` 测试只运行一次。
 - `total` 统计所有项。`files` 按文件和目标统计 `run` 和 `skip` 的项，因此报告器能知道某个文件的结果何时齐全。两者都会按重复次数统计重复运行的测试。
 - 该事件的 `at` 是运行的开始时间，即报告中的 `startedAt`。
 
@@ -535,6 +537,8 @@ interface PausedStep {
 - `steps` 包含一个调用，或一起暂挂的所有步骤，例如同一个 `Promise.all` 中的步骤。
 - `keys` 按提示显示的顺序列出键盘现在能做的操作，例如 `{ key: 'enter', does: 'run this step' }`。不读取键盘时为空，例如[用命令单步执行](/debugging#step-through-a-test-without-a-terminal)的运行。
 - 等待中的测试一次显示一个。同一测试的第二个 `paused` 会替换第一个：有步骤加入，或按键发生了变化。
+- 每个 `paused` 都有对应的 `resumed`，测试或运行先结束时也一样。
+- `title` 是用 ` › ` 连接的测试标题路径。
 - 使用 `attachId` [通过 MCP 附加](/reference/mcp#attaching-to-a-held-test)。该 ID 在同一次尝试的各次暂停之间保持不变。
 - 除非有[交互式](#interactive)报告器在运行，由键盘回答的暂停也会在 stderr 上打印为一行。
 

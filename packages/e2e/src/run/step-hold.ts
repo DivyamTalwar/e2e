@@ -37,65 +37,31 @@ export interface NumberedStep {
   readonly number: number;
 }
 
+/** One key a prompt offers, and what it does, in the words a person reads. */
+export interface PromptKey {
+  readonly key: string;
+  readonly does: string;
+}
+
 /** The held steps one key lets run, as the prompt shows them. */
 export interface StepPrompt {
   /** One step, or every step held together, as in one `Promise.all`. */
   readonly steps: readonly [NumberedStep, ...NumberedStep[]];
-  /** List every key, not only the short line; `h` turns it on and off. */
-  readonly help: boolean;
   /**
    * Whether the run holds steps (`e2e run --step`). `n`, `a`, and `rest`
    * release them.
    */
   readonly holdSteps: boolean;
-  /** Set to enable the screen and app log viewer in the terminal. */
-  readonly viewer?: boolean;
-  /** False when no keyboard answers the prompt: `e2e run --step` commands do. */
-  readonly keyboard?: false;
+  /** What the keyboard does now, in the order to list it. Empty when no keyboard answers the prompt: `e2e run --step` commands do. */
+  readonly keys: readonly PromptKey[];
 }
 
-/** What Enter does at a prompt: it runs every step on it, or resumes the test at a pause. */
-function enterDoes(prompt: StepPrompt): string {
-  if (prompt.steps[0].step.kind === 'pause') {
-    return 'resume';
-  }
+/** One run of one test on one target, as the events name it. */
+type RunningTest = Pick<RunEventOf<'paused'>, 'testId' | 'agent' | 'repeat' | 'target'>;
 
-  return prompt.steps.length === 1 ? 'run this step' : `run these ${prompt.steps.length} steps`;
-}
-
-/** The prompt's other keys, in `--watch`'s words. */
-const STEP_KEYS = [
-  ['s', 'show the screen'],
-  ['l', 'show the app log'],
-  ['n', 'run this test without holding steps'],
-  ['a', 'run all without holding steps'],
-  ['q', 'quit'],
-] as const;
-
-/** Returns the available keys other than Enter. */
-function promptKeys(prompt: StepPrompt): readonly (readonly [key: string, does: string])[] {
-  return STEP_KEYS.filter(([key]) => {
-    if (key === 's' || key === 'l') {
-      return prompt.viewer === true;
-    }
-
-    return key === 'q' || prompt.holdSteps;
-  });
-}
-
-/**
- * The keys a `paused` event lists: Enter, then `h` and `q`, or every key
- * once `h` asked for them. None when no keyboard answers the prompt.
- */
-function shownKeys(prompt: StepPrompt): { key: string; does: string }[] {
-  if (prompt.keyboard === false) return [];
-  const rest = prompt.help ? promptKeys(prompt) : ([['h', 'show help'], ['q', 'quit']] as const);
-  return [{ key: 'enter', does: enterDoes(prompt) }, ...rest.map(([key, does]) => ({ key, does }))];
-}
-
-/** Whether a held step belongs to the test `paused` names. */
-export function sameTest(paused: Pick<RunEventOf<'paused'>, 'testId' | 'agent' | 'repeat' | 'target'>, step: HeldStep): boolean {
-  return paused.testId === step.testId && paused.agent === step.agent && paused.repeat === step.repeat && paused.target === step.target;
+/** Whether two events are about the same run of the same test. */
+export function sameTest(one: RunningTest, other: RunningTest): boolean {
+  return one.testId === other.testId && one.agent === other.agent && one.repeat === other.repeat && one.target === other.target;
 }
 
 /** The `paused` event of `prompt`: its test, the calls that wait, and the keys a keyboard takes. */
@@ -113,10 +79,11 @@ export function pausedFact(prompt: StepPrompt): Omit<RunEventOf<'paused'>, 'type
     agent: step.agent,
     repeat: step.repeat,
     target: step.target,
+    title: step.title,
     reason: step.kind === 'pause' ? 'pause' : 'step',
     attachId: step.attachId,
     steps: [waits(first), ...rest.map(waits)],
-    keys: shownKeys(prompt),
+    keys: prompt.keys,
   };
 }
 

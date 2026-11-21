@@ -693,7 +693,7 @@ export async function serveSteps(options: RunOptions, version: string, signals: 
     return options.onEvent?.(event);
   };
   try {
-    const outcome = await run({ ...options, hold: { ask: beforeStep, steps: true, keyboard: false }, onEvent });
+    const outcome = await run({ ...options, hold: { ask: beforeStep, steps: true, commands: true }, onEvent });
     ended = { text: ENDED, exitCode: outcome.exitCode };
     return outcome;
   } catch (cause) {

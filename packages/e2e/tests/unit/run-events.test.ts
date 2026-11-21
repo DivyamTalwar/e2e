@@ -24,24 +24,18 @@ describe('createRunEventEmitter', () => {
 
   it('delivers an event a sink emits while it is handed one after that one, in seq order, to every sink', () => {
     const seen: Record<'first' | 'second', string[]> = { first: [], second: [] };
-    const contexts: string[] = [];
     const emit = createRunEventEmitter([
       {
         name: 'first',
         onEvent: (event) => {
           seen.first.push(`${event.seq}`);
-          if (event.seq === 1) emit(fact(2), (deliver) => {
-            contexts.push('within');
-            deliver();
-          });
+          if (event.seq === 1) emit(fact(2));
         },
       },
       { name: 'second', onEvent: (event) => void seen.second.push(`${event.seq}`) },
     ]);
     emit(fact(1));
     expect(seen).toEqual({ first: ['1', '2'], second: ['1', '2'] });
-    // The nested event is still delivered in the context its emitter asked for.
-    expect(contexts).toEqual(['within']);
   });
 
   it('quarantines a throwing sink without silencing the healthy one, and says so once on stderr', () => {

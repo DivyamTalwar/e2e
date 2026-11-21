@@ -29,7 +29,6 @@ import {
   type ErrorPhase,
 } from '@e2e-dev/core/lib/internal/errors';
 import { loadAiSdk } from '@e2e-dev/core/lib/agent/ai-sdk';
-import { leaveWorkBehind } from '@e2e-dev/core/lib/internal/abandoned';
 import { AiTraceCollector, AiTraceRecorder, registerAiTraceRecorder } from '@e2e-dev/core/lib/internal/ai-trace';
 import { DebugTrace } from '@e2e-dev/core/lib/internal/debug';
 import { printableUrl } from '@e2e-dev/core/lib/internal/urls';
@@ -42,18 +41,18 @@ import { writeTracePages, type TracePages } from '../report/traces.ts';
 import { builtinReporter } from '../report/builtin.ts';
 import { builtinId } from '../report/builtin-id.ts';
 import { failureLine } from '../report/format.ts';
-import { writeJsonReport, writeTextReport } from '../report/write.ts';
+import { writeJsonReport } from '../report/write.ts';
 import { createRunEventEmitter, toEventResult, type CollectedTestInfo, type RunEvent, type RunEventOf, type RunEventSink, type RunExitCode, type RunStatus, type RunEventFact, type SetupOutcome, type SetupStep } from './events.ts';
 import { allocateAppPorts } from './app-ports.ts';
 import { inProcessSpawner } from './in-process.ts';
 import { cleanupErrorsOf, someSkippedAfterFailure, tracedResultIds, type ResultRecord, type RunError, type SerialGroupRecord } from '@e2e-dev/core/lib/run/records';
 import { runUnits, type TargetFailure } from './scheduler.ts';
-import { pausedFact, sameTest, type BeforeStep, type HeldStep, type StepPrompt } from './step-hold.ts';
-import { pausedLine } from '../report/list-steps.ts';
+import { pausedFact, sameTest, type BeforeStep, type StepPrompt } from './step-hold.ts';
+import { finishReporters, hostReporters } from './reporter-host.ts';
 import { buildWorkPlans, nonRunResult, orderWorkPlans, plannedSlots, type TargetWorkPlan, type TimeLimit } from './units.ts';
 import { SessionStore } from '@e2e-dev/core/lib/run/sessions';
 import { outputLayout } from '@e2e-dev/core/lib/run/output';
-import { uncaptured, writeTerminal, type RunnerOutput } from './process-output.ts';
+import type { RunnerOutput } from './process-output.ts';
 import { refuseBun } from './public-ownership.ts';
 import { processSecrets, registerStaticSecrets, staticSecretLedger } from '@e2e-dev/core/lib/run/secrecy';
 import { nextRerunDir, pruneArtifacts } from '@e2e-dev/core/lib/run/artifacts';
@@ -61,9 +60,8 @@ import { carryForward, fileDurationKey, lastFailedIds, readLastRun, reportArtifa
 import { loadTimings, writeTimings } from './timings.ts';
 import { childProcessSpawner } from './worker/handle.ts';
 import { setSecretRegistry } from '@e2e-dev/core/lib/secrets';
-import { budgetText, withAbort } from '@e2e-dev/core/lib/internal/time';
 import type { RecordingMode } from '@e2e-dev/core/lib/types';
-import type { BuiltinReporter, E2EConfig, FinishedRun, ReportFile, Reporter, ReporterSummary } from '../run-types.ts';
+import type { BuiltinReporter, E2EConfig } from '../run-types.ts';
 import { modelLabel } from '@e2e-dev/core/lib/config/agent';
 import { boundedInt, describeValue, positiveInt, timerMs } from '@e2e-dev/core/lib/config/validate';
 import { validateChangedSince } from './changes.ts';
@@ -96,11 +94,11 @@ type RunHold = {
    */
   readonly steps: boolean;
   /**
-   * False when later commands answer the holds and print the run's output
-   * (`e2e run --step` without a terminal). Such a run refuses the json
-   * reporter: the steps would land in its document.
+   * Set when later commands answer the holds, each printing the run's
+   * output since the one before (`e2e run --step` without a terminal). The
+   * json reporter is refused then: the steps would land in its document.
    */
-  readonly keyboard?: false;
+  readonly commands?: true;
 };
 
 export interface RunOptions {
@@ -547,24 +545,33 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
       .map((id) => builtinReporter(id, fallbackIds.includes('json') ? 'stderr' : 'stdout'))
       .filter((reporter, index, all) => reporter.interactive !== true || all.findIndex((other) => other.interactive === true) === index);
   const activeReporters = configured.filter((reporter) => options.quiet !== true || reporter.interactive !== true);
-  const live = liveHooks(activeReporters, processOutput);
-  const sinks = [...live.sinks, ...(options.onEvent === undefined ? [] : [{ name: 'onEvent', onEvent: options.onEvent }])];
-  const emit = createRunEventEmitter(sinks, live.warn);
-  /**
-   * Emits what user code printed, a test's or this process's. What a
-   * reporter prints while it is handed output, now or after an `await`,
-   * goes to the terminal as written, never back to the reporters, so one
-   * that logs what it is handed cannot feed itself. Unless an interactive
-   * reporter shows it, the runner prints it, on stderr: a test's unless the
-   * run is quiet.
-   */
-  const emitOutput = (output: Omit<RunEventOf<'output'>, 'type'>): void => {
-    emit({ type: 'output', ...output }, processOutput === undefined ? undefined : (deliver) => processOutput.passThrough(deliver));
-    if (!live.showsRun() && (output.target === undefined || options.quiet !== true)) processOutput?.print(output.stream, output.text);
-  };
+  const host = hostReporters(activeReporters, { processOutput, quiet: options.quiet === true, redact: redactStaticSecrets(loaded.config?.allSecrets) });
+  const hostSink = options.onEvent;
+  const emit = createRunEventEmitter(
+    [
+      ...host.sinks,
+      // The host's sink prints as the reporters' do while it is handed output: never back into the events.
+      ...(hostSink === undefined
+        ? []
+        : [{ name: 'onEvent', onEvent: (event: RunEvent) => (event.type === 'output' && processOutput !== undefined ? processOutput.passThrough(() => hostSink(event)) : hostSink(event)) }]),
+    ],
+    host.warn,
+  );
   // Until the run is over, what user code prints in this process is an
   // `output` event like a test's, with no target.
-  processOutput?.showThrough(sinks.some((sink) => sink !== undefined) ? { show: (stream, text) => emitOutput({ pair: undefined, stream, text }), end: () => undefined } : undefined);
+  processOutput?.showThrough({ show: (stream, text) => emit({ type: 'output', stream, text }), end: () => undefined });
+  /**
+   * The test waiting for a person, between its `paused` and `resumed`. The
+   * `hold` hook says when a wait begins; the runner ends one itself when
+   * its test or the run ends first, so every `paused` gets its `resumed`.
+   */
+  let paused: Omit<RunEventOf<'paused'>, 'type'> | undefined;
+  const resume = (): void => {
+    if (paused === undefined) return;
+    const { testId, agent, repeat, target } = paused;
+    paused = undefined;
+    emit({ type: 'resumed', testId, agent, repeat, target });
+  };
 
   /** Records one run-level error once: into the report and onto the stream. */
   const recordRunError = (runError: RunError): void => {
@@ -580,6 +587,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
   /** Records one result: into the report and onto the stream. */
   const recordResult = (result: ResultRecord): void => {
     results.push(result);
+    if (paused !== undefined && sameTest(paused, { testId: result.test.id, agent: result.agent, repeat: result.repeat, target: result.target.name })) resume();
     emit({ type: 'test-finished', result: toEventResult(result) });
   };
 
@@ -793,6 +801,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     // with the file a host reads afterwards.
     const status = report.run.status;
     setSecretRegistry(undefined);
+    resume();
     emit({
       type: 'run-finished',
       status,
@@ -808,7 +817,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     // An interactive reporter prints run errors, and a run that stopped
     // before its tests writes no file to read them in, so otherwise they go
     // to stderr.
-    if (!live.showsRun() && options.quiet !== true) {
+    if (!host.showsRun() && options.quiet !== true) {
       for (const error of report.run.errors) process.stderr.write(failureLine(error));
     }
     if (debug.enabled) {
@@ -837,7 +846,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
         ...(lastRun === undefined ? {} : { lastRun }),
         redact: redactStaticSecrets(loaded.config?.allSecrets),
       },
-      { timeoutMs: options.reporterTimeout ?? REPORTER_TIMEOUT_MS, force: forceController.signal, live },
+      { timeoutMs: options.reporterTimeout ?? REPORTER_TIMEOUT_MS, force: forceController.signal, host },
     );
     return { exitCode, status, report, reportPath, aiTracePath, results, config: loaded.config };
   };
@@ -846,7 +855,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     recordFailure(loaded.error, 'config');
     return finish();
   }
-  if (options.hold?.steps === true && options.hold.keyboard === false && activeReporters.some((reporter) => builtinId(reporter) === 'json')) {
+  if (options.hold?.steps === true && options.hold.commands === true && activeReporters.some((reporter) => builtinId(reporter) === 'json')) {
     recordFailure(
       new ConfigurationError('INVALID_CONFIG', '--step without a terminal cannot run with the reporter "json": the steps would land in its stdout document'),
       'config',
@@ -1156,30 +1165,14 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
           });
 
     // A test waiting for a person is a `paused` event, and `resumed` once
-    // it goes on. Unless an interactive reporter shows it, a wait a keyboard
-    // answers also goes to stderr as one line, where a person still reads it.
+    // it goes on.
     const hold = options.hold;
-    let waiting: { readonly step: HeldStep; readonly paused: Omit<RunEventOf<'paused'>, 'type'> } | undefined;
-    let promptLine: string | undefined;
-    const printPause = (): void => {
-      if (live.showsRun()) return;
-      // Printed once per prompt and again when its keys change, as after `h`.
-      const line = waiting === undefined || waiting.paused.keys.length === 0 ? undefined : pausedLine(waiting.paused, waiting.step.title);
-      // Straight to stderr, redacted here, so no reporter holds it back while the run waits.
-      if (line !== undefined && line !== promptLine) writeTerminal('stderr', `${redactStaticSecrets(config.allSecrets)(line)}\n`);
-      promptLine = line;
-    };
-    // Once the last interactive reporter broke, the runner shows the wait it was showing.
-    live.onTakeOver(printPause);
     const showStep = (prompt: StepPrompt | undefined): void => {
-      const step = prompt?.steps[0].step;
-      const before = waiting?.paused;
-      if (before !== undefined && (step === undefined || !sameTest(before, step))) {
-        emit({ type: 'resumed', testId: before.testId, agent: before.agent, repeat: before.repeat, target: before.target });
-      }
-      waiting = prompt === undefined ? undefined : { step: prompt.steps[0].step, paused: pausedFact(prompt) };
-      if (waiting !== undefined) emit({ type: 'paused', ...waiting.paused });
-      printPause();
+      const next = prompt === undefined ? undefined : pausedFact(prompt);
+      if (next === undefined || (paused !== undefined && !sameTest(paused, next))) resume();
+      if (next === undefined) return;
+      paused = next;
+      emit({ type: 'paused', ...next });
     };
     pendingNonRun = [];
     appExitTargets = await debug.time('scheduler', () =>
@@ -1219,7 +1212,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
             emit({ type: 'test-started', ...start, target: targetName }),
           onProgress: (pair, targetName, progress) =>
             emit({ type: 'step', testId: pair.testId, agent: pair.agent, repeat: pair.repeat, target: targetName, progress }),
-          onOutput: (output, targetName) => emitOutput({ target: targetName, ...output }),
+          onOutput: (output, targetName) => emit({ type: 'output', target: targetName, ...output }),
           onNotice: (message, targetName) => notice(targetName, message),
           onDebug: (snapshot) => debug.merge(snapshot),
           onAiTrace: (snapshot) => aiTrace?.merge(snapshot),
@@ -1570,9 +1563,6 @@ function verdictExitCodes(results: readonly ResultRecord[], serialGroups: readon
   return codes;
 }
 
-/** Why a reporter's `onRunFinished` was given up on: the message is the stderr line. */
-class ReporterAbandoned extends Error {}
-
 /** `FinishedRun.redact`: the config's fixed secret values; a config that never loaded declared none. */
 function redactStaticSecrets(secrets: ResolvedRunConfig['allSecrets'] | undefined): (text: string) => string {
   if (secrets === undefined) return (text) => String(text);
@@ -1590,9 +1580,11 @@ function collectedTests(projectRoot: string, selection: Selection): CollectedTes
       target: pair.target.name,
       agent: pair.agent,
       file: pair.test.file,
+      kind: pair.test.kind,
       title: pair.test.title,
-      titlePath: pair.test.titlePath,
-      tags: pair.test.tags,
+      // Copies: an event's arrays are a reporter's to keep, never the collected test's own.
+      titlePath: [...pair.test.titlePath],
+      tags: [...pair.test.tags],
       ...(source === undefined ? {} : { source }),
       ...(pair.test.serialId === undefined ? {} : { serialId: pair.test.serialId }),
       disposition: pair.disposition,
@@ -1600,228 +1592,3 @@ function collectedTests(projectRoot: string, selection: Selection): CollectedTes
     };
   });
 }
-
-/** What a run's reporters get as the run goes, and who shows it. */
-interface LiveHooks {
-  /** Each reporter's `onEvent` as an event sink; undefined for a reporter without one. */
-  readonly sinks: readonly ({ readonly name: string; readonly onEvent: RunEventSink; readonly onQuarantine: () => void } | undefined)[];
-  /** Whether an interactive reporter shows the run, so the runner prints no output, run error, or pause itself; false once its `onEvent` broke. */
-  showsRun(): boolean;
-  /** Calls `take` once the last interactive reporter's `onEvent` broke and the runner prints for it. */
-  onTakeOver(take: () => void): void;
-  /** Calls a hook of `reporter`, past the capture of user output when it is interactive, so what it prints is what the terminal shows. */
-  call<T>(reporter: Reporter, hook: () => T): T;
-  /** Prints a line of the runner's own about a reporter, redacted like any other. */
-  warn(line: string): void;
-  /** Hands the run's summary rows to every reporter's `onSummary`, past the capture of user output: it is where a reporter prints. */
-  summary(rows: ReporterSummary): void;
-}
-
-/**
- * The live side of `reporters`. Every reporter with `onEvent` gets every
- * event, but only an interactive one stands in for the runner's own
- * printing: a reporter that only records never silences it, and once an
- * interactive reporter's `onEvent` throws or rejects, the runner prints
- * what it showed.
- */
-function liveHooks(reporters: readonly Reporter[], processOutput: RunnerOutput | undefined): LiveHooks {
-  const call = <T,>(reporter: Reporter, hook: () => T): T => (reporter.interactive === true ? uncaptured(hook) : hook());
-  const showing = new Set(reporters.filter((reporter) => reporter.interactive === true && reporter.onEvent !== undefined));
-  let takeOver: (() => void) | undefined;
-  // The runner's own line, outside any reporter's output context, so it is redacted like any other.
-  const warn = (line: string): void => {
-    const write = (): unknown => process.stderr.write(line);
-    if (processOutput === undefined) write();
-    else processOutput.captured(write);
-  };
-  const brokenSummary = new Set<Reporter>();
-  return {
-    sinks: reporters.map((reporter) => {
-      const { onEvent } = reporter;
-      if (onEvent === undefined) return undefined;
-      return {
-        name: reporter.name,
-        onEvent: (event: RunEvent) => call(reporter, () => onEvent.call(reporter, event)),
-        onQuarantine: () => {
-          if (showing.delete(reporter) && showing.size === 0) takeOver?.();
-        },
-      };
-    }),
-    showsRun: () => showing.size > 0,
-    onTakeOver(take) {
-      takeOver = take;
-    },
-    call,
-    warn,
-    summary(rows) {
-      for (const reporter of reporters) {
-        if (reporter.onSummary === undefined || brokenSummary.has(reporter)) continue;
-        const quarantine = (cause: unknown): void => {
-          if (brokenSummary.has(reporter)) return;
-          brokenSummary.add(reporter);
-          warn(`e2e: reporter "${reporter.name}" threw in onSummary: ${errorMessage(cause)}; ignoring it for the rest of the run\n`);
-        };
-        try {
-          // An async hook is never awaited, but its rejection is caught; a
-          // thenable is adopted inside the hook's own output context.
-          const result = uncaptured(() => {
-            const value: unknown = reporter.onSummary?.(rows);
-            return typeof (value as PromiseLike<unknown> | undefined)?.then === 'function' ? Promise.resolve(value) : undefined;
-          });
-          result?.catch(quarantine);
-        } catch (cause) {
-          quarantine(cause);
-        }
-      }
-    },
-  };
-}
-
-/** What a reporter's `reportFiles` has left once the run is forced to stop. */
-const FORCED_REPORT_FILES_MS = 5_000;
-
-/** How `finishReporters` treats the reporters it finishes. */
-interface FinishOptions {
-  /** Budget for each reporter's `reportFiles` and `onRunFinished`. */
-  readonly timeoutMs: number;
-  /** Aborts when the run is forced to stop. */
-  readonly force: AbortSignal;
-  readonly live: LiveHooks;
-}
-
-/**
- * Finishes every reporter: first the files each one's `reportFiles`
- * renders, which the runner writes, then every `onRunFinished` at once,
- * then every `onSummary` with the rows they all came back with. Each call
- * has `timeoutMs` and a signal that aborts on it; a forced stop also aborts
- * `onRunFinished`, except an interactive reporter's, whose output is local,
- * and leaves `reportFiles` a few seconds more, so the previous run's file
- * rarely stays beside this run's `report.json` and the stop never hangs on
- * one. A reporter given up on is work left
- * behind, which the CLI does not wait for. A reporter that throws, runs out
- * of time, or returns something other than files or rows is one line on
- * stderr; it can never change the run's outcome.
- */
-async function finishReporters(reporters: readonly Reporter[], finished: FinishedRun, options: FinishOptions): Promise<void> {
-  const { timeoutMs, force, live } = options;
-  const warn = (reporter: Reporter, detail: string): void => {
-    process.stderr.write(`e2e: reporter "${reporter.name}" ${detail}\n`);
-  };
-  const budget = budgetText(timeoutMs);
-  const forced = 'abandoned: the run was forced to stop';
-
-  /**
-   * Awaits `call` within the budget; undefined when it failed, a stderr line
-   * said why. A forced stop ends it at once when `whenForced` is `abandon`,
-   * within `FORCED_REPORT_FILES_MS` when `shorten`, and not at all when
-   * `ignore`.
-   */
-  const bounded = async <T,>(reporter: Reporter, whenForced: 'abandon' | 'shorten' | 'ignore', call: (signal: AbortSignal) => Promise<T>): Promise<T | undefined> => {
-    if (whenForced === 'abandon' && force.aborted) {
-      warn(reporter, forced);
-      return undefined;
-    }
-    const abandon = new AbortController();
-    const timer = setTimeout(() => abandon.abort(new ReporterAbandoned(`did not finish within ${budget}`)), timeoutMs);
-    let forcedTimer: NodeJS.Timeout | undefined;
-    const onForce = (): void => {
-      if (whenForced === 'abandon') abandon.abort(new ReporterAbandoned(forced));
-      else forcedTimer = setTimeout(() => abandon.abort(new ReporterAbandoned(forced)), Math.min(timeoutMs, FORCED_REPORT_FILES_MS));
-    };
-    if (whenForced !== 'ignore') {
-      if (force.aborted) onForce();
-      else force.addEventListener('abort', onForce, { once: true });
-    }
-    try {
-      return await withAbort(() => call(abandon.signal), abandon.signal, () => abandon.signal.reason as ReporterAbandoned);
-    } catch (cause) {
-      if (cause instanceof ReporterAbandoned) leaveWorkBehind();
-      warn(reporter, cause instanceof ReporterAbandoned ? cause.message : `failed: ${errorMessage(cause)}`);
-      return undefined;
-    } finally {
-      clearTimeout(timer);
-      clearTimeout(forcedTimer);
-      force.removeEventListener('abort', onForce);
-    }
-  };
-
-  const fileRows = await Promise.all(
-    reporters.map(async (reporter): Promise<ReporterSummary> => {
-      const { reportFiles } = reporter;
-      if (reportFiles === undefined) return [];
-      const files = await bounded(reporter, 'shorten', async (signal) => live.call(reporter, () => reportFiles.call(reporter, finished, signal)));
-      if (files === undefined) return [];
-      if (!Array.isArray(files) || !files.every(isReportFile)) {
-        warn(reporter, 'returned something other than report files; wrote none');
-        return [];
-      }
-      return writeReportFiles(reporter, files, finished, warn);
-    }),
-  );
-
-  const finishedRows = await Promise.all(
-    reporters.map(async (reporter): Promise<ReporterSummary> => {
-      const { onRunFinished } = reporter;
-      if (onRunFinished === undefined) return [];
-      const result: unknown = await bounded(reporter, reporter.interactive === true ? 'ignore' : 'abandon', (signal) => Promise.resolve(live.call(reporter, () => onRunFinished.call(reporter, finished, signal))));
-      if (result === undefined) return [];
-      if (!Array.isArray(result)) {
-        warn(reporter, 'returned something other than summary rows; dropped');
-        return [];
-      }
-      const rows = result.filter(isSummaryRow);
-      const dropped = result.length - rows.length;
-      if (dropped > 0) warn(reporter, `returned ${dropped} row(s) without a label and text; dropped`);
-      return rows;
-    }),
-  );
-
-  live.summary(reporters.flatMap((_, index) => [...fileRows[index]!, ...finishedRows[index]!]));
-}
-
-/**
- * Writes one reporter's files atomically, each whose path is not the
- * canonical report, and answers the rows naming the ones with a label. A
- * file that could not be written is one line on stderr.
- */
-async function writeReportFiles(
-  reporter: Reporter,
-  files: readonly ReportFile[],
-  finished: FinishedRun,
-  warn: (reporter: Reporter, detail: string) => void,
-): Promise<ReporterSummary> {
-  const rows: { label: string; text: string }[] = [];
-  for (const file of files) {
-    const target = path.resolve(finished.projectRoot, file.path);
-    if (finished.reportPath !== undefined && target === path.resolve(finished.reportPath)) {
-      warn(reporter, `cannot write ${file.path}: it is the run's report`);
-      continue;
-    }
-    try {
-      await writeTextReport(target, file.content);
-    } catch (cause) {
-      warn(reporter, `could not write ${file.path}: ${errorMessage(cause)}`);
-      continue;
-    }
-    if (file.label === undefined) continue;
-    const shown = path.relative(finished.projectRoot, target) || target;
-    rows.push({ label: file.label, text: file.note === undefined ? shown : `${shown} ${file.note}` });
-  }
-  return rows;
-}
-
-/** A report file is a non-empty path and string content, with an optional label and note; anything else came from untyped code. */
-function isReportFile(value: unknown): value is ReportFile {
-  if (typeof value !== 'object' || value === null) return false;
-  const { path: file, content, label, note } = value as Record<keyof ReportFile, unknown>;
-  const optionalText = (text: unknown): boolean => text === undefined || (typeof text === 'string' && text.length > 0);
-  return typeof file === 'string' && file.length > 0 && typeof content === 'string' && optionalText(label) && optionalText(note);
-}
-
-/** A row is a non-empty label and non-empty text; anything else came from untyped code. */
-function isSummaryRow(value: unknown): value is ReporterSummary[number] {
-  if (typeof value !== 'object' || value === null) return false;
-  const { label, text } = value as { label?: unknown; text?: unknown };
-  return typeof label === 'string' && label.length > 0 && typeof text === 'string' && text.length > 0;
-}
-

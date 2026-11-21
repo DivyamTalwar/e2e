@@ -277,7 +277,8 @@ describe('reporter objects', () => {
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const force = new AbortController();
     let aborted = false;
-    const started = Date.now();
+    let started = 0;
+    let waited = 0;
     try {
       const outcome = await runExisting(project, {
         config: {
@@ -287,7 +288,12 @@ describe('reporter objects', () => {
             {
               name: 'stuck',
               reportFiles: (_run, signal) => {
-                signal.addEventListener('abort', () => (aborted = true));
+                // The clock runs from the call, which the forced stop came before.
+                started = Date.now();
+                signal.addEventListener('abort', () => {
+                  aborted = true;
+                  waited = Date.now() - started;
+                });
                 return new Promise<never>(() => undefined);
               },
             },
@@ -302,7 +308,6 @@ describe('reporter objects', () => {
       stderr.mockRestore();
     }
     // Far short of the one-minute budget, and not at once.
-    const waited = Date.now() - started;
     expect(waited).toBeGreaterThanOrEqual(4_500);
     expect(waited).toBeLessThan(30_000);
     expect(aborted).toBe(true);

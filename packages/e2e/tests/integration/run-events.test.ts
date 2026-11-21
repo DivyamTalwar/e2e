@@ -101,6 +101,7 @@ describe('run events', () => {
           testId: outcome.report.run.results[0]!.testId,
           agent: 'default',
           file: 'tests/events.e2e.ts',
+          kind: 'test',
           title: 'increments once',
           titlePath: ['increments once'],
           tags: [],

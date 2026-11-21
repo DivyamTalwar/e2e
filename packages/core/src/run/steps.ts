@@ -754,7 +754,7 @@ export class StepRecorder {
     for (const { line, at } of this.earlyNavigations.splice(0)) this.fileNavigation(record, line, at);
     if (stack !== undefined) this.stacks.set(record.id, stack);
     this.owners.set(record.id, this.owner);
-    this.publish(record, { phase: 'start', kind, api, label, ...(record.source === undefined ? {} : { source: record.source }) });
+    this.publishStart(record);
     return record;
   }
 
@@ -1079,7 +1079,7 @@ export class StepRecorder {
    */
   guest(step: Pick<StepRecord, 'kind' | 'api' | 'label' | 'actor'> & { readonly source: SourceLocation | undefined }): GuestRecord {
     const record = this.file({ ...step, label: this.redactText(step.label) });
-    this.publish(record, { phase: 'start', kind: record.kind, api: record.api, label: record.label, ...(record.source === undefined ? {} : { source: record.source }) });
+    this.publishStart(record);
     return {
       tell: (progress) => {
         if (progress.phase === 'event') this.push(record, progress.event);
@@ -1103,6 +1103,12 @@ export class StepRecorder {
   }
 
   /** Publishes a phase with the owning record's identity, including nested and finishing steps. */
+  /** Tells that `record`'s step began, from where the test called it. */
+  private publishStart(record: StepRecord): void {
+    const { kind, api, label, source } = record;
+    this.publish(record, { phase: 'start', kind, api, label, ...(source === undefined ? {} : { source }) });
+  }
+
   private publish(record: StepRecord, fact: StepProgressFact): void {
     if (this.onProgress === undefined && this.mirror === undefined) return;
     const progress: StepProgress = {

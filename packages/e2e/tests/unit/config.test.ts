@@ -10,7 +10,7 @@ import { protocolEngine } from '@e2e-dev/core/lib/engine/protocol/client';
 import { secrets } from '@e2e-dev/core/lib/secrets';
 import type { CommandConfig, Target, TargetApp } from '@e2e-dev/core/lib/types';
 import { dot, junit, list } from '../../src/reporters.ts';
-import type { BuiltinReporter, E2EConfig, Reporter, TestFilter } from '../../src/run-types.ts';
+import type { BuiltinReporter, E2EConfig, FinishedRun, Reporter, TestFilter } from '../../src/run-types.ts';
 import { snapshot } from '../helpers/snapshot.ts';
 import { invalid } from '../helpers/invalid.ts';
 
@@ -23,7 +23,7 @@ const TARGETS = [WEB];
 function streamOf(reporter: Reporter): 'stdout' | 'stderr' | undefined {
   const spies = (['stdout', 'stderr'] as const).map((stream) => [stream, vi.spyOn(process[stream], 'write').mockImplementation(() => true)] as const);
   try {
-    reporter.onSummary?.([{ label: 'Report', text: 'report.json' }]);
+    reporter.onSummary?.([{ label: 'Report', text: 'report.json' }], {} as FinishedRun);
     return spies.find(([, spy]) => spy.mock.calls.length > 0)?.[0];
   } finally {
     for (const [, spy] of spies) spy.mockRestore();
@@ -628,12 +628,15 @@ describe('resolveConfig', () => {
     expect(() => resolve({ reporters: [first, second] })).toThrow(/list.*dot|dot.*list/u);
   });
 
-  it('refuses list beside dot whatever their streams, and takes any number of other reporters, interactive or not', () => {
-    expect(() => resolve({ reporters: [list({ stream: 'stdout' }), dot({ stream: 'stderr' })] })).toThrow(/reporters "list" and "dot" both show the run in the terminal/);
-    expect(() => resolve({ reporters: [list(), list({ stream: 'stderr' })] })).toThrow(/reporters "list" and "list" both show the run/);
+  it('refuses a second interactive reporter, a built-in or not, whatever their streams, and takes any number of others', () => {
+    expect(() => resolve({ reporters: [list({ stream: 'stdout' }), dot({ stream: 'stderr' })] })).toThrow(/reporters "list" and "dot" are all interactive/);
+    expect(() => resolve({ reporters: [list(), list({ stream: 'stderr' })] })).toThrow(/reporters "list" and "list" are all interactive/);
     const dots: Reporter = { name: 'dots', interactive: true, onEvent: () => undefined };
-    expect(reporterNames([list(), dots])).toEqual(['list', 'dots']);
+    expect(() => resolve({ reporters: [list(), dots] })).toThrow(/reporters "list" and "dots" are all interactive/);
+    expect(() => resolve({ reporters: [dots, { ...dots, name: 'bars' }, { ...dots, name: 'pies' }] })).toThrow(/reporters "dots", "bars" and "pies" are all interactive/);
+    // --reporter replaces the built-in view, never a reporter object.
     expect(reporterNames([dots, 'junit'])).toEqual(['junit', 'dots']);
+    expect(reporterNames([{ ...dots, interactive: false }, 'list'])).toEqual(['list', 'dots']);
     const live = (name: string): Reporter => ({ name, onEvent: () => undefined, onSummary: () => undefined });
     expect(reporterNames(['list', live('socket'), live('overlay')])).toEqual(['list', 'socket', 'overlay']);
   });

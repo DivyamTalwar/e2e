@@ -80,6 +80,8 @@ export interface CollectedTestInfo {
   readonly agent: string;
   /** Project-relative POSIX path of the test file. */
   readonly file: string;
+  /** `setup` for a test that saves a session for others; it runs once, whatever `repeatEach` says. */
+  readonly kind: 'test' | 'setup';
   readonly title: string;
   /** The describe titles, then the test title. */
   readonly titlePath: readonly string[];
@@ -143,8 +145,10 @@ export type RunEventFact =
        * pair, including unselected ones; `files` breaks the reportable pairs
        * (run or explicitly skipped) down per test file and target, so a
        * reporter can tell when a file's results are complete without a side
-       * lookup. `tests` is every pair in selection order, the ones left out
-       * included; each runs `repeatEach` times.
+       * lookup. Both count a repeated test once per repeat. `tests` is
+       * every pair in selection order, one entry however often it repeats,
+       * the ones left out included; a `test` that runs does so
+       * `repeatEach` times.
        */
       readonly type: 'collected';
       readonly total: number;
@@ -184,8 +188,15 @@ export type RunEventFact =
        * it beside the run; without one, the runner prints it on stderr.
        */
       readonly type: 'output';
-      readonly target?: string;
+      readonly target: string;
       readonly pair: { readonly testId: string; readonly agent: string; readonly repeat: number } | undefined;
+      readonly stream: 'stdout' | 'stderr';
+      readonly text: string;
+    }
+  | {
+      readonly type: 'output';
+      readonly target?: undefined;
+      readonly pair?: undefined;
       readonly stream: 'stdout' | 'stderr';
       readonly text: string;
     }
@@ -255,6 +266,8 @@ export type RunEventFact =
       readonly agent: string;
       readonly repeat: number;
       readonly target: string;
+      /** The test's title path, joined with ` › `. */
+      readonly title: string;
       /** `step` before steps `--step` holds, `pause` at `screen.pause()`. */
       readonly reason: 'step' | 'pause';
       /** The ID `e2e attach` takes, the same at every wait of this attempt. */
@@ -265,7 +278,7 @@ export type RunEventFact =
       readonly keys: readonly { readonly key: string; readonly does: string }[];
     }
   | {
-      /** The test of the last `paused` is running again, or its attempt ended. */
+      /** The test of the last `paused` is running again, or it ended. Every `paused` gets one before the next test's `paused` and before `run-finished`. */
       readonly type: 'resumed';
       readonly testId: string;
       readonly agent: string;
@@ -349,7 +362,7 @@ export type RunEventOf<Type extends RunEventFact['type']> = Extract<RunEventFact
 export type RunEventSink = (event: RunEvent) => void | Promise<void>;
 
 /** A sink with the label the stderr line names should it be quarantined. */
-interface RunEventSubscriber {
+export interface RunEventSubscriber {
   readonly name: string;
   readonly onEvent: RunEventSink;
   /** Called once when the sink is quarantined, before the stderr line. */
@@ -365,12 +378,6 @@ export function toEventResult(record: ResultRecord): RunEventResult {
 }
 
 /**
- * Emits one fact to every sink. `within` runs the delivery, for a fact whose
- * sinks are called in a context of the caller's.
- */
-export type RunEventEmitter = (fact: RunEventFact, within?: (deliver: () => void) => void) => void;
-
-/**
  * Builds the run's single event writer over every configured sink. Sinks are
  * quarantined independently, so one broken sink cannot silence the
  * list reporter or vice versa, and each quarantine is one stderr line naming
@@ -380,13 +387,13 @@ export type RunEventEmitter = (fact: RunEventFact, within?: (deliver: () => void
 export function createRunEventEmitter(
   subscribers: readonly (RunEventSubscriber | undefined)[],
   warn: (line: string) => void = (line) => void process.stderr.write(line),
-): RunEventEmitter {
+): (fact: RunEventFact) => void {
   const active = subscribers.filter((subscriber) => subscriber !== undefined);
   if (active.length === 0) return () => undefined;
   let seq = 0;
   // A sink that emits while it is handed an event, as one that prints does,
   // waits its turn: every sink sees the events in `seq` order.
-  const pending: { readonly event: RunEvent; readonly within: ((deliver: () => void) => void) | undefined }[] = [];
+  const pending: RunEvent[] = [];
   let delivering = false;
   const quarantined = new Set<RunEventSubscriber>();
   const quarantine = (subscriber: RunEventSubscriber, event: RunEvent, cause: unknown): void => {
@@ -410,17 +417,13 @@ export function createRunEventEmitter(
       }
     }
   };
-  return (fact, within) => {
+  return (fact) => {
     seq += 1;
-    pending.push({ event: { seq, at: timestamp(), ...fact }, within });
+    pending.push({ seq, at: timestamp(), ...fact });
     if (delivering) return;
     delivering = true;
     try {
-      for (let next = pending.shift(); next !== undefined; next = pending.shift()) {
-        const { event } = next;
-        if (next.within === undefined) deliver(event);
-        else next.within(() => deliver(event));
-      }
+      for (let event = pending.shift(); event !== undefined; event = pending.shift()) deliver(event);
     } finally {
       delivering = false;
     }
