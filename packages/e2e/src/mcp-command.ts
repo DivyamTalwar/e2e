@@ -15,6 +15,7 @@ import { McpOutput } from './mcp/output.ts';
 import { serveMcp, type ServeOptions } from './mcp/server.ts';
 import { processSecrets } from '@e2e-dev/core/lib/run/secrecy';
 import { claimStrayRejection } from './run/standalone-test.ts';
+import { claimRunCodeRejection } from './session-tools/code-strays.ts';
 import { mcpSessionEvent } from './telemetry/events.ts';
 import type { Telemetry } from './telemetry/telemetry.ts';
 
@@ -102,7 +103,9 @@ export async function mcp(version: string, options: McpCommandOptions, telemetry
   // run's worker, once one has; before that it is uncaught.
   const onRejection = (cause: unknown): void => {
     if (isAbandonedRejection(cause)) return;
-    if (claimStrayRejection(cause, (message) => output.log(`e2e mcp: [warning] ${processSecrets.redact(message)}`))) return;
+    const warn = (message: string): void => output.log(`e2e mcp: [warning] ${processSecrets.redact(message)}`);
+    if (claimRunCodeRejection(cause, warn)) return;
+    if (claimStrayRejection(cause, warn)) return;
     onUncaught(cause);
   };
   process.once('SIGINT', onSignal);
