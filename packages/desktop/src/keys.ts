@@ -63,6 +63,9 @@ export function toCombo(key: string): string {
   let name: string | undefined;
   if (parsed.key.kind === 'named') {
     name = KEY_NAMES[parsed.key.name];
+  } else if (parsed.key.kind === 'remote') {
+    // The harness refuses a TV remote key before it reaches an engine that does not declare remoteKeys.
+    name = undefined;
   } else if (parsed.key.char === ' ') {
     name = 'space';
   } else if (parsed.key.char !== '+') {
