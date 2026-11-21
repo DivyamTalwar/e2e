@@ -18,9 +18,7 @@ import path from 'node:path';
 import type { AppDeployResult, CaptureSnapshotResult } from 'agent-device';
 import {
   EngineError,
-  KEY_NAMES,
-  REMOTE_KEY_NAMES,
-  parseKey,
+  isRemoteKey,
   raceAbort,
   rejectUnknownKeys,
   stopProviderRecording,
@@ -63,7 +61,8 @@ import {
   type ProjectedSnapshot,
 } from './nodes.ts';
 import { keyboardDragStart, keyboardShownIn, type KeyboardUnknown } from './keyboard.ts';
-import { cannotPressNamedKey, pressRemote } from './remote.ts';
+import { softKey, type SoftKey } from './keys.ts';
+import { pressRemote } from './remote.ts';
 import { DEVICE_PERMISSIONS, type AgentDeviceClient, type ClientFactory, type DevicePermission, type LaunchPermissions, type MobileOptions, type PermissionState } from './options.ts';
 import { maskPng } from './png.ts';
 import { mobileDoctor } from './doctor.ts';
@@ -1649,38 +1648,23 @@ export class AgentDeviceSurface {
   }
 
   /**
-   * Keys on a touch surface, in the contract's key grammar: `Enter` submits
-   * through the soft keyboard, `Space` and any single character are typed
-   * into the focused field, and a TV remote button goes to agent-device's
-   * `tv-remote` with no field focused first. agent-device exposes no key
-   * event bus, so modifiers and the other named keys (`Escape`, `Tab`,
-   * `Backspace`, the arrows) have nothing to land on and are refused.
+   * A keyboard key sent to a node: `Enter` submits through the soft keyboard,
+   * `Space` and any single character are typed into the focused field, and
+   * `softKey` refuses the rest.
    */
   private async pressKey(client: AgentDeviceClient, entry: NodeBinding, key: string, settle: SettleOptions, input: InputBudget): Promise<unknown> {
-    const parsed = parseKey(key);
-    if (parsed === undefined) {
-      throw unsupported(
-        `"${key}" is not a key: press takes one key in the form [Modifier+]...Key, a named key (${KEY_NAMES.join(', ')}), one character, or a TV remote button (${REMOTE_KEY_NAMES.join(', ')})`,
-      );
-    }
-    if (parsed.modifiers.length > 0) {
-      throw unsupported(`agent-device cannot hold ${parsed.modifiers.join('+')} on a device surface; press the key alone`);
-    }
-    // A remote button goes to the device, not the node: no focus tap, and no
-    // settle options, as for every key the device's command path sends; the
-    // step's own change wait reads the screen it leaves.
-    if (parsed.key.kind === 'remote') return pressRemote(client, parsed.key.name, input);
-    const enter = parsed.key.kind === 'named' && parsed.key.name === 'Enter';
-    if (!enter && parsed.key.kind === 'named' && parsed.key.name !== 'Space') {
-      throw unsupported(cannotPressNamedKey(parsed.key.name));
-    }
+    const soft = softKey(key);
     // A key reaches the field through the soft keyboard, which is up only
     // while the field holds focus.
     if (entry.node.role === 'textbox' && entry.node.states?.focused !== true) {
       await input.press(client, { ...this.actionTarget(entry), ...settle });
     }
-    if (enter) return input.send(() => client.command.keyboard({ action: 'enter' }));
-    return input.send(() => client.interactions.type({ text: parsed.key.kind === 'char' ? parsed.key.char : ' ' }));
+    return this.sendSoftKey(client, soft, input);
+  }
+
+  private sendSoftKey(client: AgentDeviceClient, soft: SoftKey, input: InputBudget): Promise<unknown> {
+    if (soft.kind === 'enter') return input.send(() => client.command.keyboard({ action: 'enter' }));
+    return input.send(() => client.interactions.type({ text: soft.text }));
   }
 
   /**
@@ -1712,32 +1696,17 @@ export class AgentDeviceSurface {
   }
 
   /**
-   * One key to the focused field, with the same reach as a node press: Enter
-   * submits through the soft keyboard, Space and single characters are typed,
-   * and a TV remote button is pressed on the remote. Modifiers and the other
-   * named keys have no event bus to land on.
+   * One key with no node: a TV remote button is pressed on the remote, and a
+   * keyboard key goes to the focused field with the same reach as a node
+   * press.
    */
   async pressFocusedKey(key: string, operation: OperationContext, input: InputBudget): Promise<void> {
-    const parsed = parseKey(key);
-    if (parsed === undefined) {
-      throw unsupported(
-        `"${key}" is not a key: press takes one key in the form [Modifier+]...Key, a named key (${KEY_NAMES.join(', ')}), one character, or a TV remote button (${REMOTE_KEY_NAMES.join(', ')})`,
-      );
-    }
-    if (parsed.modifiers.length > 0) {
-      throw unsupported(`agent-device cannot hold ${parsed.modifiers.join('+')} on a device surface; press the key alone`);
-    }
     const before = this.latestScreen;
-    if (parsed.key.kind === 'remote') {
-      const name = parsed.key.name;
-      await this.command('tv-remote', (client) => pressRemote(client, name, input), operation.signal);
-    } else if (parsed.key.kind === 'named' && parsed.key.name === 'Enter') {
-      await this.command('keyboard.press', (client) => input.send(() => client.command.keyboard({ action: 'enter' })), operation.signal);
-    } else if (parsed.key.kind === 'char' || parsed.key.name === 'Space') {
-      const text = parsed.key.kind === 'char' ? parsed.key.char : ' ';
-      await this.command('keyboard.press', (client) => input.send(() => client.interactions.type({ text })), operation.signal);
+    if (isRemoteKey(key)) {
+      await this.command('tv-remote', (client) => pressRemote(client, key, input), operation.signal);
     } else {
-      throw unsupported(cannotPressNamedKey(parsed.key.name));
+      const soft = softKey(key);
+      await this.command('keyboard.press', (client) => this.sendSoftKey(client, soft, input), operation.signal);
     }
     this.markAction(before);
   }

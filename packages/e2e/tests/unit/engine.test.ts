@@ -2,6 +2,7 @@ import { assert, describe, expect, it } from 'vitest';
 import {
   defineEngine,
   isEngineHandle,
+  isRemoteKey,
   LOCATOR_ACTION_KINDS,
   parseKey,
   REMOTE_KEY_NAMES,
@@ -72,13 +73,12 @@ describe('defineEngine', () => {
     );
   });
 
-  it('carries remoteKeys onto the handle only with perform or keyboard, and only as a boolean', () => {
+  it('carries remoteKeys onto the handle only with keyboard, and only as a boolean', () => {
     const perform = async () => undefined;
     const keyboard = { type: async () => undefined, press: async () => undefined };
-    expect(defineEngine(observingEngine({ actions: ['press'], perform, remoteKeys: true })).remoteKeys).toBe(true);
     expect(defineEngine(observingEngine({ keyboard, remoteKeys: true })).remoteKeys).toBe(true);
     expect(defineEngine(observingEngine({ keyboard, remoteKeys: false })).remoteKeys).toBeUndefined();
-    expect(() => defineEngine(observingEngine({ remoteKeys: true }))).toThrow(/remoteKeys without perform or keyboard/);
+    expect(() => defineEngine(observingEngine({ actions: ['press'], perform, remoteKeys: true }))).toThrow(/remoteKeys without keyboard/);
     expect(() => defineEngine(observingEngine({ keyboard, remoteKeys: 'yes' as never }))).toThrow(/remoteKeys must be a boolean/);
   });
 
@@ -295,13 +295,19 @@ describe('parseKey', () => {
     });
   });
 
-  it('parses every TV remote button, lowercase and without modifiers, apart from the keyboard key of the same word', () => {
+  it('keeps every TV remote button out of the keyboard keys: lowercase, without modifiers, read by isRemoteKey', () => {
     for (const name of REMOTE_KEY_NAMES) {
-      expect(parseKey(name), name).toEqual({ modifiers: [], key: { kind: 'remote', name } });
+      expect(isRemoteKey(name), name).toBe(true);
+      expect(parseKey(name), name).toBeUndefined();
+      expect(isRemoteKey(`Shift+${name}`), name).toBe(false);
       expect(parseKey(`Shift+${name}`), name).toBeUndefined();
     }
+    expect(isRemoteKey('Home')).toBe(false);
     expect(parseKey('Home')).toEqual({ modifiers: [], key: { kind: 'named', name: 'Home' } });
-    for (const key of ['Menu', 'Play', 'MENU', 'channel-up', 'media-play']) expect(parseKey(key), key).toBeUndefined();
+    for (const key of ['Menu', 'Play', 'MENU', 'channel-up', 'media-play']) {
+      expect(isRemoteKey(key), key).toBe(false);
+      expect(parseKey(key), key).toBeUndefined();
+    }
   });
 
   it('treats a trailing + as the plus character', () => {

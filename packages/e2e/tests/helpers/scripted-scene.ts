@@ -9,7 +9,7 @@
  */
 
 import type { LocatorAction, LocatorExpression, SemanticNode } from '@e2e-dev/core/lib/engine/index';
-import { engineFailure, obj, parseKey, resolveExpression } from './engine-runtime.ts';
+import { engineFailure, isRemoteKey, obj, parseKey, resolveExpression } from './engine-runtime.ts';
 
 /** The stable id of the observation root; `perform(root, swipe)` is the viewport swipe. */
 const SCENE_ROOT_ID = 'root';
@@ -149,7 +149,7 @@ export function createScene(build: (stage: Stage) => ScriptedNode[], initialLoca
   /** Applies one key of the contract grammar to a node's value the way a field would. */
   const applyKey = (node: ScriptedNode, key: string): void => {
     const parsed = parseKey(key);
-    if (parsed === undefined || parsed.key.kind === 'remote' || !TYPABLE_ROLES.has(node.role ?? '')) return;
+    if (parsed === undefined || !TYPABLE_ROLES.has(node.role ?? '')) return;
     const value = node.value ?? '';
     if (parsed.key.kind === 'named') {
       if (parsed.key.name === 'Backspace') node.value = value.slice(0, -1);
@@ -238,7 +238,7 @@ export function createScene(build: (stage: Stage) => ScriptedNode[], initialLoca
       node.value = replace ? text : `${node.value ?? ''}${text}`;
     },
     press(key) {
-      if (parseKey(key)?.key.kind === 'remote') {
+      if (isRemoteKey(key)) {
         // A TV remote button reaches whatever view holds focus, editable or not.
         const node = allNodes().find((entry) => entry.states?.focused === true);
         node?.on?.({ kind: 'press', key }, node);

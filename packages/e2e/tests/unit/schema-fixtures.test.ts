@@ -44,13 +44,12 @@ describe.each(schemas)('%s schema', (name) => {
       expect(validate(manifest)).toBe(false);
     });
 
-    it('accepts remoteKeys beside a press, and rejects it with neither engine/perform nor keyboard/press', () => {
+    it('accepts remoteKeys beside keyboard/press alone, and rejects it without', () => {
       const manifest = readJson('fixtures', 'engine-manifest-v1.valid.json') as { methods: string[]; actions?: unknown };
-      manifest.methods = manifest.methods.filter((method) => method !== 'engine/perform');
-      delete manifest.actions;
-      expect(validate(manifest)).toBe(true);
-      manifest.methods = manifest.methods.filter((method) => method !== 'keyboard/press' && method !== 'keyboard/type');
-      expect(validate(manifest)).toBe(false);
+      const keyboard = manifest.methods.filter((method) => method !== 'engine/perform');
+      const { actions: _actions, ...withoutActions } = manifest;
+      expect(validate({ ...withoutActions, methods: keyboard })).toBe(true);
+      expect(validate({ ...manifest, methods: manifest.methods.filter((method) => method !== 'keyboard/press' && method !== 'keyboard/type') })).toBe(false);
     });
   }
 

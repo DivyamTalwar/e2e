@@ -1,6 +1,6 @@
 /** The key grammar's TV remote buttons, pressed through agent-device's `tv-remote`. */
 
-import { REMOTE_KEY_NAMES, TestError, type RemoteKeyName } from '@e2e-dev/core/engine';
+import { REMOTE_KEY_NAMES, TestError, isRemoteKey, type RemoteKeyName } from '@e2e-dev/core/engine';
 import type { AgentDeviceClient } from './options.ts';
 import type { InputBudget } from './support.ts';
 
@@ -37,32 +37,6 @@ const REMOTE_BUTTONS = {
 /** A TV remote key `device.pressRemote` takes: one of the key grammar's `REMOTE_KEY_NAMES`. */
 export type RemoteKey = RemoteKeyName;
 
-
-/** The remote key a keyboard key's user most likely meant on a TV. */
-const REMOTE_FOR_KEYBOARD: Readonly<Record<string, string>> = {
-  Home: 'home',
-  ArrowUp: 'up',
-  ArrowDown: 'down',
-  ArrowLeft: 'left',
-  ArrowRight: 'right',
-  Escape: 'back',
-  Backspace: 'back',
-};
-
-/**
- * Why a device cannot press a named keyboard key, with the remote key to
- * press instead when there is one.
- */
-export function cannotPressNamedKey(name: string): string {
-  const remote = REMOTE_FOR_KEYBOARD[name];
-  return (
-    `agent-device cannot press ${name} on a device surface; only Enter, Space, and single characters reach the soft keyboard. ` +
-    (remote === undefined
-      ? `On a TV, press a remote button by its lowercase name: ${REMOTE_KEY_NAMES.join(', ')}`
-      : `On a TV, the remote's button is "${remote}"`)
-  );
-}
-
 /** Presses one remote button, within the operation's budget. */
 export function pressRemote(client: AgentDeviceClient, key: RemoteKey, input: InputBudget): Promise<unknown> {
   return input.send(() => client.command.tvRemote({ button: REMOTE_BUTTONS[key] }));
@@ -70,6 +44,6 @@ export function pressRemote(client: AgentDeviceClient, key: RemoteKey, input: In
 
 /** Throws `INVALID_ARGUMENT` unless `key` is one of the remote keys. */
 export function requireRemoteKey(key: unknown): asserts key is RemoteKey {
-  if (typeof key === 'string' && Object.hasOwn(REMOTE_BUTTONS, key)) return;
+  if (typeof key === 'string' && isRemoteKey(key)) return;
   throw new TestError('INVALID_ARGUMENT', `device.pressRemote(${JSON.stringify(key)}): not a remote key; press one of ${REMOTE_KEY_NAMES.join(', ')}`);
 }

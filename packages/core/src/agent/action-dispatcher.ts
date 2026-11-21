@@ -10,7 +10,7 @@
  * and queue as `runTool`.
  */
 
-import { isKeyModifier, KEY_MODIFIERS, type KeyModifier } from '../engine/contract.ts';
+import { isKeyModifier, isRemoteKey, KEY_MODIFIERS, type KeyModifier } from '../engine/contract.ts';
 import type { LocatorAction, LocatorActionKind, SemanticNode, ViewportPoint, ViewportSize } from '../engine/surface.ts';
 import { asEngineError, TestError } from '../internal/errors.ts';
 import { requireKey } from '../internal/keys.ts';
@@ -501,6 +501,8 @@ export class ActionDispatcher {
     // Checked before the action is committed, as the locator tier does, so a
     // bad argument is INVALID_ARGUMENT to the executor and never a failed action.
     requireKey(key, this.session.remoteKeys);
+    // A remote button has no node, so it is recorded without one and a replay never waits on it.
+    if (isRemoteKey(key)) return this.pressKey(key);
     return this.commitTargeted('press', target, async (node) => {
       await this.session.perform(node.ref, { kind: 'press', key }, this.accounting.actionOperation());
       return { name: 'press', node, key };

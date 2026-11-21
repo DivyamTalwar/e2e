@@ -1385,3 +1385,7 @@ void ('menu' satisfies import('e2e/engine').RemoteKeyName);
 // @ts-expect-error 'Menu' is not a remote key: the remote keys are lowercase
 void ('Menu' satisfies import('e2e/engine').RemoteKeyName);
 void (true satisfies import('e2e/engine').EngineManifest['remoteKeys']);
+declare const isRemoteKey: typeof import('e2e/engine').isRemoteKey;
+void (isRemoteKey satisfies (key: string) => key is import('e2e/engine').RemoteKeyName);
+// @ts-expect-error a remote button is not a keyboard key: ParsedKey has no 'remote' kind
+void ('remote' satisfies import('e2e/engine').ParsedKey['key']['kind']);

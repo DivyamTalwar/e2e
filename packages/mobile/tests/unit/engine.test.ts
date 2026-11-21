@@ -1559,15 +1559,9 @@ describe('perform', () => {
   ])('presses the %s remote key as the agent-device tv-remote button %s', async (key, button) => {
     const h = harness();
     await openAttempt(h);
-    const search = await observed(h, 'Search');
     const before = h.fake.calls.length;
     await h.engine.keyboard!.press(key, operation());
-    // A remote button goes to the device, so an unfocused field is not tapped first.
-    await h.engine.perform!(search.ref, { kind: 'press', key }, operation());
-    expect(h.fake.calls.slice(before).map((call) => [call.method, call.args])).toEqual([
-      ['command.tvRemote', { button }],
-      ['command.tvRemote', { button }],
-    ]);
+    expect(h.fake.calls.slice(before).map((call) => [call.method, call.args])).toEqual([['command.tvRemote', { button }]]);
   });
 
   it.each([
@@ -1599,8 +1593,6 @@ describe('perform', () => {
       throw new AppError('UNSUPPORTED_OPERATION', 'tv-remote is not supported on this device');
     });
     await expect(h.engine.keyboard!.press('menu', operation())).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' });
-    const search = await observed(h, 'Search');
-    await expect(h.engine.perform!(search.ref, { kind: 'press', key: 'play' }, operation())).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' });
   });
 
   it.each(['e2', ''])('presses the innermost control even when the row ref is %j', async (rowRef) => {

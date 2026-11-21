@@ -20,7 +20,6 @@ import { defineTool } from '@e2e-dev/core/lib/agent/tool';
 import { describeAction } from '@e2e-dev/core/lib/agent/actions';
 import type { ExecutorVerb } from '@e2e-dev/core/lib/agent/executor';
 import { fakeExecutorContext } from '../helpers/fake-executor-context.ts';
-import { redacted } from '../helpers/redacted.ts';
 import { installFakeLoopModel, loopCalls } from '../helpers/fake-loop-model.ts';
 
 it('does not repeat a static assertion opening to request pixels it cannot use', async () => {
@@ -574,13 +573,14 @@ describe('press on a TV remote key', () => {
     expect(description(false)).not.toContain('remote');
   });
 
-  it('sends a remote key to the remote even when the press names a node, and a keyboard key to the node', async () => {
+  it('reports a remote key named with a node as pressed on the remote, and leaves the route to the dispatcher', async () => {
     const { context, pressed } = remoteContext(true, ['press', 'pressKey']);
     const tools = createGrammarTools(context);
     const execute = tools['press']!.execute as unknown as (input: { target?: string; key: string; times?: number }, options: { toolCallId: string; messages: [] }) => Promise<unknown>;
     expect(String(await execute({ target: 'n1', key: 'menu', times: 2 }, { toolCallId: 'call', messages: [] }))).toMatch(/^Pressed menu 2 times on the remote\./);
     await execute({ target: 'n1', key: 'Enter' }, { toolCallId: 'call', messages: [] });
-    expect(pressed).toEqual(['menu', 'menu', '#n1:Enter']);
+    // The fake's press is the dispatcher's seat, which is where a remote key loses its node.
+    expect(pressed).toEqual(['#n1:menu', 'menu', '#n1:Enter']);
   });
 
   it('reports a remote key as pressed on the remote, expects home to change the screen, and lets the D-pad move focus only', async () => {
@@ -600,31 +600,20 @@ describe('press on a TV remote key', () => {
     expect(pressed).toEqual(['select', 'home', 'up', 'Home']);
   });
 
-  it('presses a remote key from press_at without tapping the point, and keeps the hint off press_at', async () => {
+  it('answers a remote key on press_at without tapping the point or pressing, and keeps the hint off press_at', async () => {
     const { context, pressed } = remoteContext(true);
     const tools = createGrammarTools(context);
     expect(tools['press_at']!.description).not.toContain('remote');
     const execute = tools['press_at']!.execute as unknown as (input: { x: number; y: number; key: string }, options: { toolCallId: string; messages: [] }) => Promise<unknown>;
     // The fake context refuses tapAt and hitTest, so a tap first would fail the call.
     const said = String(await execute({ x: 10, y: 20, key: 'select' }, { toolCallId: 'call', messages: [] }));
-    expect(said).toMatch(/^Pressed select on the remote; it needs no point/);
-    expect(pressed).toEqual(['select']);
-  });
-
-  it('sends a remote key from press_at to the point when the engine has no pressKey route', async () => {
-    const { context, pressed } = remoteContext(true, ['press']);
-    const tools = createGrammarTools(context);
-    const execute = tools['press_at']!.execute as unknown as (input: { x: number; y: number; key: string }, options: { toolCallId: string; messages: [] }) => Promise<unknown>;
-    // The point path wants a screenshot first; the remote path never does.
-    const said = String(await execute({ x: 10, y: 20, key: 'select' }, { toolCallId: 'call', messages: [] }));
-    expect(said).toMatch(/^No screenshot has been taken in this step: press_at coordinates/);
+    expect(said).toBe('No point takes a TV remote button: call press with key "select" and no target.');
     expect(pressed).toEqual([]);
   });
 
-  it('records a remote key pressed on a node as pressed on the remote', () => {
-    const node = redacted({ ref: { id: 'n1', revision: 'r1' }, role: 'button', name: 'Now playing' });
+  it('records a remote key as pressed on the remote', () => {
     const options = { redact: (text: string) => text, redactCut: (text: string) => text };
-    expect(describeAction({ name: 'press', node, key: 'menu' }, options).summary).toBe('press "menu" on the remote');
-    expect(describeAction({ name: 'press', node, key: 'Enter' }, options).summary).toContain('on button "Now playing"');
+    expect(describeAction({ name: 'pressKey', key: 'menu' }, options).summary).toBe('press "menu" on the remote');
+    expect(describeAction({ name: 'pressKey', key: 'Enter' }, options).summary).toBe('press "Enter" on the focused field');
   });
 });

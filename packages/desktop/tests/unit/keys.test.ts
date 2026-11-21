@@ -28,7 +28,6 @@ describe('toCombo', () => {
 
   it('refuses what agent-desktop cannot press', () => {
     expect(() => toCombo('Insert')).toThrow(expect.objectContaining({ code: 'UNSUPPORTED_CAPABILITY' }));
-    expect(() => toCombo('menu')).toThrow(expect.objectContaining({ code: 'UNSUPPORTED_CAPABILITY' }));
     expect(() => toCombo('+')).toThrow(expect.objectContaining({ code: 'UNSUPPORTED_CAPABILITY' }));
     expect(() => toCombo('Hyper+a')).toThrow(expect.objectContaining({ code: 'UNSUPPORTED_CAPABILITY' }));
   });

@@ -280,8 +280,8 @@ export function defineEngine<Fixtures extends object = {}>(declared: EngineSpec<
   }
   if (spec.remoteKeys !== undefined) {
     if (typeof spec.remoteKeys !== 'boolean') throw invalid(name, 'remoteKeys must be a boolean');
-    if (spec.remoteKeys && !capabilities.has('actions') && spec.keyboard === undefined) {
-      throw invalid(name, 'declares remoteKeys without perform or keyboard: a remote key rides a press');
+    if (spec.remoteKeys && spec.keyboard === undefined) {
+      throw invalid(name, 'declares remoteKeys without keyboard: a remote key is pressed through keyboard.press');
     }
   }
   if (spec.isolation !== undefined && spec.isolation !== 'attempt' && spec.isolation !== 'worker') {

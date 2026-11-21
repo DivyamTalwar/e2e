@@ -135,7 +135,7 @@ export interface FakeEngineBehavior {
   keyboard?: boolean;
   /** Declares `tapModifiers`, so modifiers on the tap actions reach `perform`. */
   tapModifiers?: boolean;
-  /** Declares `remoteKeys`, so TV remote keys reach `perform` and `keyboard.press`. */
+  /** Declares `remoteKeys`, so TV remote keys reach `keyboard.press`. */
   remoteKeys?: boolean;
   /** Declares `session.back`, `restart`, and `reset` beside `open`; with a scene, the last two close the app. */
   navigation?: boolean;

@@ -447,14 +447,14 @@ describe('e2e/core', { timeout: 60_000 }, () => {
       expect(readdirSync(cacheDir, { recursive: true }).filter((file) => String(file).endsWith('.json'))).toHaveLength(1);
     });
 
-    it('records a TV remote press and replays it with no model', async () => {
+    it('records a TV remote press aimed at a node with no node, and replays it with no model', async () => {
       let calls = 0;
       const remote: StepExecutor = {
         name: 'remote', version: '1',
         runStep: async (context) => {
           calls += 1;
-          await context.observe();
-          await context.actions.pressKey('menu');
+          const { text } = await context.observe();
+          await context.actions.press({ id: idOf(text, 'button', 'Now playing') }, 'menu');
           return { status: 'passed' as const, summary: 'opened the menu' };
         },
       };

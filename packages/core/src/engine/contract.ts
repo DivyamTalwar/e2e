@@ -384,13 +384,15 @@ export const POINTER_ACTION_KINDS = [
  *   keys `play`, `pause`, `play-pause`, `stop`, `rewind`, `fast-forward`,
  *   `next`, `previous`), lowercase so none is mistaken for the keyboard key
  *   of the same word (`home` is the remote's Home button, `Home` the
- *   keyboard's line start). A remote button takes no modifier, and an engine
- *   receives it like any other key: one with no remote refuses it with
- *   `UNSUPPORTED_CAPABILITY` rather than pressing a keyboard key.
+ *   keyboard's line start). A remote button is the whole key: it takes no
+ *   modifier and has no node. It reaches only an engine that declares
+ *   `remoteKeys`, and only through `keyboard.press`; on any other engine the
+ *   harness refuses it with `UNSUPPORTED_CAPABILITY`.
  *
  * `Control+a`, `Shift+Tab`, `Enter`, `$`, `menu`. A platform without a key maps it
  * or throws `UNSUPPORTED_CAPABILITY`; it never reinterprets the spelling.
- * `parseKey` is the one parser, exported so no engine carries its own.
+ * `parseKey` is the one parser of the keyboard keys, exported so no engine
+ * carries its own, and `isRemoteKey` tells a remote button apart.
  */
 export type Key = string;
 
@@ -428,7 +430,7 @@ export const KEY_NAMES = [
 ] as const;
 export type KeyName = (typeof KEY_NAMES)[number];
 
-/** The TV remote buttons of the key grammar; an engine with no remote refuses them with `UNSUPPORTED_CAPABILITY`. */
+/** The TV remote buttons of the key grammar, which only an engine that declares `remoteKeys` receives. */
 export const REMOTE_KEY_NAMES = [
   'up',
   'down',
@@ -449,15 +451,19 @@ export const REMOTE_KEY_NAMES = [
 ] as const;
 export type RemoteKeyName = (typeof REMOTE_KEY_NAMES)[number];
 
-/** One parsed `press` key: its modifiers and either a named key, a single character, or a TV remote button. */
+const REMOTE_NAME_SET: ReadonlySet<string> = new Set(REMOTE_KEY_NAMES);
+
+/** Whether a `press` key is a TV remote button. Not a `parseKey` key: it has no modifiers and no keyboard. */
+export function isRemoteKey(key: string): key is RemoteKeyName {
+  return REMOTE_NAME_SET.has(key);
+}
+
+/** One parsed keyboard key: its modifiers and either a named key or a single character. */
 export interface ParsedKey {
-  /** Modifiers, in the order written; always empty for a remote button. */
+  /** Modifiers, in the order written. */
   readonly modifiers: readonly KeyModifier[];
   /** The key itself. */
-  readonly key:
-    | { readonly kind: 'named'; readonly name: KeyName }
-    | { readonly kind: 'char'; readonly char: string }
-    | { readonly kind: 'remote'; readonly name: RemoteKeyName };
+  readonly key: { readonly kind: 'named'; readonly name: KeyName } | { readonly kind: 'char'; readonly char: string };
 }
 
 const MODIFIER_SET: ReadonlySet<unknown> = new Set(KEY_MODIFIERS);
@@ -470,13 +476,13 @@ export function isKeyModifier(value: unknown): value is KeyModifier {
 /** Control, format, surrogate, private-use, unassigned, and line or paragraph separators: never a printable key. */
 const NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}]/u;
 const NAME_SET: ReadonlySet<string> = new Set(KEY_NAMES);
-const REMOTE_NAME_SET: ReadonlySet<string> = new Set(REMOTE_KEY_NAMES);
 
 /**
- * Parses a `press` key against the grammar; `undefined` when it does not
- * conform (an unknown name, a repeated modifier, a bare modifier, several
- * characters, or a modifier on a remote button). A literal `+` is the character after the last separator, so
- * `Shift++` presses `+` with Shift held.
+ * Parses a keyboard `press` key against the grammar; `undefined` when it does
+ * not conform (an unknown name, a repeated modifier, a bare modifier, several
+ * characters, or a TV remote button, which `isRemoteKey` reads). A literal
+ * `+` is the character after the last separator, so `Shift++` presses `+`
+ * with Shift held.
  */
 export function parseKey(key: string): ParsedKey | undefined {
   if (key === '') return undefined;
@@ -492,7 +498,6 @@ export function parseKey(key: string): ParsedKey | undefined {
     modifiers.push(part);
   }
   if (NAME_SET.has(last)) return { modifiers, key: { kind: 'named', name: last as KeyName } };
-  if (REMOTE_NAME_SET.has(last)) return modifiers.length === 0 ? { modifiers, key: { kind: 'remote', name: last as RemoteKeyName } } : undefined;
   if ([...last].length === 1 && !NON_PRINTABLE.test(last)) return { modifiers, key: { kind: 'char', char: last } };
   return undefined;
 }

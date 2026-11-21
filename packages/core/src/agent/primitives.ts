@@ -13,8 +13,8 @@ import { redactToolResult } from './redaction.ts';
 import type { StepResult, Tool, ToolSet } from 'ai';
 import { z } from 'zod';
 import { isTapActionName, type NodeActionName, type PointActionName } from '../cache/trace.ts';
-import { KEY_MODIFIERS, type KeyModifier } from '../engine/contract.ts';
-import { isRemoteKey, movesFocusOnly, REMOTE_KEY_HINT } from './keys.ts';
+import { isRemoteKey, KEY_MODIFIERS, type KeyModifier } from '../engine/contract.ts';
+import { movesFocusOnly, REMOTE_KEY_HINT } from './keys.ts';
 import type { ViewportPoint } from '../engine/surface.ts';
 import { codedMessage, hasCause, TestError } from '../internal/errors.ts';
 import { VIEWPORT_LIMITS } from '../internal/geometry.ts';
@@ -470,12 +470,10 @@ export function grammarTools(
     // Each repeat is one recorded action against the budget, as a scroll repeat
     // is. The first press addresses the node; the rest go to whatever has focus,
     // since a targeted press refocuses the node first and a repeated Tab would
-    // start over from it instead of walking on. A remote button never addresses
-    // the node, so a replay never waits on a node the remote does not need.
+    // start over from it instead of walking on.
     const pressing = async (key: string, id: string | undefined, count: number): Promise<void> => {
-      const unaddressed = verbs.has('pressKey') && isRemoteKey(key);
       for (let repeat = 0; repeat < count; repeat += 1) {
-        if (id === undefined || unaddressed || (repeat > 0 && verbs.has('pressKey'))) await context.actions.pressKey(key);
+        if (id === undefined || (repeat > 0 && verbs.has('pressKey'))) await context.actions.pressKey(key);
         else await context.actions.press({ id }, key);
       }
     };
@@ -888,21 +886,9 @@ function createPointTools(
         ' Last resort: when the screen lists the control, press by id.',
       inputSchema: z.object({ x, y, key: z.string().min(1).max(64) }),
       execute: ({ x: px, y: py, key }) =>
-        // A remote button goes to the device, not to a point: it needs no
-        // screenshot, and must not tap whatever lies under the point first.
-        // Without pressKey the engine has no targetless route, so the key
-        // goes to the control under the point like any other.
-        verbs.has('pressKey') && isRemoteKey(key)
-          ? inOrder(() =>
-              perform(
-                pointAttempt('press_at', key),
-                async () => {
-                  await context.actions.pressKey(key);
-                  return `Pressed ${key} on the remote; it needs no point, so use press without a target next time.`;
-                },
-                { expectChange: !movesFocusOnly(key) },
-              ),
-            )
+        // A remote button is not aimed at a point, and must not tap whatever lies under one first.
+        isRemoteKey(key)
+          ? Promise.resolve(`No point takes a TV remote button: call press with key "${key}" and no target.`)
           : atPoint('press_at', px, py, async (point) => {
               const found = await focusAt(point, px, py, 'press_at');
               if (found.kind === 'control') await context.actions.press(found.control, key);

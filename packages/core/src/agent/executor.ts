@@ -216,6 +216,7 @@ export interface ExecutorActions {
    * or any model.
    */
   typeSecret(target: ExecutorTarget, name: string): Promise<void>;
+  /** Sends one key to a node. A TV remote button has no node, so it is pressed and recorded as `pressKey`. */
   press(target: ExecutorTarget, key: string): Promise<void>;
   select(target: ExecutorTarget, value: string): Promise<void>;
   /**
@@ -316,7 +317,7 @@ export interface ExecutorActions {
   typeText(value: string, options?: { readonly replace?: boolean }): Promise<void>;
   /**
    * Sends one key to whatever holds focus (`pressKey` in `target.verbs`), in
-   * the key grammar of `parseKey`: a TV remote button such as `menu` goes to
+   * the contract's key grammar: a TV remote button such as `menu` goes to
    * the device's remote. A key outside the grammar rejects with
    * `INVALID_ARGUMENT`; a key the engine or device lacks (a remote button on
    * a browser or a phone) rejects with `UNSUPPORTED_CAPABILITY`. Catch it

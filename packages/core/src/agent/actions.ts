@@ -22,7 +22,7 @@ import {
   type TracePosition,
 } from '../cache/trace.ts';
 import { sanitizeText } from '../internal/errors.ts';
-import { parseKey, type KeyModifier } from '../engine/contract.ts';
+import { isRemoteKey, type KeyModifier } from '../engine/contract.ts';
 import { bound, collapseText } from '../internal/text.ts';
 import type { ActionDetails, ActionEvent, ScrollDirection } from '../types.ts';
 
@@ -286,7 +286,7 @@ export function describeAction(action: RecordableAction, redaction: NodeRedactio
       case 'typeSecret':
         return `fill secret ${quote(action.secret)} into ${where}`;
       case 'press':
-        return `press ${safe(action.key)} on ${parseKey(action.key)?.key.kind === 'remote' ? 'the remote' : where}`;
+        return `press ${safe(action.key)} on ${where}`;
       case 'select':
         return `select ${safe(action.value)} in ${where}`;
       case 'check':
@@ -317,7 +317,7 @@ export function describeAction(action: RecordableAction, redaction: NodeRedactio
         return `type ${safe(action.value)} into the focused field${action.replace ? ', replacing its value' : ''}`;
       case 'pressKey':
         // A TV remote button goes to the device's remote, never to a field.
-        return `press ${safe(action.key)} ${parseKey(action.key)?.key.kind === 'remote' ? 'on the remote' : 'on the focused field'}`;
+        return `press ${safe(action.key)} ${isRemoteKey(action.key) ? 'on the remote' : 'on the focused field'}`;
       case 'dismissKeyboard':
         return 'dismiss the keyboard';
       case 'tapAt':

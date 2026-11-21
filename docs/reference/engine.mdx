@@ -112,7 +112,7 @@ rules:
 | `perform`, `actions` | One without the other. An `actions` list that is empty, repeats a kind, or names one outside `KNOWN_LOCATOR_ACTION_KINDS`. |
 | `performAt`, `pointerActions` | One without the other. A `pointerActions` list that is empty, repeats a kind, or names one outside `POINTER_ACTION_KINDS`. |
 | `tapModifiers` | Not a boolean, or `true` without `perform`. |
-| `remoteKeys` | Not a boolean, or `true` without `perform` or `keyboard`. |
+| `remoteKeys` | Not a boolean, or `true` without `keyboard`. |
 | `isolation` | Anything but `'attempt'` or `'worker'`. |
 | `keyboard`, `state`, `artifacts`, `session` | An unknown key or a non-function member. `keyboard` without `type` and `press`; `state` without both `capture` and `restore`; `artifacts` without `screenshot`; `startVideo` without `stopVideo`, or the reverse. |
 | `secrets` | Not an array of `secrets.get()` handles. |
@@ -246,9 +246,10 @@ export interface Engine {
    */
   readonly tapModifiers?: boolean;
   /**
-   * The surface presses TV remote keys (`REMOTE_KEY_NAMES`), through
-   * `perform`'s `press` and `keyboard.press`. Without it the harness fails a
-   * remote key with `UNSUPPORTED_CAPABILITY` before it reaches the engine.
+   * The surface presses TV remote keys (`REMOTE_KEY_NAMES`), which reach it
+   * through `keyboard.press` and never through `perform`. Without it the
+   * harness fails a remote key with `UNSUPPORTED_CAPABILITY` before it
+   * reaches the engine. Requires `keyboard`.
    */
   readonly remoteKeys?: boolean;
   /** capability: keyboard - requires observation. Input to whatever holds focus; see `EngineKeyboard`. */
@@ -400,7 +401,7 @@ member. Three gaps end differently:
 | `perform` + `actions` | `actions` | `observe` | Node actions of the declared kinds, with platform actionability checks. |
 | `locate` | `location` | `observe` | `screen`, `Locator`, `expect(locator)`. |
 | `tapModifiers: true` | - | `perform` | `modifiers` on `tap`, `doubleTap`, and `secondaryTap`. |
-| `remoteKeys: true` | - | `perform` or `keyboard` | [TV remote keys](#keys) in `press`, and the agent's hint naming them. |
+| `remoteKeys: true` | - | `keyboard` | [TV remote keys](#keys) in `press`, and the agent's hint naming them. |
 | `performAt` + `pointerActions` | `pointer` | `observe` | One pointer action at a viewport point, with no node behind it. |
 | `keyboard.{type,press,dismiss?}` | `keyboard` | `observe` | Input to whatever holds focus. |
 | `fixtures.<name>` | `<name>` | - | A contributed fixture. |
@@ -1319,8 +1320,8 @@ The key grammar of `press`, shared by every engine, and its parser.
 ```ts
 parseKey('Control+a'); // { modifiers: ['Control'], key: { kind: 'char', char: 'a' } }
 parseKey('Shift+Tab'); // { modifiers: ['Shift'], key: { kind: 'named', name: 'Tab' } }
-parseKey('menu'); // { modifiers: [], key: { kind: 'remote', name: 'menu' } }
 parseKey('Ctrl+a'); // undefined: Ctrl is not a modifier of the grammar
+isRemoteKey('menu'); // true: a TV remote button, which parseKey does not read
 ```
 
 ```ts
@@ -1339,12 +1340,14 @@ parseKey('Ctrl+a'); // undefined: Ctrl is not a modifier of the grammar
  *   keys `play`, `pause`, `play-pause`, `stop`, `rewind`, `fast-forward`,
  *   `next`, `previous`), lowercase so none is mistaken for the keyboard key
  *   of the same word (`home` is the remote's Home button, `Home` the
- *   keyboard's line start). A remote button takes no modifier, and only an
- *   engine that declares `remoteKeys` receives one.
+ *   keyboard's line start). A remote button is the whole key: it takes no
+ *   modifier and has no node. It reaches only an engine that declares
+ *   `remoteKeys`, and only through `keyboard.press`.
  *
  * `Control+a`, `Shift+Tab`, `Enter`, `$`, `menu`. A platform without a key maps it
  * or throws `UNSUPPORTED_CAPABILITY`; it never reinterprets the spelling.
- * `parseKey` is the one parser, exported so no engine carries its own.
+ * `parseKey` is the one parser of the keyboard keys, exported so no engine
+ * carries its own, and `isRemoteKey` tells a remote button apart.
  */
 export type Key = string;
 
@@ -1400,23 +1403,28 @@ export const REMOTE_KEY_NAMES = [
   'previous',
 ] as const;
 
-/** One parsed `press` key: its modifiers and either a named key, a single character, or a TV remote button. */
+export type RemoteKeyName = (typeof REMOTE_KEY_NAMES)[number];
+
+/** Whether a `press` key is a TV remote button. Not a `parseKey` key: it has no modifiers and no keyboard. */
+export function isRemoteKey(key: string): key is RemoteKeyName;
+
+/** One parsed keyboard key: its modifiers and either a named key or a single character. */
 export interface ParsedKey {
-  /** Modifiers, in the order written; always empty for a remote button. */
+  /** Modifiers, in the order written. */
   readonly modifiers: readonly KeyModifier[];
   /** The key itself. */
-  readonly key:
-    | { readonly kind: 'named'; readonly name: KeyName }
-    | { readonly kind: 'char'; readonly char: string }
-    | { readonly kind: 'remote'; readonly name: RemoteKeyName };
+  readonly key: { readonly kind: 'named'; readonly name: KeyName } | { readonly kind: 'char'; readonly char: string };
 }
 
 export function parseKey(key: string): ParsedKey | undefined;
 ```
 
-A remote button reaches an engine through `keyboard.press` and the `press`
-action only when the engine declares `remoteKeys: true`, as `@e2e-dev/mobile`
-does. On any other engine the harness refuses it with
+A remote button reaches an engine only when the engine declares
+`remoteKeys: true`, as `@e2e-dev/mobile` does, and only through
+`keyboard.press`: a remote button has no node, so a `press` that names one
+waits for the node and then goes to the keyboard, and `perform` never
+receives one. In `keyboard.press`, check `isRemoteKey(key)` before
+`parseKey(key)`. On any other engine the harness refuses a remote key with
 `UNSUPPORTED_CAPABILITY` first, naming the keyboard key of the same word when
 there is one, so an engine that passes keys through to its platform never
 reads `home` as the keyboard's `Home`. A device that has no remote, or lacks
@@ -2439,7 +2447,7 @@ return context.fixture('printer', printer, { print: { kind: 'resource' } });
 `PointerActionKind`, `ScrollDirection`, `Momentum`, `SelectOption`, `Key`,
 `KeyModifier`, `KeyName`, `RemoteKeyName`, `ParsedKey`, `ENGINE_SPI_VERSION`,
 `LOCATOR_ACTION_KINDS`, `KNOWN_LOCATOR_ACTION_KINDS`, `POINTER_ACTION_KINDS`, `KEY_MODIFIERS`,
-`KEY_NAMES`, `REMOTE_KEY_NAMES`, `parseKey`, `ENGINE_ERROR_CODES`, `RETRYABLE_ENGINE_ERROR_CODES`,
+`KEY_NAMES`, `REMOTE_KEY_NAMES`, `parseKey`, `isRemoteKey`, `ENGINE_ERROR_CODES`, `RETRYABLE_ENGINE_ERROR_CODES`,
 `Secret`, `isSecret`, `TextMatch`, `JsonValue`, `JsonValueRules`,
 `ResolveExpressionOptions`, `PollConditionOptions`, `WithoutUndefined`,
 `FixtureOperation`, `EngineIsolation`, `OBSERVED_NAME_LIMIT`, and `OBSERVED_TEXT_LIMIT` are

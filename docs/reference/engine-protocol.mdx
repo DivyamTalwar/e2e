@@ -210,7 +210,7 @@ export interface EngineManifest {
   /** Required with `engine/performAt`. */
   readonly pointerActions?: readonly PointerActionKind[];
   readonly tapModifiers?: boolean;
-  /** Needs `engine/perform` or `keyboard/press`. */
+  /** Needs `keyboard/press`. */
   readonly remoteKeys?: boolean;
   /** See `Engine.isolation`; left out for `attempt`. */
   readonly isolation?: 'worker';

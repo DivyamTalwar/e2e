@@ -118,7 +118,7 @@
       "type": "boolean"
     },
     "remoteKeys": {
-      "description": "Present as true when the engine presses TV remote keys through engine/perform's press or keyboard/press.",
+      "description": "Present as true when the engine presses TV remote keys, which reach it through keyboard/press.",
       "type": "boolean"
     },
     "isolation": {
@@ -141,18 +141,9 @@
       "then": {
         "properties": {
           "methods": {
-            "anyOf": [
-              {
-                "contains": {
-                  "const": "engine/perform"
-                }
-              },
-              {
-                "contains": {
-                  "const": "keyboard/press"
-                }
-              }
-            ]
+            "contains": {
+              "const": "keyboard/press"
+            }
           }
         }
       }
