@@ -14,7 +14,6 @@ const REMOTE_FOR_KEYBOARD: Readonly<Partial<Record<KeyName, RemoteKeyName>>> = {
   ArrowLeft: 'left',
   ArrowRight: 'right',
   Escape: 'back',
-  Backspace: 'back',
 };
 
 /**

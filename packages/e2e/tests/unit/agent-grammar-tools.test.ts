@@ -611,6 +611,14 @@ describe('press on a TV remote key', () => {
     expect(pressed).toEqual([]);
   });
 
+  it('sends a remote key on press_at down the point path on a target with no remote, where press refuses it', async () => {
+    const { context, pressed } = remoteContext(false);
+    const execute = createGrammarTools(context)['press_at']!.execute as unknown as (input: { x: number; y: number; key: string }, options: { toolCallId: string; messages: [] }) => Promise<unknown>;
+    // The point path asks for a screenshot first; the remote answer never does.
+    expect(String(await execute({ x: 10, y: 20, key: 'home' }, { toolCallId: 'call', messages: [] }))).toMatch(/^No screenshot has been taken in this step: press_at coordinates/);
+    expect(pressed).toEqual([]);
+  });
+
   it('records a remote key as pressed on the remote', () => {
     const options = { redact: (text: string) => text, redactCut: (text: string) => text };
     expect(describeAction({ name: 'pressKey', key: 'menu' }, options).summary).toBe('press "menu" on the remote');

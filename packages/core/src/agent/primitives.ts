@@ -887,7 +887,8 @@ function createPointTools(
       inputSchema: z.object({ x, y, key: z.string().min(1).max(64) }),
       execute: ({ x: px, y: py, key }) =>
         // A remote button is not aimed at a point, and must not tap whatever lies under one first.
-        isRemoteKey(key)
+        // A target with no remote takes the point path, whose press refuses the key by name.
+        context.target.remoteKeys && isRemoteKey(key)
           ? Promise.resolve(`No point takes a TV remote button: call press with key "${key}" and no target.`)
           : atPoint('press_at', px, py, async (point) => {
               const found = await focusAt(point, px, py, 'press_at');

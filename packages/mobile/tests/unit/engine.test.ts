@@ -1568,6 +1568,8 @@ describe('perform', () => {
     ['Home', 'On a TV, the remote\'s button is "home"'],
     ['ArrowUp', 'On a TV, the remote\'s button is "up"'],
     ['Tab', 'On a TV, press a remote button by its lowercase name: up, down, left, right, select, back, menu, home, play'],
+    // Backspace deletes text; the remote's back leaves the screen, so it is not suggested.
+    ['Backspace', 'On a TV, press a remote button by its lowercase name: up, down, left, right, select, back, menu, home, play'],
   ])('refuses the keyboard key %s and names the remote key to press instead', async (key, next) => {
     const h = harness();
     await openAttempt(h);
