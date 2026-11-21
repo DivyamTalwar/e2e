@@ -92,7 +92,7 @@ export interface CollectedTestInfo {
   readonly serialId?: string;
   /** `run` when it will run, `skip` when the test or the run skips it, `filtered` when the selection left it out. */
   readonly disposition: 'run' | 'skip' | 'filtered';
-  /** Why it is skipped or filtered; absent when it runs. */
+  /** Why it is skipped or filtered, when the run gave a reason. */
   readonly reason?: string;
 }
 
@@ -272,8 +272,8 @@ export type RunEventFact =
       readonly agent: string;
       readonly repeat: number;
       readonly target: string;
-      /** The test's title path, joined with ` › `. */
-      readonly title: string;
+      /** The describe titles, then the test title, as `collected` lists the test. */
+      readonly titlePath: readonly string[];
       /** `step` before steps `--step` holds, `pause` at `screen.pause()`. */
       readonly reason: 'step' | 'pause';
       /** The ID `e2e attach` takes, the same at every wait of this attempt. */
@@ -387,14 +387,16 @@ export function toEventResult(record: ResultRecord): RunEventResult {
  * Builds the run's single event writer over every configured sink. Sinks are
  * quarantined independently, so one broken sink cannot silence the
  * list reporter or vice versa, and each quarantine is one stderr line naming
- * the sink, the event, and the error. Returns a no-op when no sink is
- * configured, so call sites never branch.
+ * the sink, the event, and the error.
+ *
+ * Each event is frozen before any sink sees it: every sink is handed the
+ * same object, and none may rewrite it for the next. The freeze is one
+ * level deep; the records an event carries are shared, read-only by contract.
  */
 export function createRunEventEmitter(
   subscribers: readonly RunEventSubscriber[],
-  warn: (line: string) => void = (line) => void process.stderr.write(line),
+  warn: (line: string) => void,
 ): (fact: RunEventFact) => void {
-  if (subscribers.length === 0) return () => undefined;
   let seq = 0;
   // A sink that emits while it is handed an event, as one that prints does,
   // waits its turn: every sink sees the events in `seq` order.
@@ -424,7 +426,6 @@ export function createRunEventEmitter(
   };
   return (fact) => {
     seq += 1;
-    // Frozen: every sink is handed the same object, and none may rewrite it for the next.
     pending.push(Object.freeze({ seq, at: timestamp(), ...fact }));
     if (delivering) return;
     delivering = true;

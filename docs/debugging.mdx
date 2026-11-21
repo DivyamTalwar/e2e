@@ -307,8 +307,9 @@ You can scroll through the screen or app log while the test stays paused.
   a step is held.
 
 `--step` runs one test at a time. It is refused in CI, with `--watch`, and
-with `--workers` above 1. With the json reporter it needs a terminal: the
-prompt prints on stderr and the report on stdout.
+with `--workers` above 1. With the json reporter it needs stdin and stdout
+to be a terminal: the prompt prints on stderr and the report on stdout at
+the end.
 
 ## Step through a test without a terminal
 

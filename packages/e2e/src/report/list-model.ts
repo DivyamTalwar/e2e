@@ -85,7 +85,7 @@ export interface RunningTest {
 /** A running test that waits for a person, with its `paused` event. */
 export interface PausedTest {
   readonly test: RunningTest;
-  readonly paused: RunEventOf<'paused'>;
+  readonly event: RunEventOf<'paused'>;
 }
 
 /** The model and agent named in the run header. */

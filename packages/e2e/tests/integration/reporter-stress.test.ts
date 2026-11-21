@@ -75,9 +75,9 @@ const HOSTILE = `
       },
     },
     {
-      name: 'empties',
+      name: 'retotals',
       onEvent(event) {
-        if (event.type === 'collected') event.tests[0].tags.push('mine');
+        if (event.type === 'collected') event.total = 0;
       },
     },
 `;
@@ -137,9 +137,10 @@ describe('reporters of every kind in one run', () => {
       expect(warnings.filter((line) => line === expected), expected).toHaveLength(1);
     }
     expect(warnings.some((line) => line.startsWith('e2e: reporter "clobbers-report" cannot write'))).toBe(true);
-    // An event is every reporter's: one that tries to change it is stopped there.
+    // An event is every reporter's: one that assigns to it is stopped there.
     expect(warnings.some((line) => line.startsWith('e2e: reporter "rewrites" threw on output: '))).toBe(true);
-    expect(warnings.some((line) => line.startsWith('e2e: reporter "empties" threw on collected: '))).toBe(true);
+    expect(warnings.some((line) => line.startsWith('e2e: reporter "retotals" threw on collected: '))).toBe(true);
+    expect(events('witness').find((event) => event.type === 'collected')).toMatchObject({ total: 3 });
 
     // The class-based reporter kept its state on `this`, and saw every event.
     const counts = JSON.parse(readFileSync(path.join(project.dir, 'counts.json'), 'utf8')) as Record<string, unknown>;
@@ -160,7 +161,7 @@ describe('reporters of every kind in one run', () => {
     expect(printed).toContain('half a line, finished\n');
   }, 120_000);
 
-  it('lets reporters print from every hook without feeding themselves, leaking a secret, or touching stdout', () => {
+  it('lets reporters print from onEvent, timers, onRunFinished, and onSummary without feeding themselves, leaking a secret, or touching stdout but for a document', () => {
     const { cli, events } = runCli(`'junit', { name: 'witness', onEvent: seen('witness') },${CHATTY}`);
     expect(cli.status, cli.stdout + cli.stderr).toBe(0);
     // Stdout holds the one document a reporter printed from onSummary.

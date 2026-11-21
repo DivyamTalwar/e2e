@@ -243,7 +243,7 @@ interactive: true, // default: false
 - 处理 `output`、`run-error`、`paused` 和 `resumed` [事件](#events)。提前停止的运行（例如因 `NO_TESTS` 停止）只会显示报告器打印的内容。
 - 它的钩子直接写入 `process.stdout` 或 `process.stderr`。运行器不会对这些输出脱敏，因此只打印事件和报告中的内容：它们已经脱敏。
 - 没有交互式报告器时，运行器在 stderr 上打印输出、运行错误和暂停。运行器从不写入 stdout，因此 stdout 只包含报告器在那里打印的内容，例如 `json` 报告。
-- 其他报告器在 [`onSummary`](#onsummary) 之外打印的内容视为你的代码的输出：运行器会对其脱敏，并打印到 stderr。
+- 其他报告器在 [`onSummary`](#onsummary) 之外打印的内容视为你的代码的输出：脱敏后与其他输出一样显示。
 - 交互式报告器的 `onEvent` 抛出异常或返回被拒绝的 Promise 后，运行器会在本次运行的剩余时间内代它打印。
 - 第二次 Ctrl-C 不会停止它的 `onRunFinished`：它的输出在本地。
 - 最多只能有一个交互式报告器。
@@ -376,7 +376,7 @@ onSummary(rows) {
 
 它在所有 `onRunFinished` 完成或被放弃后最后运行，第二次 Ctrl-C 之后也会运行。
 
-在这里打印。对任何报告器，`onSummary` 写入的内容都会直接进入终端，包括 stdout。`json` 在这里打印它的文档。
+在这里打印。对任何报告器，`onSummary` 写入的内容都会直接进入终端，包括 stdout。`json` 在这里打印它的文档。运行器不会对这些输出脱敏，因此只打印各行和报告中的内容。
 
 ## 事件
 
@@ -387,12 +387,12 @@ type RunEventFact =
   | { type: 'run-started'; runId; projectId; projectRoot; artifactsRoot; ci; targets; agents?; model?; judge?; stepping? }
   | { type: 'collected'; total; files: { file; target; tests }[]; repeatEach; tests: CollectedTestInfo[] }
   | { type: 'notice'; target; message }
-  | { type: 'output'; target?; pair; stream: 'stdout' | 'stderr'; text }
+  | { type: 'output'; target?; pair?; stream: 'stdout' | 'stderr'; text }
   | { type: 'setup'; step: SetupStep; state: 'started' }
   | { type: 'setup'; step: SetupStep; state: 'finished'; durationMs; outcome?: 'reused' | 'failed' | 'timed-out' }
   | { type: 'test-started'; testId; agent; repeat; title; file; serialId; target }
   | { type: 'step'; testId; agent; repeat; target; progress: StepProgress }
-  | { type: 'paused'; testId; agent; repeat; target; title; reason: 'step' | 'pause'; attachId; steps: PausedStep[]; keys: { key; does }[] }
+  | { type: 'paused'; testId; agent; repeat; target; titlePath; reason: 'step' | 'pause'; attachId; steps: PausedStep[]; keys: { key; does }[] }
   | { type: 'resumed'; testId; agent; repeat; target }
   | { type: 'test-finished'; result: RunEventResult }
   | { type: 'serial-group'; group: SerialGroupRecord }
@@ -412,7 +412,7 @@ type RunEventFact =
 - `output` 参见[输出](#output)，`paused` 和 `resumed` 参见[暂停](#pauses)。
 - `test-finished` 携带完整结果记录，包括每次尝试的产物。
 - `explore` 仅出现在 `e2e explore` 运行中：`started`、`planning`、`step-started`、`step-finished`、`finding` 和 `finished`。完整记录位于报告的 `run.explore` 中。
-- 事件是冻结的，所有报告器收到的是同一个对象。要修改的内容请先复制。
+- 所有报告器收到的是同一个事件对象。事件自身的字段是冻结的，它携带的记录是共享的：要修改的内容请先复制。
 - 新事件类型会陆续加入。处理你认识的类型，忽略其余类型；将 `switch` 的 `default` 分支留空。
 
 ### 已收集的测试
@@ -512,7 +512,7 @@ onEvent(event) {
 - 测试的输出带有 `target`。`pair` 标识当时正在运行的测试，在测试之间为 undefined。
 - 没有 `target` 的输出来自运行期间的运行器进程：加载中的测试文件、测试过滤器、其他报告器。
 - 除非有[交互式](#interactive)报告器在运行，运行器也会在 stderr 上打印输出。只记录输出的报告器不会让终端静默。
-- 报告器在处理 `output` 事件时，或在其中启动的工作中打印的内容，不会再作为事件返回。运行器会对其脱敏，并打印到 stderr。
+- 报告器在处理 `output` 事件时，或在其中启动的工作中打印的内容，不会再作为事件返回。运行器会对其脱敏并自行打印。
 
 ### 暂停
 
@@ -539,7 +539,7 @@ interface PausedStep {
 - `keys` 按提示显示的顺序列出键盘现在能做的操作，例如 `{ key: 'enter', does: 'run this step' }`。不读取键盘时为空，例如[用命令单步执行](/debugging#step-through-a-test-without-a-terminal)的运行。
 - 等待中的测试一次显示一个。同一测试的第二个 `paused` 会替换第一个：有步骤加入，或按键发生了变化。
 - 每个 `paused` 都有对应的 `resumed`，测试或运行先结束时也一样。
-- `title` 是用 ` › ` 连接的测试标题路径。
+- `titlePath` 是各 describe 标题加上测试标题，与 [`collected`](#collected-tests) 中的相同。
 - 使用 `attachId` [通过 MCP 附加](/reference/mcp#attaching-to-a-held-test)。该 ID 在同一次尝试的各次暂停之间保持不变。
 - 除非有[交互式](#interactive)报告器在运行，由键盘回答的暂停也会在 stderr 上打印为一行。
 
@@ -574,7 +574,7 @@ bunx e2e run --reporter list,junit
 
 ## 类型
 
-`Reporter`、`FinishedRun`、`ReportFile`、`ReporterSummary`、`Report`、`RunEvent`、`RunEventOf`、`CollectedTestInfo` 和 `PausedStep` 从主入口导出，`renderMarkdownReport(report, options)` 也一样。`e2e/reporters` 导出 `list`、`dot`、`json`、`junit` 和 `markdown`，以及 `ListReporterOptions`、`DotReporterOptions`、`JunitReporterOptions` 和 `MarkdownReporterOptions`。
+`Reporter`、`FinishedRun`、`ReportFile`、`ReporterSummary`、`Report`、`RunEvent`、`RunEventOf`、`CollectedTestInfo`、`PausedStep` 和 `PausedKey` 从主入口导出，`renderMarkdownReport(report, options)` 也一样。`e2e/reporters` 导出 `list`、`dot`、`json`、`junit` 和 `markdown`，以及 `ListReporterOptions`、`DotReporterOptions`、`JunitReporterOptions` 和 `MarkdownReporterOptions`。
 
 ## 相关内容
 

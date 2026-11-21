@@ -693,7 +693,7 @@ export async function serveSteps(options: RunOptions, version: string, signals: 
     return options.onEvent?.(event);
   };
   try {
-    const outcome = await run({ ...options, hold: { ask: beforeStep, steps: true, commands: true }, onEvent });
+    const outcome = await run({ ...options, hold: { ask: beforeStep, steps: true }, onEvent });
     ended = { text: ENDED, exitCode: outcome.exitCode };
     return outcome;
   } catch (cause) {
@@ -928,7 +928,7 @@ export async function servePauses(
 
   let outcome: RunOutcome;
   try {
-    outcome = await run({ ...options, hold: { ask: onPause, steps } });
+    outcome = await run({ ...options, hold: { ask: onPause, steps, ...(stdin === undefined ? {} : { keyboard: true }) } });
   } catch (cause) {
     await end({ text: `error: ${codedMessage(cause)}\n${RUN_ENDED}`, exitCode: exitCodeForCategory(classifyError(cause).category) });
     throw cause;

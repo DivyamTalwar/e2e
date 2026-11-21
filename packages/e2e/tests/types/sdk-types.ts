@@ -400,7 +400,7 @@ junit({ output: 'reports' });
       event.steps[0].label satisfies string;
       event.steps[0].source?.line satisfies number | undefined;
       event.attachId satisfies string;
-      event.title satisfies string;
+      event.titlePath satisfies readonly string[];
       event.keys[0]?.does satisfies string | undefined;
       // @ts-expect-error reporters only observe a pause: the event has no way to answer it
       event.attach;

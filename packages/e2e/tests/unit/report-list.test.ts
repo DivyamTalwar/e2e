@@ -10,7 +10,7 @@ import { userFrame } from '../../src/report/code-frame.ts';
 import type { CacheWrite } from '@e2e-dev/core/lib/cache/context';
 import type { RunEventFact, RunEventOf, RunEventResult } from '../../src/run/events.ts';
 import { stepPromptKeys } from '../../src/cli/step.ts';
-import { pauseEvents, type HeldStep, type NumberedStep, type PauseEvents, type StepPrompt } from '../../src/run/step-hold.ts';
+import { pauseEvents, type HeldStep, type NumberedStep, type StepPrompt } from '../../src/run/step-hold.ts';
 import type { ResultStatus, AttemptRecord, SerialGroupRecord, SerialMemberRecord } from '@e2e-dev/core/lib/run/records';
 
 // eslint-disable-next-line no-control-regex
@@ -151,9 +151,9 @@ function runStarted(
 
 /** Tells `reporter` of `shown` as the runner does: a `paused` event, or `resumed` for the test of the last one. */
 type ShownPrompt = Pick<StepPrompt, 'steps' | 'holdSteps'> & { help: boolean; viewer?: boolean; keyboard?: false };
-const pausesOf = new WeakMap<ListReporter, PauseEvents>();
+const pausesOf = new WeakMap<ListReporter, ReturnType<typeof pauseEvents>>();
 function showStepPrompt(reporter: ListReporter, shown: ShownPrompt | undefined): void {
-  const pauses = pausesOf.get(reporter) ?? pauseEvents(reporter.handle);
+  const pauses = pausesOf.get(reporter) ?? pauseEvents(reporter.handle, () => undefined);
   pausesOf.set(reporter, pauses);
   if (shown === undefined) return pauses.show(undefined);
   const keys =

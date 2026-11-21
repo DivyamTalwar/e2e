@@ -94,11 +94,12 @@ type RunHold = {
    */
   readonly steps: boolean;
   /**
-   * Set when later commands answer the holds, each printing the run's
-   * output since the one before (`e2e run --step` without a terminal). The
-   * json reporter is refused then: its document would land among the steps.
+   * Set when a person at a terminal answers the holds. Without one, later
+   * commands do, each printing the run's output since the one before (`e2e
+   * run --step` without a terminal), so stepping refuses the json reporter:
+   * its document would land among the steps.
    */
-  readonly commands?: true;
+  readonly keyboard?: true;
 };
 
 export interface RunOptions {
@@ -545,17 +546,21 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
       .map((id) => builtinReporter(id, fallbackIds.includes('json') ? 'stderr' : 'stdout'))
       .filter((reporter, index, all) => reporter.interactive !== true || all.findIndex((other) => other.interactive === true) === index);
   const activeReporters = configured.filter((reporter) => options.quiet !== true || reporter.interactive !== true);
-  const reporters = hostReporters(activeReporters, {
+  const host = hostReporters(activeReporters, {
     processOutput,
     quiet: options.quiet === true,
     redact: redactStaticSecrets(loaded.config?.allSecrets),
     onEvent: options.onEvent,
+    timeoutMs: options.reporterTimeout ?? REPORTER_TIMEOUT_MS,
+    force: forceController.signal,
   });
-  const { emit } = reporters;
+  const { emit } = host;
   // Until the run is over, what user code prints in this process is an
   // `output` event like a test's, with no target.
   processOutput?.showThrough({ show: (stream, text) => emit({ type: 'output', stream, text }), end: () => undefined });
-  const pauses = pauseEvents(emit);
+  /** Each collected test's title path by its id, once the run has collected. */
+  const titlePaths = new Map<string, readonly string[]>();
+  const pauses = pauseEvents(emit, (testId) => titlePaths.get(testId));
 
   /** Records one run-level error once: into the report and onto the stream. */
   const recordRunError = (runError: RunError): void => {
@@ -801,7 +806,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     // An interactive reporter prints run errors, and a run that stopped
     // before its tests writes no file to read them in, so otherwise they go
     // to stderr.
-    if (!reporters.showsRun() && options.quiet !== true) {
+    if (!host.showsRun() && options.quiet !== true) {
       for (const error of report.run.errors) process.stderr.write(failureLine(error));
     }
     if (debug.enabled) {
@@ -815,22 +820,19 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     // print under the summary. A config that never loaded still has the
     // built-in reporters, resolved against the working directory.
     const outputDir = loaded.config?.output ?? path.resolve(cwd, options.output ?? '.e2e');
-    await reporters.finish(
-      {
-        report,
-        status,
-        exitCode,
-        projectRoot: loaded.config?.projectRoot ?? cwd,
-        reportPath,
-        outputDir,
-        artifactsRoot: outputLayout(outputDir).results,
-        aiTracePath,
-        traces,
-        ...(lastRun === undefined ? {} : { lastRun }),
-        redact: redactStaticSecrets(loaded.config?.allSecrets),
-      },
-      { timeoutMs: options.reporterTimeout ?? REPORTER_TIMEOUT_MS, force: forceController.signal },
-    );
+    await host.finish({
+      report,
+      status,
+      exitCode,
+      projectRoot: loaded.config?.projectRoot ?? cwd,
+      reportPath,
+      outputDir,
+      artifactsRoot: outputLayout(outputDir).results,
+      aiTracePath,
+      traces,
+      ...(lastRun === undefined ? {} : { lastRun }),
+      redact: redactStaticSecrets(loaded.config?.allSecrets),
+    });
     return { exitCode, status, report, reportPath, aiTracePath, results, config: loaded.config };
   };
 
@@ -838,10 +840,9 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     recordFailure(loaded.error, 'config');
     return finish();
   }
-  // Beside the json reporter the prompt is on stderr, which a person must be reading.
-  if (options.hold?.steps === true && activeReporters.some((reporter) => builtinId(reporter) === 'json') && (options.hold.commands === true || process.stderr.isTTY !== true)) {
+  if (options.hold?.steps === true && options.hold.keyboard !== true && activeReporters.some((reporter) => builtinId(reporter) === 'json')) {
     recordFailure(
-      new ConfigurationError('INVALID_CONFIG', '--step cannot run with the reporter "json" without a terminal: its prompt is on stderr, and commands that step the run would print the report among the steps'),
+      new ConfigurationError('INVALID_CONFIG', '--step cannot run with the reporter "json" without a terminal: the commands that step the run would print the report among the steps'),
       'config',
     );
     return finish();
@@ -1035,12 +1036,14 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     // everything a run pays for every time (the app, the tests, the report)
     // is on the clock and a one-off download is not.
     startedAt = timestamp();
+    const tests = collectedTests(config.projectRoot, selection);
+    for (const test of tests) titlePaths.set(test.testId, test.titlePath);
     emit({
       type: 'collected',
       total: selection.pairs.length,
       files: plannedFiles(selection),
       repeatEach: options.repeatEach ?? 1,
-      tests: collectedTests(config.projectRoot, selection),
+      tests,
     });
     options.tests?.explore?.subscribe((progress) => emit({ type: 'explore', progress }));
 
@@ -1557,9 +1560,9 @@ function collectedTests(projectRoot: string, selection: Selection): CollectedTes
       file: pair.test.file,
       kind: pair.test.kind,
       title: pair.test.title,
-      // Copies: an event's arrays are a reporter's to keep, never the collected test's own.
-      titlePath: Object.freeze([...pair.test.titlePath]),
-      tags: Object.freeze([...pair.test.tags]),
+      // Copies: an event's arrays are never the collected test's own.
+      titlePath: [...pair.test.titlePath],
+      tags: [...pair.test.tags],
       ...(source === undefined ? {} : { source }),
       ...(pair.test.serialId === undefined ? {} : { serialId: pair.test.serialId }),
       disposition: pair.disposition,

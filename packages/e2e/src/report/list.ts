@@ -364,7 +364,7 @@ export class ListReporter {
   /** The run holds its steps (`e2e run --step`), as `run-started` says: the live window lists every finished step, not only agent ones. */
   private stepping = false;
   /** The test waiting for a key now, shown under its test with the keys below the summary. */
-  private pausedAt: RunEventOf<'paused'> | undefined;
+  private waiting: RunEventOf<'paused'> | undefined;
   /** Prints a wait as one permanent line, without a live window. */
   private readonly printPause = pauseLinePrinter((line) => this.print(line));
   private readonly failures: Failure[] = [];
@@ -519,7 +519,7 @@ export class ListReporter {
    * Without a live window, the pause is printed once as a permanent line.
    */
   private showPaused(paused: RunEventOf<'paused'> | undefined): void {
-    this.pausedAt = paused;
+    this.waiting = paused;
     if (!this.live) {
       this.printPause(paused);
       return;
@@ -1166,18 +1166,18 @@ export class ListReporter {
     if (this.explore !== undefined) {
       return this.explore.liveRows(this.exploreBadge(), running[0]?.current?.events, this.summaryRows(false), Date.now(), room);
     }
-    const footer = this.pausedAt === undefined ? [] : stepPromptRows(this.pc, this.pausedAt).slice(0, terminalRows() - 1);
+    const footer = this.waiting === undefined ? [] : stepPromptRows(this.pc, this.waiting).slice(0, terminalRows() - 1);
 
     return this.tree.render(running, this.summaryRows(false), Date.now(), room, { setup: this.inFlight, paused: this.paused(), footer });
   }
 
   /** The running test that waits for a key, with its `paused` event. */
   private paused(): PausedTest | undefined {
-    const { pausedAt } = this;
-    if (pausedAt === undefined) return undefined;
-    const { testId, agent, target, repeat } = pausedAt;
+    const { waiting } = this;
+    if (waiting === undefined) return undefined;
+    const { testId, agent, target, repeat } = waiting;
     const test = this.pairs.get(pairKey(testId, agent, target, repeat));
-    return test === undefined ? undefined : { test, paused: pausedAt };
+    return test === undefined ? undefined : { test, event: waiting };
   }
 
   /**

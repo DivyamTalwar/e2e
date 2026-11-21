@@ -130,7 +130,7 @@ function pausedLine(paused: Paused): string {
   const steps = paused.steps.map((step) => heldCall(step, pause));
   const keys = paused.keys.map(({ key, does }) => `${key} to ${does}`).join(', ');
   const at = pause ? 'in' : `at ${paused.steps.length === 1 ? 'step' : 'steps'} ${numbers} of`;
-  return `paused (${paused.attachId}) ${at} ${bounded(paused.title)} [${bounded(paused.target)}]: ` +
+  return `paused (${paused.attachId}) ${at} ${bounded(paused.titlePath.join(' › '))} [${bounded(paused.target)}]: ` +
     `${steps.join('; ')} · press ${keys}`;
 }
 

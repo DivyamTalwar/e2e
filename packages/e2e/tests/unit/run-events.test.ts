@@ -17,6 +17,9 @@ function collecting(events: RunEvent[]): { name: string; onEvent: (event: RunEve
   };
 }
 
+/** Prints a quarantine line where the runner's own does. */
+const warn = (line: string): void => void process.stderr.write(line);
+
 describe('createRunEventEmitter', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -33,7 +36,7 @@ describe('createRunEventEmitter', () => {
         },
       },
       { name: 'second', onEvent: (event) => void seen.second.push(`${event.seq}`) },
-    ]);
+    ], warn);
     emit(fact(1));
     expect(seen).toEqual({ first: ['1', '2'], second: ['1', '2'] });
   });
@@ -51,7 +54,7 @@ describe('createRunEventEmitter', () => {
         },
       },
       collecting(events),
-    ]);
+    ], warn);
     expect(() => emit(fact(1))).not.toThrow();
     emit(fact(2));
     emit(fact(3));
@@ -75,7 +78,7 @@ describe('createRunEventEmitter', () => {
         },
       },
       collecting(events),
-    ]);
+    ], warn);
     emit(fact(1));
     // The rejection settles on a later tick; quarantine must land before the
     // next emit that follows it.
@@ -98,7 +101,7 @@ describe('createRunEventEmitter', () => {
         onEvent: () => new Promise((_resolve, reject) => setImmediate(() => reject(new Error('late'))))
       },
       collecting(events),
-    ]);
+    ], warn);
     // Both promises are pending when the second event is emitted; both reject on the next tick.
     emit(fact(1));
     emit(fact(2));

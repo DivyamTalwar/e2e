@@ -27,20 +27,20 @@ interface HostOptions {
   readonly redact: (text: string) => string;
   /** The embedding program's own sink, after the reporters'. */
   readonly onEvent: RunEventSink | undefined;
+  /** Budget for each reporter's `reportFiles` and `onRunFinished`. */
+  readonly timeoutMs: number;
+  /** Aborts when the run is forced to stop. */
+  readonly force: AbortSignal;
 }
 
 /** A run's reporters as the runner drives them. */
-export interface ReporterHost {
+interface ReporterHost {
   /** Emits one fact to every reporter's `onEvent`, the embedder's sink, and the runner's own printing. */
   emit(fact: RunEventFact): void;
   /** Whether an interactive reporter shows the run, so the runner prints no output, run error, or pause itself; false once its `onEvent` broke. */
   showsRun(): boolean;
-  /**
-   * Finishes every reporter: first the files each one's `reportFiles`
-   * renders, which the runner writes, then every `onRunFinished` at once,
-   * then every `onSummary` with the rows they all came back with.
-   */
-  finish(finished: FinishedRun, options: FinishOptions): Promise<void>;
+  /** Finishes every reporter once the report is written: its files, its `onRunFinished`, then its `onSummary`. */
+  finish(finished: FinishedRun): Promise<void>;
 }
 
 /** Calls a hook of `reporter`, past the capture of user output when it is interactive, so what it prints is what the terminal shows. */
@@ -84,11 +84,11 @@ export function hostReporters(reporters: readonly Reporter[], options: HostOptio
   const emit = createRunEventEmitter(
     [
       // First, so a reporter that breaks on a pause leaves the runner showing the current one.
-      { name: 'runner', onEvent: plain.track },
+      { name: 'runner (tracking pauses)', onEvent: plain.track },
       ...sinks,
       ...(options.onEvent === undefined ? [] : [{ name: 'onEvent', onEvent: handing(options.onEvent) }]),
       // Last, once every reporter had its chance to show the event.
-      { name: 'runner', onEvent: plain.print },
+      { name: 'runner (printing)', onEvent: plain.print },
     ],
     // The runner's own line, outside any reporter's output context, so it is redacted like any other.
     (line) => {
@@ -97,7 +97,7 @@ export function hostReporters(reporters: readonly Reporter[], options: HostOptio
       else processOutput.captured(write);
     },
   );
-  return { emit, showsRun, finish: (finished, finishOptions) => finishReporters(reporters, finished, finishOptions) };
+  return { emit, showsRun, finish: (finished) => finishReporters(reporters, finished, options) };
 }
 
 /**
@@ -129,14 +129,6 @@ function plainView(showsRun: () => boolean, { processOutput, quiet, redact }: Ho
 /** What a reporter's `reportFiles` has left once the run is forced to stop. */
 const FORCED_REPORT_FILES_MS = 5_000;
 
-/** How the reporters are finished. */
-interface FinishOptions {
-  /** Budget for each reporter's `reportFiles` and `onRunFinished`. */
-  readonly timeoutMs: number;
-  /** Aborts when the run is forced to stop. */
-  readonly force: AbortSignal;
-}
-
 /**
  * Finishes every reporter: first the files each one's `reportFiles`
  * renders, which the runner writes, then every `onRunFinished` at once,
@@ -150,8 +142,7 @@ interface FinishOptions {
  * of time, or returns something other than files or rows is one line on
  * stderr; it can never change the run's outcome.
  */
-async function finishReporters(reporters: readonly Reporter[], finished: FinishedRun, options: FinishOptions): Promise<void> {
-  const { timeoutMs, force } = options;
+async function finishReporters(reporters: readonly Reporter[], finished: FinishedRun, { timeoutMs, force }: Pick<HostOptions, 'timeoutMs' | 'force'>): Promise<void> {
   const say = (reporter: Reporter, detail: string): void => {
     process.stderr.write(`e2e: reporter "${reporter.name}" ${detail}\n`);
   };
@@ -222,7 +213,7 @@ async function finishReporters(reporters: readonly Reporter[], finished: Finishe
     }),
   );
 
-  const rows = reporters.flatMap((_, index) => [...fileRows[index]!, ...finishedRows[index]!]);
+  const rows = fileRows.flatMap((files, index) => [...files, ...(finishedRows[index] ?? [])]);
   for (const reporter of reporters) {
     if (reporter.onSummary === undefined) continue;
     const broke = (cause: unknown): void => say(reporter, `threw in onSummary: ${errorMessage(cause)}`);

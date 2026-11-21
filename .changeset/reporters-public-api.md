@@ -17,7 +17,7 @@ New in the event stream:
 - `paused` and `resumed` say when a test waits at a `--step` prompt or `screen.pause()`.
 - `output` events include what the runner process prints, with no `target`.
 
-Events are frozen: every reporter gets the same object.
+Every reporter gets the same event object, with its own fields frozen.
 
 `--step` works with the json reporter in a terminal. After a second Ctrl-C, `reportFiles` has 5 seconds left.
 

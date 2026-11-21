@@ -346,14 +346,18 @@ function rejectWatchIn(command: Command, reporters: readonly Reporter[] | undefi
 /**
  * Where `--step` cannot work: it waits at every step, so not in CI; its
  * prompt is one at a time, so one worker; and it cannot share the keyboard
- * with `--watch`. Whether it can run beside the json reporter is the
- * runner's call, which knows the config's reporters too.
+ * with `--watch`. Beside the json reporter it needs a terminal: commands
+ * that step the run would print the report among the steps. The runner
+ * refuses the same for a json reporter the config sets.
  */
-function rejectStepIn(command: Command, options: { watch?: boolean; workers?: number }): void {
+function rejectStepIn(command: Command, options: { watch?: boolean; workers?: number; reporter?: readonly Reporter[] }): void {
   const refuse = (why: string): never => command.error(`error: --step ${why}`, { exitCode: 2 });
   if (isCiMode(process.env)) refuse('waits at every step, so it is refused in CI (CI is set)');
   if (options.watch === true) refuse('cannot be combined with --watch: both read the keyboard');
   if (options.workers !== undefined && options.workers > 1) refuse('runs one test at a time, so it cannot be combined with --workers above 1');
+  if (options.reporter?.includes('json') === true && !hasTerminal()) {
+    refuse('cannot be combined with --reporter json without a terminal on stdin and stdout: the commands that step the run would print the report among the steps');
+  }
 }
 
 /** Whether `--step` can read keys: stdin and stdout are both a terminal. Without one, the run steps from later commands (`step-control.ts`). */

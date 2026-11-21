@@ -51,9 +51,13 @@ export interface StepPrompt {
 }
 
 /** The `paused` event of `prompt`: its test, the calls that wait, and the keys a keyboard takes. */
-function pausedFact(prompt: StepPrompt): RunEventOf<'paused'> {
-  const waits = ({ step, number }: NumberedStep): PausedStep =>
-    Object.freeze({ number, api: step.api, label: step.label, ...(step.source === undefined ? {} : { source: step.source }) });
+function pausedFact(prompt: StepPrompt, titlePath: readonly string[] | undefined): RunEventOf<'paused'> {
+  const waits = ({ step, number }: NumberedStep): PausedStep => ({
+    number,
+    api: step.api,
+    label: step.label,
+    ...(step.source === undefined ? {} : { source: step.source }),
+  });
   const [first, ...rest] = prompt.steps;
   const { step } = first;
   return {
@@ -62,11 +66,12 @@ function pausedFact(prompt: StepPrompt): RunEventOf<'paused'> {
     agent: step.agent,
     repeat: step.repeat,
     target: step.target,
-    title: step.title,
+    // A test the run did not collect, as one a host runs by itself, is known by the title its hold names.
+    titlePath: titlePath ?? [step.title],
     reason: step.kind === 'pause' ? 'pause' : 'step',
     attachId: step.attachId,
-    steps: Object.freeze([waits(first), ...rest.map(waits)] as const),
-    keys: Object.freeze(prompt.keys.map((key) => Object.freeze({ ...key }))),
+    steps: [waits(first), ...rest.map(waits)],
+    keys: [...prompt.keys],
   };
 }
 
@@ -74,7 +79,7 @@ function pausedFact(prompt: StepPrompt): RunEventOf<'paused'> {
 type TestRun = Pick<RunEventOf<'paused'>, 'testId' | 'agent' | 'repeat' | 'target'>;
 
 /** The `paused` and `resumed` events of one run. */
-export interface PauseEvents {
+interface PauseEvents {
   /** The `hold` hook shows `prompt`, or takes its prompt down. */
   show(prompt: StepPrompt | undefined): void;
   /** A test's result is in: a wait of its own is over. */
@@ -87,9 +92,13 @@ export interface PauseEvents {
  * Tells a run's reporters which test waits for a person. The `hold` hook
  * says when a wait begins and ends; one still open when its test or the
  * run ends is ended here, so every `paused` gets its `resumed`, before the
- * next test's `paused` and before `run-finished`.
+ * next test's `paused` and before `run-finished`. `titlePathOf` answers a
+ * collected test's title path by its id.
  */
-export function pauseEvents(emit: (fact: RunEventOf<'paused'> | RunEventOf<'resumed'>) => void): PauseEvents {
+export function pauseEvents(
+  emit: (fact: RunEventOf<'paused'> | RunEventOf<'resumed'>) => void,
+  titlePathOf: (testId: string) => readonly string[] | undefined,
+): PauseEvents {
   let paused: RunEventOf<'paused'> | undefined;
   let ended = false;
   const same = (test: TestRun): boolean =>
@@ -103,7 +112,7 @@ export function pauseEvents(emit: (fact: RunEventOf<'paused'> | RunEventOf<'resu
   return {
     show(prompt) {
       if (ended) return;
-      const next = prompt === undefined ? undefined : pausedFact(prompt);
+      const next = prompt === undefined ? undefined : pausedFact(prompt, titlePathOf(prompt.steps[0].step.testId));
       if (next === undefined || !same(next)) resume();
       if (next === undefined) return;
       paused = next;

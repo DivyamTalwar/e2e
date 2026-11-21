@@ -167,10 +167,11 @@ export function writeTerminal(stream: OutputStream, text: string): void {
 }
 
 /**
- * Runs `hook`, a call into an interactive reporter, past the routing of
- * user output: what it writes to either stream, and what the timers it
- * starts write, reach the terminal as written. Both: `list` prints a test's
- * stderr on stderr while it prints to stdout.
+ * Runs `hook`, a reporter printing (an interactive reporter's hooks, any
+ * reporter's `onSummary`), past the routing of user output: what it writes
+ * to either stream, and what the timers it starts write, reach the terminal
+ * as written. Both: `list` prints a test's stderr on stderr while it prints
+ * to stdout.
  */
 export function uncaptured<T>(hook: () => T): T {
   const state = routingSlot.get(process);

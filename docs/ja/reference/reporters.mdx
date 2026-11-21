@@ -243,7 +243,7 @@ interactive: true, // default: false
 - `output`、`run-error`、`paused`、`resumed` の各[イベント](#events)を処理してください。`NO_TESTS` などで早期に停止した実行では、レポーターが表示した内容だけが表示されます。
 - フックは `process.stdout` または `process.stderr` に直接書き込みます。ランナーはこの出力を秘匿しないため、イベントとレポートの内容だけを出力してください。これらは秘匿済みです。
 - インタラクティブなレポーターがなければ、ランナーが出力、実行エラー、一時停止を stderr に表示します。ランナーは stdout に書き込まないため、stdout には `json` のレポートなど、レポーターがそこに出力した内容だけが残ります。
-- その他のレポーターが [`onSummary`](#onsummary) 以外で出力した内容は、コードの出力として扱います。ランナーが秘匿し、stderr に表示します。
+- その他のレポーターが [`onSummary`](#onsummary) 以外で出力した内容は、コードの出力として扱います。秘匿したうえで、他の出力と同じように表示します。
 - インタラクティブなレポーターの `onEvent` が例外を投げるか reject すると、実行の残りの間はランナーが代わりに表示します。
 - 2 回目の Ctrl-C でも、その `onRunFinished` は止まりません。出力がローカルだからです。
 - インタラクティブにできるレポーターは 1 つだけです。
@@ -376,7 +376,7 @@ onSummary(rows) {
 
 すべての `onRunFinished` が終わるか打ち切られた後、最後に実行されます。2 回目の Ctrl-C の後も実行されます。
 
-出力はここで行います。どのレポーターでも、`onSummary` が書き込んだ内容は stdout を含めてターミナルに直接出力されます。`json` はここでドキュメントを出力します。
+出力はここで行います。どのレポーターでも、`onSummary` が書き込んだ内容は stdout を含めてターミナルに直接出力されます。`json` はここでドキュメントを出力します。ランナーはこの出力を秘匿しないため、行とレポートの内容だけを出力してください。
 
 ## イベント
 
@@ -387,12 +387,12 @@ type RunEventFact =
   | { type: 'run-started'; runId; projectId; projectRoot; artifactsRoot; ci; targets; agents?; model?; judge?; stepping? }
   | { type: 'collected'; total; files: { file; target; tests }[]; repeatEach; tests: CollectedTestInfo[] }
   | { type: 'notice'; target; message }
-  | { type: 'output'; target?; pair; stream: 'stdout' | 'stderr'; text }
+  | { type: 'output'; target?; pair?; stream: 'stdout' | 'stderr'; text }
   | { type: 'setup'; step: SetupStep; state: 'started' }
   | { type: 'setup'; step: SetupStep; state: 'finished'; durationMs; outcome?: 'reused' | 'failed' | 'timed-out' }
   | { type: 'test-started'; testId; agent; repeat; title; file; serialId; target }
   | { type: 'step'; testId; agent; repeat; target; progress: StepProgress }
-  | { type: 'paused'; testId; agent; repeat; target; title; reason: 'step' | 'pause'; attachId; steps: PausedStep[]; keys: { key; does }[] }
+  | { type: 'paused'; testId; agent; repeat; target; titlePath; reason: 'step' | 'pause'; attachId; steps: PausedStep[]; keys: { key; does }[] }
   | { type: 'resumed'; testId; agent; repeat; target }
   | { type: 'test-finished'; result: RunEventResult }
   | { type: 'serial-group'; group: SerialGroupRecord }
@@ -412,7 +412,7 @@ type RunEventFact =
 - `output` は[出力](#output)、`paused` と `resumed` は[一時停止](#pauses)を参照してください。
 - `test-finished` は、すべての試行の成果物を含む完全な結果記録を持ちます。
 - `explore` は `e2e explore` の実行時だけ発生します。`started`、`planning`、`step-started`、`step-finished`、`finding`、`finished` があります。すべての記録はレポートの `run.explore` にあります。
-- イベントは凍結されており、すべてのレポーターが同じオブジェクトを受け取ります。変更したい内容はコピーしてください。
+- すべてのレポーターが同じイベントオブジェクトを受け取ります。イベント自身のフィールドは凍結されており、含まれるレコードは共有されます。変更したい内容はコピーしてください。
 - イベントの種類は今後追加されます。既知の種類を処理し、それ以外は無視してください。`switch` の `default` 分岐は空にします。
 
 ### 収集したテスト
@@ -512,7 +512,7 @@ onEvent(event) {
 - テストの出力には `target` があります。`pair` はその時点で実行中のテストを示し、テストの合間では undefined です。
 - `target` のない出力は、実行中にランナープロセスが出力したものです。読み込み中のテストファイル、テストフィルター、他のレポーターが該当します。
 - [インタラクティブ](#interactive)なレポーターがなければ、ランナーも出力を stderr に表示します。出力を記録するだけのレポーターがターミナルを黙らせることはありません。
-- レポーターが `output` イベントの処理中に、またはそこで開始した処理から出力した内容は、イベントとして戻ることはありません。ランナーが秘匿して stderr に表示します。
+- レポーターが `output` イベントの処理中に、またはそこで開始した処理から出力した内容は、イベントとして戻ることはありません。ランナーが秘匿して自身で表示します。
 
 ### 一時停止
 
@@ -539,7 +539,7 @@ interface PausedStep {
 - `keys` は、キーボードで今できる操作をプロンプトの表示順に並べます。例: `{ key: 'enter', does: 'run this step' }`。[コマンドでステップ実行する](/debugging#step-through-a-test-without-a-terminal)場合のように、キーボードを読み取らないときは空です。
 - 待機中のテストは 1 つずつ表示します。同じテストの 2 つ目の `paused` は最初のものを置き換えます。ステップが加わったか、キーが変わった場合です。
 - すべての `paused` には `resumed` が対応します。テストや実行が先に終わった場合も同じです。
-- `title` は、テストのタイトルパスを ` › ` で連結したものです。
+- `titlePath` は、[`collected`](#collected-tests) と同じく、describe のタイトルに続けてテストのタイトルを並べたものです。
 - [MCP でアタッチする](/reference/mcp#attaching-to-a-held-test)には `attachId` を使います。ID は、その試行の中で何度一時停止しても変わりません。
 - [インタラクティブ](#interactive)なレポーターがなければ、キーボードで応答する一時停止は stderr にも 1 行で出力されます。
 
@@ -574,7 +574,7 @@ bunx e2e run --reporter list,junit
 
 ## 型
 
-`Reporter`、`FinishedRun`、`ReportFile`、`ReporterSummary`、`Report`、`RunEvent`、`RunEventOf`、`CollectedTestInfo`、`PausedStep` はメインエントリーポイントからエクスポートします。`renderMarkdownReport(report, options)` も同様です。`e2e/reporters` は `list`、`dot`、`json`、`junit`、`markdown` を、`ListReporterOptions`、`DotReporterOptions`、`JunitReporterOptions`、`MarkdownReporterOptions` とともにエクスポートします。
+`Reporter`、`FinishedRun`、`ReportFile`、`ReporterSummary`、`Report`、`RunEvent`、`RunEventOf`、`CollectedTestInfo`、`PausedStep`、`PausedKey` はメインエントリーポイントからエクスポートします。`renderMarkdownReport(report, options)` も同様です。`e2e/reporters` は `list`、`dot`、`json`、`junit`、`markdown` を、`ListReporterOptions`、`DotReporterOptions`、`JunitReporterOptions`、`MarkdownReporterOptions` とともにエクスポートします。
 
 ## 関連情報
 

@@ -95,9 +95,11 @@ export interface ReportFile {
  * - `onSummary` runs last, with the rows of every report file and every
  *   `onRunFinished`, the built-ins' first.
  *
- * A reporter only observes. It can never change the run's status or exit
- * code, and never answers a pause: a failure or a timeout is one line on
- * stderr. Like every live value, a reporter never crosses a process
+ * A reporter only observes. It never answers a pause, and it can never
+ * change the run's status or exit code: a hook that fails or runs out of
+ * time is one line on stderr. An event is frozen, one level deep, and the
+ * records it carries are shared with every other reporter: copy what you
+ * want to change. Like every live value, a reporter never crosses a process
  * boundary; workers construct their own copy when they load the config
  * module and never call it, so constructing one must have no side effects.
  * `e2e run --watch` hands the same object every run.
@@ -128,7 +130,8 @@ export interface Reporter {
    * `onRunFinished`'s rows: the built-ins' first, then the others' in
    * `reporters` order, and the finished run. It is where a reporter
    * prints: what it writes here goes to the terminal directly, stdout
-   * included, as `json` prints its document.
+   * included, as `json` prints its document. The runner does not redact
+   * it, so print only what the rows and the report hold.
    */
   onSummary?(rows: ReporterSummary, run: FinishedRun): void;
 }
