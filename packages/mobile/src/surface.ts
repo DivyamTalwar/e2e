@@ -19,6 +19,7 @@ import type { AppDeployResult, CaptureSnapshotResult } from 'agent-device';
 import {
   EngineError,
   KEY_NAMES,
+  REMOTE_KEY_NAMES,
   parseKey,
   raceAbort,
   rejectUnknownKeys,
@@ -63,7 +64,7 @@ import {
   type ProjectedSnapshot,
 } from './nodes.ts';
 import { keyboardDragStart } from './keyboard.ts';
-import { cannotPressNamedKey, pressRemote, REMOTE_KEYS } from './remote.ts';
+import { cannotPressNamedKey, pressRemote } from './remote.ts';
 import { DEVICE_PERMISSIONS, type AgentDeviceClient, type ClientFactory, type DevicePermission, type LaunchPermissions, type MobileOptions, type PermissionState } from './options.ts';
 import { maskPng } from './png.ts';
 import { mobileDoctor } from './doctor.ts';
@@ -1641,7 +1642,7 @@ export class AgentDeviceSurface {
     const parsed = parseKey(key);
     if (parsed === undefined) {
       throw unsupported(
-        `"${key}" is not a key: press takes one key in the form [Modifier+]...Key, a named key (${KEY_NAMES.join(', ')}), one character, or a TV remote button (${REMOTE_KEYS.join(', ')})`,
+        `"${key}" is not a key: press takes one key in the form [Modifier+]...Key, a named key (${KEY_NAMES.join(', ')}), one character, or a TV remote button (${REMOTE_KEY_NAMES.join(', ')})`,
       );
     }
     if (parsed.modifiers.length > 0) {
@@ -1702,7 +1703,7 @@ export class AgentDeviceSurface {
     const parsed = parseKey(key);
     if (parsed === undefined) {
       throw unsupported(
-        `"${key}" is not a key: press takes one key in the form [Modifier+]...Key, a named key (${KEY_NAMES.join(', ')}), one character, or a TV remote button (${REMOTE_KEYS.join(', ')})`,
+        `"${key}" is not a key: press takes one key in the form [Modifier+]...Key, a named key (${KEY_NAMES.join(', ')}), one character, or a TV remote button (${REMOTE_KEY_NAMES.join(', ')})`,
       );
     }
     if (parsed.modifiers.length > 0) {

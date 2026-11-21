@@ -18,6 +18,7 @@ import { createBuiltInAgent, projectTools } from '@e2e-dev/core/lib/agent/defaul
 import { createToolLoopExecutor } from '@e2e-dev/core/lib/agent/tool-loop';
 import { defineTool } from '@e2e-dev/core/lib/agent/tool';
 import { describeAction } from '@e2e-dev/core/lib/agent/actions';
+import type { ExecutorVerb } from '@e2e-dev/core/lib/agent/executor';
 import { fakeExecutorContext } from '../helpers/fake-executor-context.ts';
 import { redacted } from '../helpers/redacted.ts';
 import { installFakeLoopModel, loopCalls } from '../helpers/fake-loop-model.ts';
@@ -543,8 +544,8 @@ describe('the loop guard waits longer on the built-in observe only', () => {
 
 describe('press on a TV remote key', () => {
   /** A context whose observation never changes and whose keyboard presses succeed. */
-  function remoteContext(platform: string) {
-    const { context } = fakeExecutorContext({ verbs: ['pressKey'], platform });
+  function remoteContext(remoteKeys: boolean, verbs: readonly ExecutorVerb[] = ['pressKey']) {
+    const { context } = fakeExecutorContext({ verbs, remoteKeys });
     const observation = { revision: '1', text: '#n1 button "Now playing"', truncated: false, viewport: { width: 1920, height: 1080 } };
     const pressed: string[] = [];
     return {
@@ -552,7 +553,11 @@ describe('press on a TV remote key', () => {
       context: {
         ...context,
         observe: async () => observation,
-        actions: { ...context.actions, pressKey: async (key: string) => { pressed.push(key); } },
+        actions: {
+          ...context.actions,
+          pressKey: async (key: string) => { pressed.push(key); },
+          press: async (target: { id: string }, key: string) => { pressed.push(`#${target.id}:${key}`); },
+        },
       },
     };
   }
@@ -561,16 +566,25 @@ describe('press on a TV remote key', () => {
     return String(await execute({ key }, { toolCallId: 'call', messages: [] }));
   };
 
-  it('names the remote keys on a device target only', () => {
-    const description = (platform: string) => createGrammarTools(remoteContext(platform).context).press!.description!;
-    expect(description('android')).toContain('"menu", "home", "play"');
-    expect(description('android')).toContain('"home" is the remote\'s Home button; "Home" is the keyboard key.');
-    expect(description('ios')).toContain('"play-pause"');
-    expect(description('web')).not.toContain('remote');
+  it('names the remote keys only on a target whose engine declares remoteKeys', () => {
+    const description = (remoteKeys: boolean) => createGrammarTools(remoteContext(remoteKeys).context).press!.description!;
+    expect(description(true)).toContain('menu, home, play');
+    expect(description(true)).toContain('play-pause');
+    expect(description(true)).toContain('("home" is the remote\'s, "Home" the keyboard\'s)');
+    expect(description(false)).not.toContain('remote');
+  });
+
+  it('sends a remote key to the remote even when the press names a node, and a keyboard key to the node', async () => {
+    const { context, pressed } = remoteContext(true, ['press', 'pressKey']);
+    const tools = createGrammarTools(context);
+    const execute = tools['press']!.execute as unknown as (input: { target?: string; key: string; times?: number }, options: { toolCallId: string; messages: [] }) => Promise<unknown>;
+    expect(String(await execute({ target: 'n1', key: 'menu', times: 2 }, { toolCallId: 'call', messages: [] }))).toMatch(/^Pressed menu 2 times on the remote\./);
+    await execute({ target: 'n1', key: 'Enter' }, { toolCallId: 'call', messages: [] });
+    expect(pressed).toEqual(['menu', 'menu', '#n1:Enter']);
   });
 
   it('reports a remote key as pressed on the remote, expects home to change the screen, and lets the D-pad move focus only', async () => {
-    const { context, pressed } = remoteContext('android');
+    const { context, pressed } = remoteContext(true);
     const tools = createGrammarTools(context);
     // The first press shows the whole screen; the later ones read against it.
     expect(await run(tools, 'select')).toMatch(/^Pressed select on the remote\./);
@@ -587,7 +601,7 @@ describe('press on a TV remote key', () => {
   });
 
   it('presses a remote key from press_at without tapping the point, and keeps the hint off press_at', async () => {
-    const { context, pressed } = remoteContext('android');
+    const { context, pressed } = remoteContext(true);
     const tools = createGrammarTools(context);
     expect(tools['press_at']!.description).not.toContain('remote');
     const execute = tools['press_at']!.execute as unknown as (input: { x: number; y: number; key: string }, options: { toolCallId: string; messages: [] }) => Promise<unknown>;

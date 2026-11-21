@@ -955,7 +955,7 @@ await device.back();
  * other button or device is `UNSUPPORTED_CAPABILITY`. A name
  * outside the list is `INVALID_ARGUMENT`.
  */
-pressRemote(key: RemoteKeyName): Promise<void>;
+pressRemote(key: RemoteKey): Promise<void>;
 ```
 
 ```ts
@@ -1307,6 +1307,25 @@ export type DevicePermission =
   | 'motion'
   | 'siri'
   | 'media-library';
+
+/** A TV remote key `device.pressRemote` takes: one of the key grammar's `REMOTE_KEY_NAMES`. */
+export type RemoteKey =
+  | 'up'
+  | 'down'
+  | 'left'
+  | 'right'
+  | 'select'
+  | 'back'
+  | 'menu'
+  | 'home'
+  | 'play'
+  | 'pause'
+  | 'play-pause'
+  | 'stop'
+  | 'rewind'
+  | 'fast-forward'
+  | 'next'
+  | 'previous';
 
 /** Orientations `setOrientation` accepts. */
 export type DeviceOrientation = 'portrait' | 'portrait-upside-down' | 'landscape-left' | 'landscape-right';

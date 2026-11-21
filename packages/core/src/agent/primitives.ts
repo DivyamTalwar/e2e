@@ -13,7 +13,8 @@ import { redactToolResult } from './redaction.ts';
 import type { StepResult, Tool, ToolSet } from 'ai';
 import { z } from 'zod';
 import { isTapActionName, type NodeActionName, type PointActionName } from '../cache/trace.ts';
-import { KEY_MODIFIERS, parseKey, REMOTE_KEY_NAMES, type KeyModifier } from '../engine/contract.ts';
+import { KEY_MODIFIERS, type KeyModifier } from '../engine/contract.ts';
+import { isRemoteKey, movesFocusOnly, REMOTE_KEY_HINT } from './keys.ts';
 import type { ViewportPoint } from '../engine/surface.ts';
 import { codedMessage, hasCause, TestError } from '../internal/errors.ts';
 import { VIEWPORT_LIMITS } from '../internal/geometry.ts';
@@ -60,41 +61,6 @@ const MAX_SCROLL_TIMES = 20;
 const MAX_SCROLL_TO_TEXT_CHARS = 200;
 /** Presses one `press` call may repeat: a selection of a word, a caret moved a few steps. */
 const MAX_PRESS_TIMES = 20;
-
-/**
- * Keys whose whole effect is where the focus or the caret sits, which the
- * tree does not record. An unchanged screen after one of these is the normal
- * outcome, not a control that did nothing.
- */
-const FOCUS_ONLY_KEYS: ReadonlySet<string> = new Set(['Tab', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
-/** The TV remote's D-pad: it moves the focus between views, which the tree may not record either. */
-const FOCUS_ONLY_REMOTE_KEYS: ReadonlySet<string> = new Set(['up', 'down', 'left', 'right']);
-
-/**
- * Whether a key only moves the focus or the caret, read through the key
- * grammar so the remote's `home`, which leaves the app, is not the keyboard's
- * `Home`.
- */
-function movesFocusOnly(key: string): boolean {
-  const parsed = parseKey(key);
-  if (parsed === undefined) return false;
-  if (parsed.key.kind === 'named') return FOCUS_ONLY_KEYS.has(parsed.key.name);
-  return parsed.key.kind === 'remote' && FOCUS_ONLY_REMOTE_KEYS.has(parsed.key.name);
-}
-
-/** Whether a key is a TV remote button, which goes to the device rather than to a node or a field. */
-function isRemoteKey(key: string): boolean {
-  return parseKey(key)?.key.kind === 'remote';
-}
-
-/**
- * The remote keys, for the press tools of a device target: the model
- * otherwise reaches for the keyboard's capitalised names.
- */
-const REMOTE_KEY_HINT = ` On a TV, press the remote's buttons by their lowercase names: ${REMOTE_KEY_NAMES.map((name) => `"${name}"`).join(', ')}. "home" is the remote's Home button; "Home" is the keyboard key.`;
-
-/** The platforms a remote can drive: a TV is an iOS (tvOS) or Android device. */
-const REMOTE_PLATFORMS: ReadonlySet<string> = new Set(['ios', 'android']);
 
 /** The model-pickable codes a blocked verdict accepts; derived, never restated. */
 const MODEL_BLOCKABLE_CODES = MODEL_ERROR_CODES.filter((code) => BLOCKABLE_CODES.has(code));
@@ -495,7 +461,7 @@ export function grammarTools(
       .max(MAX_PRESS_TIMES)
       .optional()
       .describe(`Press the key this many times in this one call, 1 to ${String(MAX_PRESS_TIMES)}; default 1. Use more to extend a selection or move a caret several steps at once.`);
-    const remoteHint = REMOTE_PLATFORMS.has(context.target.platform) ? REMOTE_KEY_HINT : '';
+    const remoteHint = context.target.remoteKeys ? REMOTE_KEY_HINT : '';
     const pressed = (key: string, count: number, where: string) =>
       count === 1 ? `Pressed ${key} ${where}.` : `Pressed ${key} ${String(count)} times ${where}.`;
     /** Where a press lands: a remote button goes to the device whatever the target. */
@@ -504,10 +470,12 @@ export function grammarTools(
     // Each repeat is one recorded action against the budget, as a scroll repeat
     // is. The first press addresses the node; the rest go to whatever has focus,
     // since a targeted press refocuses the node first and a repeated Tab would
-    // start over from it instead of walking on.
+    // start over from it instead of walking on. A remote button never addresses
+    // the node, so a replay never waits on a node the remote does not need.
     const pressing = async (key: string, id: string | undefined, count: number): Promise<void> => {
+      const unaddressed = verbs.has('pressKey') && isRemoteKey(key);
       for (let repeat = 0; repeat < count; repeat += 1) {
-        if (id === undefined || (repeat > 0 && verbs.has('pressKey'))) await context.actions.pressKey(key);
+        if (id === undefined || unaddressed || (repeat > 0 && verbs.has('pressKey'))) await context.actions.pressKey(key);
         else await context.actions.press({ id }, key);
       }
     };
@@ -924,10 +892,14 @@ function createPointTools(
         // screenshot, and must not tap whatever lies under the point first.
         isRemoteKey(key)
           ? inOrder(() =>
-              perform(pointAttempt('press_at', key), async () => {
-                await context.actions.pressKey(key);
-                return `Pressed ${key} on the remote; it needs no point, so use press without a target next time.`;
-              }),
+              perform(
+                pointAttempt('press_at', key),
+                async () => {
+                  await context.actions.pressKey(key);
+                  return `Pressed ${key} on the remote; it needs no point, so use press without a target next time.`;
+                },
+                { expectChange: !movesFocusOnly(key) },
+              ),
             )
           : atPoint('press_at', px, py, async (point) => {
               const found = await focusAt(point, px, py, 'press_at');

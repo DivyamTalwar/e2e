@@ -473,13 +473,15 @@ export interface StepExecutorContext {
    * `verbs` is the subset of the action grammar the engine declared, so an
    * executor offers a model exactly the vocabulary the surface can honor.
    * `tapModifiers` is true when `tap`, `doubleTap`, and `secondaryTap` accept
-   * `modifiers`.
+   * `modifiers`. `remoteKeys` is true when `press` and `pressKey` take the
+   * TV remote keys (`REMOTE_KEY_NAMES`).
    */
   readonly target: {
     readonly name: string;
     readonly platform: string;
     readonly verbs: ReadonlySet<ExecutorVerb>;
     readonly tapModifiers: boolean;
+    readonly remoteKeys: boolean;
   };
   /**
    * Present when a cached replay ran part of this step before handing it

@@ -1497,6 +1497,10 @@ describe('perform', () => {
     });
   });
 
+  it('declares remoteKeys, so the harness hands it the remote keys', () => {
+    expect(harness().engine.remoteKeys).toBe(true);
+  });
+
   it('fails a remote key the device has no button for with UNSUPPORTED_CAPABILITY', async () => {
     const h = harness();
     await openAttempt(h);

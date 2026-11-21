@@ -718,11 +718,11 @@ describe('project tool dispatch', () => {
 
 describe('press key grammar', () => {
   /** An engine that records every located expression and performed action. */
-  function keyboard() {
+  function keyboard(remoteKeys = true) {
     const locates: number[] = [];
     const performed: string[] = [];
     const engine = defineEngine({
-      name: 'fake', version: '1', spiVersion: 1,
+      name: 'fake', version: '1', spiVersion: 1, remoteKeys,
       observe: async () => snapshot([{ ref: { id: 'field', revision: '' }, role: 'textbox', name: 'Name' }]),
       locate: async () => { locates.push(1); return [{ ref: { id: 'field', revision: '' }, role: 'textbox', name: 'Name' }]; },
       actions: ['tap', 'press'],
@@ -746,6 +746,20 @@ describe('press key grammar', () => {
     await fixtures.screen.getByLabel('Name').press('Shift++');
     await fixtures.screen.getByLabel('Name').press('menu');
     expect(performed).toEqual(['press:Control+a', 'press:Shift++', 'press:menu']);
+  });
+
+  it('refuses a TV remote key before the locator resolves when the engine does not declare remoteKeys', async () => {
+    const { engine, locates, performed } = keyboard(false);
+    const { fixtures } = runtime(engine);
+    await expect(fixtures.screen.getByLabel('Name').press('home')).rejects.toMatchObject({
+      code: 'UNSUPPORTED_CAPABILITY',
+      message: expect.stringContaining('"home" is a TV remote key, and this target\'s engine does not declare remoteKeys; for the keyboard key press "Home"'),
+    });
+    await expect(fixtures.screen.getByLabel('Name').press('menu')).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' });
+    expect(locates).toEqual([]);
+    expect(performed).toEqual([]);
+    await fixtures.screen.getByLabel('Name').press('Home');
+    expect(performed).toEqual(['press:Home']);
   });
 
   it('rejects a key outside the grammar in the agent dispatcher before any engine call', async () => {

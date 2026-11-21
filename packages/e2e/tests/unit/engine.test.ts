@@ -72,6 +72,16 @@ describe('defineEngine', () => {
     );
   });
 
+  it('carries remoteKeys onto the handle only with perform or keyboard, and only as a boolean', () => {
+    const perform = async () => undefined;
+    const keyboard = { type: async () => undefined, press: async () => undefined };
+    expect(defineEngine(observingEngine({ actions: ['press'], perform, remoteKeys: true })).remoteKeys).toBe(true);
+    expect(defineEngine(observingEngine({ keyboard, remoteKeys: true })).remoteKeys).toBe(true);
+    expect(defineEngine(observingEngine({ keyboard, remoteKeys: false })).remoteKeys).toBeUndefined();
+    expect(() => defineEngine(observingEngine({ remoteKeys: true }))).toThrow(/remoteKeys without perform or keyboard/);
+    expect(() => defineEngine(observingEngine({ keyboard, remoteKeys: 'yes' as never }))).toThrow(/remoteKeys must be a boolean/);
+  });
+
   it('closes the action list: known kinds, each once, at least one', () => {
     const withActions = (actions: unknown) =>
       defineEngine(observingEngine({ actions: actions as never, perform: async () => undefined }));

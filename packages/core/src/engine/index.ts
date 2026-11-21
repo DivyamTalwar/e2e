@@ -862,6 +862,14 @@ export interface Engine {
    * that predates the field never drops one silently.
    */
   readonly tapModifiers?: boolean;
+  /**
+   * The surface presses TV remote keys (`REMOTE_KEY_NAMES`), through
+   * `perform`'s `press` and `keyboard.press`. Without it the harness fails a
+   * remote key with `UNSUPPORTED_CAPABILITY` before it reaches the engine, so
+   * an engine with no remote, or one that predates the field, never reads
+   * `home` as a keyboard key. Requires `perform` or `keyboard`.
+   */
+  readonly remoteKeys?: boolean;
   /** capability: keyboard - requires observation. Input to whatever holds focus; see `EngineKeyboard`. */
   readonly keyboard?: EngineKeyboard;
   /**

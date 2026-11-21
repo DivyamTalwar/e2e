@@ -14,4 +14,5 @@ export type { DeviceLease, DeviceProvider, DeviceReleaseContext, DeviceRequest }
 export type { FoldPose, InstallAppOptions, InstalledApp, OpenAppOptions } from './surface.ts';
 export type { BiometricSensor, Device, DeviceOrientation, DeviceSession, DeviceSessionClient, ForegroundApp } from './device.ts';
 export type { DeviceSelection } from './pool.ts';
+export type { RemoteKey } from './remote.ts';
 export type { MobileFixtures } from './fixtures.ts';

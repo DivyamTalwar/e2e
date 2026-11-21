@@ -1363,3 +1363,9 @@ void (blurTarget.blur satisfies (options?: ActionOptions) => Promise<void>);
 void blurTarget.blur('input');
 
 void (true satisfies (Exclude<import('e2e/engine').LocatorActionKind, (typeof import('e2e/engine').KNOWN_LOCATOR_ACTION_KINDS)[number]> extends never ? true : false));
+
+// The remote keys are lowercase, so the remote's `menu` is never the keyboard's capitalised name.
+void ('menu' satisfies import('e2e/engine').RemoteKeyName);
+// @ts-expect-error 'Menu' is not a remote key: the remote keys are lowercase
+void ('Menu' satisfies import('e2e/engine').RemoteKeyName);
+void (true satisfies import('e2e/engine').EngineManifest['remoteKeys']);

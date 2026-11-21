@@ -1,6 +1,6 @@
 /** The key grammar's TV remote buttons, pressed through agent-device's `tv-remote`. */
 
-import { TestError, type RemoteKeyName } from '@e2e-dev/core/engine';
+import { REMOTE_KEY_NAMES, TestError, type RemoteKeyName } from '@e2e-dev/core/engine';
 import type { AgentDeviceClient } from './options.ts';
 import type { InputBudget } from './support.ts';
 
@@ -34,18 +34,9 @@ const REMOTE_BUTTONS = {
   previous: 'media-previous',
 } as const satisfies Record<RemoteKeyName, TvRemoteButton>;
 
-/**
- * A remote key this engine presses. It is the engine's own name for the list,
- * so the published types still resolve against an `@e2e-dev/core` that
- * predates `RemoteKeyName`.
- */
-export type RemoteKey = keyof typeof REMOTE_BUTTONS;
+/** A TV remote key `device.pressRemote` takes: one of the key grammar's `REMOTE_KEY_NAMES`. */
+export type RemoteKey = RemoteKeyName;
 
-/**
- * The remote keys this engine presses, read from its own table so an older
- * `@e2e-dev/core` without `REMOTE_KEY_NAMES` still loads the engine.
- */
-export const REMOTE_KEYS: readonly string[] = Object.keys(REMOTE_BUTTONS);
 
 /** The remote key a keyboard key's user most likely meant on a TV. */
 const REMOTE_FOR_KEYBOARD: Readonly<Record<string, string>> = {
@@ -67,7 +58,7 @@ export function cannotPressNamedKey(name: string): string {
   return (
     `agent-device cannot press ${name} on a device surface; only Enter, Space, and single characters reach the soft keyboard. ` +
     (remote === undefined
-      ? `On a TV, press a remote button by its lowercase name: ${REMOTE_KEYS.join(', ')}`
+      ? `On a TV, press a remote button by its lowercase name: ${REMOTE_KEY_NAMES.join(', ')}`
       : `On a TV, the remote's button is "${remote}"`)
   );
 }
@@ -80,5 +71,5 @@ export function pressRemote(client: AgentDeviceClient, key: RemoteKey, input: In
 /** Throws `INVALID_ARGUMENT` unless `key` is one of the remote keys. */
 export function requireRemoteKey(key: unknown): asserts key is RemoteKey {
   if (typeof key === 'string' && Object.hasOwn(REMOTE_BUTTONS, key)) return;
-  throw new TestError('INVALID_ARGUMENT', `device.pressRemote(${JSON.stringify(key)}): not a remote key; press one of ${REMOTE_KEYS.join(', ')}`);
+  throw new TestError('INVALID_ARGUMENT', `device.pressRemote(${JSON.stringify(key)}): not a remote key; press one of ${REMOTE_KEY_NAMES.join(', ')}`);
 }

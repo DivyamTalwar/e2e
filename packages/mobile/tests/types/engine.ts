@@ -8,3 +8,9 @@ void (mobile({ platform: 'ios' }) satisfies EngineHandle<MobileFixtures>);
 declare const handle: EngineHandle<MobileFixtures>;
 void (handle satisfies MobileEngine);
 void (handle satisfies EntryMobileEngine);
+
+declare const device: import('../../src/index.ts').Device;
+void device.pressRemote('menu');
+// @ts-expect-error pressRemote takes the lowercase remote keys, not the keyboard's capitalised names
+void device.pressRemote('Menu');
+void ('play-pause' satisfies import('../../src/index.ts').RemoteKey);

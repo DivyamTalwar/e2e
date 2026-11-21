@@ -297,6 +297,7 @@ export function createEngineSession(options: EngineSessionOptions): TargetSessio
   const performAtRaw = guard('point actions', engine?.performAt);
   const pointerActions: ReadonlySet<PointerActionKind> = new Set(engine?.pointerActions ?? []);
   const tapModifiers = engine?.tapModifiers === true;
+  const remoteKeys = engine?.remoteKeys === true;
 
   const app: SessionApp = {
     open: guard('navigation', engine?.session?.open),
@@ -338,6 +339,7 @@ export function createEngineSession(options: EngineSessionOptions): TargetSessio
     actions,
     pointerActions,
     tapModifiers,
+    remoteKeys,
     app,
     artifacts,
     appLog: createAppLogRoute(),
@@ -453,7 +455,7 @@ export function createEngineSession(options: EngineSessionOptions): TargetSessio
       if ('modifiers' in action && action.modifiers !== undefined && !tapModifiers) {
         unsupported(`modifiers on the "${action.kind}" action`);
       }
-      if (action.kind === 'press') requireKey(action.key);
+      if (action.kind === 'press') requireKey(action.key, remoteKeys);
       rejectSupersededLocate(ref);
       if (action.kind === 'dragTo') rejectSupersededLocate(action.target);
       await performRaw(ref, action, operation);
@@ -470,7 +472,7 @@ export function createEngineSession(options: EngineSessionOptions): TargetSessio
     keyboard: {
       type: guard('keyboard input', engine?.keyboard?.type),
       press: (key, operation) => {
-        requireKey(key);
+        requireKey(key, remoteKeys);
         return guard('keyboard input', engine?.keyboard?.press)(key, operation);
       },
       dismiss: guard('keyboard dismissal', engine?.keyboard?.dismiss),

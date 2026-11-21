@@ -410,7 +410,7 @@ describe('e2e/core', { timeout: 60_000 }, () => {
         };
         return [player, menu];
       };
-      const fake = createFakeEngine({ scene: tv, keyboard: true });
+      const fake = createFakeEngine({ scene: tv, keyboard: true, remoteKeys: true });
       const opened = await host(fake.engine, { app: FAKE_APP });
       for (const round of [1, 2]) {
         const session = await opened.newSession();
