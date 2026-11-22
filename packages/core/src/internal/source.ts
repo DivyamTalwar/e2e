@@ -18,10 +18,12 @@ export interface StackFrame {
 /** A position the report keeps: the file relative to the project root, POSIX separators, one-based line and column. */
 export type SourceLocation = StackFrame;
 
-// Allow ordinary parentheses and colons in filenames, but never consume a
-// complete :line:column pair inside the path: doing so can mistake two frame
-// locations written on one line for one malformed source file.
-const FRAME_PATTERN = /^((?:file:\/{0,2})?\/(?:(?!:\d+:\d+).)+):(\d+):(\d+)\)?\s*$/;
+// The terminal :line:column marks a frame. Earlier colon-number sequences
+// may be part of legitimate POSIX filenames, so do not ban them globally.
+const FRAME_PATTERN = /^((?:file:\/{0,2})?\/.+):(\d+):(\d+)\)?\s*$/;
+// A malformed concatenation of two frame locations must not be misreported
+// as one extraordinarily long filename.
+const MULTIPLE_FRAMES = /:\d+:\d+\)?\s+(?:(?:and|,)\s+)?(?:file:\/{0,2})?\//u;
 
 /**
  * `file` relative to `projectRoot` with POSIX separators, or nothing when the
@@ -54,6 +56,7 @@ export function userFrame(stack: string | undefined, projectRoot: string | undef
     if (match === null) continue;
     const [, location, line, column] = match;
     if (location === undefined || line === undefined || column === undefined) continue;
+    if (MULTIPLE_FRAMES.test(location)) continue;
     const withoutQuery = location.split('?')[0]!;
     let file: string;
     try {

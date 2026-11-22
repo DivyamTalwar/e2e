@@ -32,6 +32,9 @@ describe('sourceLocation', () => {
     expect(sourceLocation(stackThrough('/repo/app/tests/10:20.e2e.ts'), '/repo/app')).toEqual({
       file: 'tests/10:20.e2e.ts', line: 14, column: 3,
     });
+    expect(sourceLocation(stackThrough('/repo/app/tests/case:1:2.e2e.ts'), '/repo/app')).toEqual({
+      file: 'tests/case:1:2.e2e.ts', line: 14, column: 3,
+    });
   });
 
   it('rejects a line combining two source frames instead of inventing a filename', () => {
