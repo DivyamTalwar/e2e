@@ -13,7 +13,7 @@
 import { isKeyModifier, KEY_MODIFIERS, type KeyModifier } from '../engine/contract.ts';
 import type { LocatorAction, LocatorActionKind, SemanticNode, ViewportPoint, ViewportSize } from '../engine/surface.ts';
 import { asEngineError, TestError } from '../internal/errors.ts';
-import { requireKey } from '../internal/keys.ts';
+import { pressedTextCharacter, requireKey } from '../internal/keys.ts';
 import { sleep } from '../internal/time.ts';
 import { clampToViewport, requireFinitePoint, requireViewportSize, viewportShare } from '../internal/geometry.ts';
 import { resolveNavigationUrl } from '../internal/urls.ts';
@@ -780,22 +780,19 @@ export class ActionDispatcher {
         return;
       }
     }
-    // A single key pressed into an OTP field is also a typed value. Its key
-    // must not replay on a page that minted a new code after the recording.
-    // Named keys and ordinary keyboard actions remain deterministic.
-    if (
-      !this.accounting.replayingTrace &&
-      (action.name === 'press' || action.name === 'pressKey') &&
-      [...action.key].length === 1
-    ) {
+    // A printable key in an OTP field is this run's data, including Shift+a:
+    // its spelling names two keys but it inserts one character. Editing
+    // shortcuts (Control/Meta/Alt) and named keys remain replayable.
+    if (!this.accounting.replayingTrace && (action.name === 'press' || action.name === 'pressKey')) {
+      const character = pressedTextCharacter(action.key);
       const purpose =
         action.name === 'press'
           ? action.node.inputPurpose
           : this.feed.oneTimeCodeShown
             ? 'one-time-code'
             : undefined;
-      if (purpose === 'one-time-code') {
-        const derived = derivedReason(action.key, this.options.instruction, this.options.params, {
+      if (character !== undefined && purpose === 'one-time-code') {
+        const derived = derivedReason(character, this.options.instruction, this.options.params, {
           shown: this.feed.shownText(),
           pixels: this.feed.pixelsShown,
           inputPurpose: purpose,
