@@ -290,7 +290,10 @@ focused field in a step that showed one), `date`, or `pixels`. Values from
 the instruction or `params`, and values the agent composed itself, replay,
 except in a one-time-code field or the focused field in a step that showed
 one: there only a whole value of two or more characters that the
-instruction or `params` spell out replays.
+instruction or `params` spell out replays. Pressing a single character
+with `press` in a one-time-code field, or `pressKey` after the step has
+shown such a field, also creates a run-time gap; named keys such as `Tab`
+and `Enter` are still replayable.
 
 ## What a recording holds
 

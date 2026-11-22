@@ -194,3 +194,78 @@ describe('trace cache: a one-time code typed into each focused box', () => {
     expect(actions.filter((action) => action.name === 'typeText')).toHaveLength(6);
   }, 240_000);
 });
+
+/** A keypress in an OTP box is data, just like `type` / `typeText`. */
+function pressedCodeExecutor(record: CodeRecord, mode: 'press' | 'pressKey'): StepExecutor {
+  return {
+    name: `pressed-code-${mode}`,
+    version: 'test',
+    async runStep(context: StepExecutorContext) {
+      record.calls += 1;
+      let observation = await context.observe();
+      record.sawIncorrect ||= observation.text.includes('Incorrect code');
+      const code = /Your code is (\d{6})/.exec(observation.text)?.[1];
+      if (code === undefined) return { status: 'failed' as const, summary: 'no code on the page' };
+      for (const [index, digit] of [...code].entries()) {
+        const target = { id: nodeIdFor(observation.text, new RegExp(`textbox "Digit ${String(index + 1)}"`)) };
+        if (mode === 'press') await context.actions.press(target, digit);
+        else {
+          await context.actions.tap(target);
+          await context.actions.pressKey(digit);
+        }
+      }
+      observation = await context.observe();
+      if (!observation.text.includes('Code verified')) return { status: 'failed' as const, summary: 'the code was not accepted' };
+      return { status: 'passed' as const, summary: 'entered the code' };
+    },
+  };
+}
+
+for (const mode of ['press', 'pressKey'] as const) {
+  describe(`trace cache: OTP entered with ${mode}`, () => {
+    let app: FixtureApp;
+    let project: FixtureProject;
+    const records: CodeRecord[] = [];
+    const options = () => {
+      const record: CodeRecord = { calls: 0, sawIncorrect: false };
+      records.push(record);
+      return {
+        appUrl: app.url,
+        config: {
+          tests: 'tests/**/*.e2e.ts',
+          reporters: ['json'] as const,
+          agents: { default: { executor: pressedCodeExecutor(record, mode) } },
+          cache: 'read-write' as const,
+        },
+      };
+    };
+
+    beforeAll(async () => {
+      app = await startFixtureApp();
+      project = createProject({ 'tests/code.e2e.ts': CODE_SUITE });
+    }, 60_000);
+    afterAll(async () => {
+      project?.cleanup();
+      await app?.close();
+    });
+
+    it('records six derived gaps and never replays the previous run’s code', async () => {
+      const first = await runExisting(project, options());
+      expect(first.exitCode).toBe(0);
+      const entries = readEntries(project);
+      expect(entries).toHaveLength(1);
+      const { actions } = entries[0]!.entry.payload;
+      expect(actions.filter((action) => action.name === 'tool')).toEqual(
+        Array.from({ length: 6 }, () => ({ name: 'tool', summary: 'tool type (run-time value)', derived: 'minted-token' })),
+      );
+      if (mode === 'pressKey') expect(actions.filter((action) => action.name === 'tap')).toHaveLength(6);
+
+      const second = await runExisting(project, options());
+      expect(second.exitCode).toBe(0);
+      expect(records.at(-1)!.calls).toBe(1);
+      expect(records.at(-1)!.sawIncorrect).toBe(false);
+      const step = resultByTitle(second, 'confirms with the code').attempts.at(-1)!.steps.find((s) => s.api === 'agent.act')!;
+      expect(step.cache).toMatchObject({ reason: 'gap' });
+    }, 240_000);
+  });
+}

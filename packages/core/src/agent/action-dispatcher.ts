@@ -780,6 +780,32 @@ export class ActionDispatcher {
         return;
       }
     }
+    // A single key pressed into an OTP field is also a typed value. Its key
+    // must not replay on a page that minted a new code after the recording.
+    // Named keys and ordinary keyboard actions remain deterministic.
+    if (
+      !this.accounting.replayingTrace &&
+      (action.name === 'press' || action.name === 'pressKey') &&
+      [...action.key].length === 1
+    ) {
+      const purpose =
+        action.name === 'press'
+          ? action.node.inputPurpose
+          : this.feed.oneTimeCodeShown
+            ? 'one-time-code'
+            : undefined;
+      if (purpose === 'one-time-code') {
+        const derived = derivedReason(action.key, this.options.instruction, this.options.params, {
+          shown: this.feed.shownText(),
+          pixels: this.feed.pixelsShown,
+          inputPurpose: purpose,
+        });
+        if (derived !== undefined) {
+          trace.recordDerivedGap(derived);
+          return;
+        }
+      }
+    }
     trace.record(action);
   }
 
