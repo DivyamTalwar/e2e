@@ -49,7 +49,12 @@ export function compareVersions(a: Version, b: Version): number {
 /** Numeric identifiers sort numerically and before alphanumeric ones, which sort by code point. */
 function compareIdentifiers(a: string, b: string): number {
   const numeric = /^\d+$/u;
-  if (numeric.test(a) && numeric.test(b)) return Number(a) - Number(b);
+  if (numeric.test(a) && numeric.test(b)) {
+    // SemVer has no bound on numeric prerelease identifiers, but JavaScript
+    // Numbers round above 2^53 and can make distinct versions compare equal.
+    if (a.length !== b.length) return a.length - b.length;
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
   if (numeric.test(a)) return -1;
   if (numeric.test(b)) return 1;
   return a < b ? -1 : a > b ? 1 : 0;
