@@ -69,7 +69,8 @@ export function detectWorkspacePackageManager(
     if (workspace !== undefined) {
       const member = includesPackage(workspace.globs, path.relative(current, project).split(path.sep).join('/'));
       if (member) return { manager: managerAt(current) ?? workspace.manager ?? invokingManager(env), root: current };
-      break;
+      // An unrelated nested workspace does not prevent an outer workspace
+      // from declaring this package as a member; keep checking ancestors.
     }
     if (path.dirname(current) === current) break;
   }
