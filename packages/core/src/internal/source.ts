@@ -18,7 +18,9 @@ export interface StackFrame {
 /** A position the report keeps: the file relative to the project root, POSIX separators, one-based line and column. */
 export type SourceLocation = StackFrame;
 
-const FRAME_PATTERN = /^((?:file:\/{0,2})?\/[^):]+):(\d+):(\d+)\)?\s*$/;
+// Locate the final :line:column suffix instead of forbidding legal filename
+// characters such as `)` and `:` in the absolute path itself.
+const FRAME_PATTERN = /^((?:file:\/{0,2})?\/.+):(\d+):(\d+)\)?\s*$/;
 
 /**
  * `file` relative to `projectRoot` with POSIX separators, or nothing when the

@@ -22,6 +22,18 @@ describe('sourceLocation', () => {
     expect(sourceLocation(stackThrough('/repo/app/tests/a.e2e.ts'), '/repo/app/')).toEqual({ file: 'tests/a.e2e.ts', line: 14, column: 3 });
   });
 
+  it('preserves source locations in POSIX filenames with parentheses and colons', () => {
+    for (const folder of ['suite (legacy)', 'test:fixtures']) {
+      const root = `/repo/${folder}`;
+      expect(sourceLocation(stackThrough(`${root}/tests/checkout.e2e.ts`), root)).toEqual({
+        file: 'tests/checkout.e2e.ts', line: 14, column: 3,
+      });
+    }
+    expect(sourceLocation(stackThrough('/repo/app/tests/10:20.e2e.ts'), '/repo/app')).toEqual({
+      file: 'tests/10:20.e2e.ts', line: 14, column: 3,
+    });
+  });
+
   it('names nothing for a sibling directory sharing the root prefix', () => {
     expect(sourceLocation(stackThrough('/repo/app-shared/helpers.ts'), '/repo/app')).toBeUndefined();
   });
