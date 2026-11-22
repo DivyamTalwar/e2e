@@ -34,6 +34,10 @@ describe('sourceLocation', () => {
     });
   });
 
+  it('rejects a line combining two source frames instead of inventing a filename', () => {
+    expect(sourceLocation('Error: boom\n    at test (/repo/app/a.ts:1:2 and /repo/app/b.ts:3:4)', '/repo/app')).toBeUndefined();
+  });
+
   it('names nothing for a sibling directory sharing the root prefix', () => {
     expect(sourceLocation(stackThrough('/repo/app-shared/helpers.ts'), '/repo/app')).toBeUndefined();
   });
