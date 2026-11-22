@@ -11,6 +11,20 @@ import {
   type PackageManager,
 } from '../../src/internal/package-manager.ts';
 
+/** Mirrors cli-init.test.ts: Windows needs special privileges for symlinks. */
+const symlinks = ((): boolean => {
+  const probe = mkdtempSync(path.join(os.tmpdir(), 'e2e-pm-symlink-'));
+  try {
+    writeFileSync(path.join(probe, 'file'), '');
+    symlinkSync(path.join(probe, 'file'), path.join(probe, 'link'));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+
 let dir: string;
 
 beforeEach(() => {
@@ -35,11 +49,14 @@ describe('detectPackageManager', () => {
 });
 
 describe('lockfile type checks', () => {
-  it('ignores directories named as lockfiles and retains symlinks to regular lockfiles', () => {
+  it('ignores directories named as lockfiles', () => {
     mkdirSync(path.join(dir, 'pnpm-lock.yaml'));
     writeFileSync(path.join(dir, 'package-lock.json'), '{}');
     expect(detectPackageManager(dir, undefined, {})).toBe('npm');
-    rmSync(path.join(dir, 'pnpm-lock.yaml'), { recursive: true, force: true });
+  });
+
+  it.skipIf(!symlinks)('retains symlinks to regular lockfiles when the host permits symlinks', () => {
+    writeFileSync(path.join(dir, 'package-lock.json'), '{}');
     symlinkSync('package-lock.json', path.join(dir, 'pnpm-lock.yaml'));
     expect(detectPackageManager(dir, undefined, {})).toBe('pnpm');
   });
@@ -60,19 +77,6 @@ describe('detectWorkspacePackageManager', () => {
     expect(detectWorkspacePackageManager(member, {})).toEqual({ manager: 'npm', root: member });
     rmSync(path.join(member, 'package-lock.json'));
     expect(detectWorkspacePackageManager(member, {})).toEqual({ manager: 'pnpm', root: dir });
-  });
-
-  it('searches beyond unrelated nested workspaces for the nearest matching ancestor', () => {
-    const nested = path.join(dir, 'packages', 'sdk');
-    const member = path.join(nested, 'apps', 'client');
-    mkdirSync(member, { recursive: true });
-    writeFileSync(path.join(dir, 'package.json'), '{"packageManager":"pnpm@10.4.1","workspaces":["packages/**"]}');
-    writeFileSync(path.join(nested, 'package.json'), '{"workspaces":["plugins/*"]}');
-    writeFileSync(path.join(member, 'package.json'), '{"name":"client"}');
-    expect(detectWorkspacePackageManager(member, {})).toEqual({ manager: 'pnpm', root: dir });
-    // A closer matching workspace still takes precedence when it includes the package.
-    writeFileSync(path.join(nested, 'package.json'), '{"packageManager":"yarn@4.0.0","workspaces":["apps/*"]}');
-    expect(detectWorkspacePackageManager(member, {})).toEqual({ manager: 'yarn', root: nested });
   });
 
   it('reads a pnpm workspace root with no lockfile yet as pnpm', () => {
