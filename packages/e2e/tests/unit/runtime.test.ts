@@ -20,6 +20,14 @@ describe('unsupportedRuntimeMessage', () => {
     expect(unsupportedRuntimeMessage({ node: version })).toBeDefined();
   });
 
+  it.each(['24.8.0-rc.1', '22.22.3-rc.1', '24.8.0garbage', '24.8.x', 'v24.8.0-rc.1', '24.08.0'])('refuses non-final or malformed Node release %s', (version) => {
+    expect(unsupportedRuntimeMessage({ node: version })).toBeDefined();
+  });
+
+  it.each(['1.4.3-canary.1', '1.4.3garbage', '1.4.x', '1.04.3'])('refuses non-final or malformed Bun release %s', (bun) => {
+    expect(unsupportedRuntimeMessage({ node: '26.4.0', bun })).toBeDefined();
+  });
+
   it('names both floors, the running version, and how to switch', () => {
     expect(unsupportedRuntimeMessage({ node: 'v22.18.0' })).toBe(
       'e2e requires Node.js 22.22.3 or newer on Node.js 22, or 24.8.0 or newer; this is Node.js 22.18.0. Upgrade Node.js, or switch versions with your version manager (nvm install 24, fnm install 24, volta install node@24).',

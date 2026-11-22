@@ -13,11 +13,14 @@ type Version = readonly [major: number, minor: number, patch: number];
  */
 type ReleaseRange = { readonly line: number; readonly since: Version } | { readonly since: Version };
 
-function parse(version: string): Version {
-  const [major = 0, minor = 0, patch = 0] = version
-    .replace(/^v/, '')
-    .split('.')
-    .map((part) => Number.parseInt(part, 10) || 0);
+/** Read only complete stable releases: prefix-parsing can admit unsupported prereleases. */
+function parse(version: string): Version | undefined {
+  const parts = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(version);
+  if (parts === null) return undefined;
+  const major = Number(parts[1]);
+  const minor = Number(parts[2]);
+  const patch = Number(parts[3]);
+  if (![major, minor, patch].every(Number.isSafeInteger)) return undefined;
   return [major, minor, patch];
 }
 
@@ -30,7 +33,7 @@ function atLeast(have: Version, need: Version): boolean {
 
 function within(version: string, ranges: readonly ReleaseRange[]): boolean {
   const have = parse(version);
-  return ranges.some((range) => ('line' in range ? have[0] === range.line : true) && atLeast(have, range.since));
+  return have !== undefined && ranges.some((range) => ('line' in range ? have[0] === range.line : true) && atLeast(have, range.since));
 }
 
 /**
@@ -72,7 +75,8 @@ function unsupportedNodeMessage(current: string): string | undefined {
 
 /** Explains a Bun older than `SUPPORTED_BUN_RANGE`, or undefined for one e2e runs on. */
 function unsupportedBunMessage(current: string): string | undefined {
-  if (atLeast(parse(current), BUN_FLOOR)) return undefined;
+  const version = parse(current);
+  if (version !== undefined && atLeast(version, BUN_FLOOR)) return undefined;
   return `e2e requires Bun ${BUN_FLOOR.join('.')} or newer; this is Bun ${current}. Upgrade Bun (bun upgrade), or run the CLI with Node.js (npx e2e).`;
 }
 
