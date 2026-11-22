@@ -71,10 +71,13 @@ afterEach(() => {
   for (const project of projects.splice(0)) project.cleanup();
 });
 
-function runCli(files: Record<string, string>, args: readonly string[] = []) {
+/** An embedded run: `run` from `e2e/runner`, which is quiet. */
+const EMBEDDED = ['--input-type=module', '-e', "import { run } from 'e2e/runner'; process.exitCode = (await run({ cwd: process.cwd() })).exitCode;"];
+
+function runCli(files: Record<string, string>, args: readonly string[] = [], command: readonly string[] = [CLI, 'run']) {
   const project = createProject(files);
   projects.push(project);
-  const cli = spawnSync(process.execPath, [CLI, 'run', ...args], {
+  const cli = spawnSync(process.execPath, [...command, ...args], {
     cwd: project.dir,
     env: { ...process.env, CI: '', E2E_TELEMETRY_DISABLED: '1', NO_COLOR: '1' },
     encoding: 'utf8',
@@ -202,11 +205,48 @@ describe('e2e run redacts what user code prints outside a test', () => {
     }
   });
 
-  it('lets any reporter print a document to stdout from onSummary', () => {
-    const tap = CONFIG.replace("reporters: ['list', {", `reporters: ['list', { name: 'tap', onSummary() { process.stdout.write('TAP version 14\\n'); } }, {`);
+  it('lets any reporter print a document to stdout from onSummary, redacted', () => {
+    const tap = CONFIG.replace("reporters: ['list', {", `reporters: ['list', { name: 'tap', onSummary() { process.stdout.write(\`TAP version 14\\n# \${token}\\n\`); } }, {`);
     const cli = runCli({ 'e2e.config.ts': tap, 'tests/print.e2e.ts': TEST }, ['--reporter', 'junit']);
     expect(cli.status, cli.stdout + cli.stderr).toBe(0);
-    expect(cli.stdout).toBe('TAP version 14\n');
+    expect(cli.stdout).toBe('TAP version 14\n# <secret:apiToken>\n');
+  });
+
+  it('keeps stdout for the json report whatever another reporter prints there, live or from onSummary', () => {
+    const view = `{
+    name: 'view',
+    interactive: true,
+    onEvent(event) { if (event.type === 'test-finished') process.stdout.write('VIEW LINE\\n'); },
+    onSummary() { console.log('VIEW SUMMARY'); },
+  }, { name: 'sum', onSummary() { console.log(\`SUMMARY LINE: \${token}\`); } }`;
+    const config = CONFIG.replace("reporters: ['list', {", `reporters: ['json', ${view}, {`);
+    const cli = runCli({ 'e2e.config.ts': config, 'tests/print.e2e.ts': TEST });
+    expect(cli.status, cli.stdout + cli.stderr).toBe(0);
+    expect(JSON.parse(cli.stdout)).toMatchObject({ schemaVersion: 'report-1' });
+    const lines = cli.stderr.split('\n');
+    for (const line of ['VIEW LINE', 'VIEW SUMMARY', 'SUMMARY LINE: <secret:apiToken>']) expect(lines).toContain(line);
+    expect(cli.stderr).not.toContain(TOKEN);
+  });
+
+  it('prints one json report however often the config names the reporter', () => {
+    const config = `import { json } from 'e2e/reporters';\n${CONFIG.replace("reporters: ['list', {", "reporters: ['json', json(), json(), {")}`;
+    const cli = runCli({ 'e2e.config.ts': config, 'tests/print.e2e.ts': TEST });
+    expect(cli.status, cli.stdout + cli.stderr).toBe(0);
+    expect(JSON.parse(cli.stdout)).toMatchObject({ schemaVersion: 'report-1' });
+  });
+
+  it('keeps stdout for the json report in an embedded run, and leaves it to user code without one', () => {
+    // Once `run` returns, the embedding program's streams are its own again.
+    const config = CONFIG.replace(/process\.once\('beforeExit'[\s\S]*?\n\}\);\n/, '');
+    expect(config).not.toContain('beforeExit');
+    const json = runCli({ 'e2e.config.ts': config.replace("reporters: ['list', {", "reporters: ['json', {"), 'tests/print.e2e.ts': TEST }, [], EMBEDDED);
+    expect(json.status, json.stdout + json.stderr).toBe(0);
+    expect(JSON.parse(json.stdout)).toMatchObject({ schemaVersion: 'report-1' });
+    expect(json.stderr.split('\n')).toContain('config console.log: <secret:apiToken>');
+
+    const none = runCli({ 'e2e.config.ts': config, 'tests/print.e2e.ts': TEST }, [], EMBEDDED);
+    expect(none.status, none.stdout + none.stderr).toBe(0);
+    expect(none.stdout.split('\n')).toContain('config console.log: <secret:apiToken>');
   });
 
   it('decodes a string written with an encoding, in the config and a test body', () => {

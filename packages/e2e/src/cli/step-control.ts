@@ -26,7 +26,7 @@ import { stepLine, stepPromptText } from '../report/list-steps.ts';
 import type { RunEventSink } from '../run/events.ts';
 import { writeTerminal } from '../run/process-output.ts';
 import { run, type RunOptions, type RunOutcome } from '../run/runner.ts';
-import type { RunnerOutput } from '../run/process-output.ts';
+import type { OutputStream, RunnerOutput } from '../run/process-output.ts';
 import type { BeforeStep, HeldStep, StepHoldContext, StepPrompt } from '../run/step-hold.ts';
 import {
   ATTACH_PROTOCOL,
@@ -762,8 +762,12 @@ export async function servePauses(
   /** Reads keys while a pause prompt is shown in a terminal. */
   let keyboard: StepKeyboard | undefined;
 
-  const stream = process.stderr.isTTY === true ? 'stderr' : process.stdout.isTTY === true ? 'stdout' : undefined;
-  const gate = new StepGate(stop, { holdSteps: steps, viewer: stdin !== undefined && stream !== undefined, keyboard: stdin !== undefined });
+  /** The terminal the viewer opens on. Never a stdout the run reserved, where the screen would land in front of the json report. */
+  const stream = (): OutputStream | undefined => {
+    if (process.stderr.isTTY === true) return 'stderr';
+    return process.stdout.isTTY === true && !options.processOutput.stdoutReserved ? 'stdout' : undefined;
+  };
+  const gate = new StepGate(stop, { holdSteps: steps, viewer: () => stdin !== undefined && stream() !== undefined, keyboard: stdin !== undefined });
   // Print beside the list reporter's lines. Keep stdout free for reporters that use it.
   const print = (line: string): void => options.processOutput.printLine(line);
   /**

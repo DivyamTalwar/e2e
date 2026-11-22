@@ -18,7 +18,7 @@ import {
   type RunOutcome,
 } from '../helpers/run-project.ts';
 import type { StepExecutor } from '@e2e-dev/core/lib/agent/executor';
-import type { RunEvent } from '../../src/run/events.ts';
+import type { RunEvent, RunEventOf } from '../../src/run/events.ts';
 
 const SUITE = `import { test, expect } from 'e2e';
 
@@ -81,8 +81,12 @@ describe('run events', () => {
     expect(types[0]).toBe('run-started');
     // Between the header and the collected tests there are only setup steps (collection,
     // each target's prepare) and the notices they narrate.
-    const planIndex = types.indexOf('collected');
+    // The deprecated `plan` still comes, right before `collected`, with its counts.
+    const planIndex = types.indexOf('plan');
     expect(planIndex).toBeGreaterThan(0);
+    expect(types[planIndex + 1]).toBe('collected');
+    const { total, files } = events[planIndex + 1] as RunEventOf<'collected'>;
+    expect(events[planIndex]).toMatchObject({ type: 'plan', total, files });
     expect(types.slice(1, planIndex).filter((type) => type !== 'setup' && type !== 'notice')).toEqual([]);
     expect(types.slice(1, planIndex)).toContain('setup');
     expect(types.at(-1)).toBe('run-finished');

@@ -242,6 +242,7 @@ interactive: true, // default: false
 
 - 处理 `output`、`run-error`、`paused` 和 `resumed` [事件](#events)。提前停止的运行（例如因 `NO_TESTS` 停止）只会显示报告器打印的内容。
 - 它的钩子直接写入 `process.stdout` 或 `process.stderr`。运行器不会对这些输出脱敏，因此只打印事件和报告中的内容：它们已经脱敏。
+- 与 `json` 一起使用时，它写入 stdout 的内容会输出到 stderr。
 - 没有交互式报告器时，运行器在 stderr 上打印输出、运行错误和暂停。运行器从不写入 stdout，因此 stdout 只包含报告器在那里打印的内容，例如 `json` 报告。
 - 其他报告器在 [`onSummary`](#onsummary) 之外打印的内容视为你的代码的输出：脱敏后与其他输出一样显示。
 - 交互式报告器的 `onEvent` 抛出异常或返回被拒绝的 Promise 后，运行器会在本次运行的剩余时间内代它打印。
@@ -376,7 +377,7 @@ onSummary(rows) {
 
 它在所有 `onRunFinished` 完成或被放弃后最后运行，第二次 Ctrl-C 之后也会运行。
 
-在这里打印。对任何报告器，`onSummary` 写入的内容都会直接进入终端，包括 stdout。`json` 在这里打印它的文档。运行器不会对这些输出脱敏，因此只打印各行和报告中的内容。
+在这里打印。`onSummary` 写入的内容会先脱敏，再输出到写入的流，包括 stdout，因此报告器可以在那里打印自己的文档。与 `json` 一起使用时，stdout 只包含 JSON 报告，其他报告器写入 stdout 的内容会输出到 stderr。
 
 ## 事件
 
@@ -385,6 +386,7 @@ onSummary(rows) {
 ```ts
 type RunEventFact =
   | { type: 'run-started'; runId; projectId; projectRoot; artifactsRoot; ci; targets; agents?; model?; judge?; stepping? }
+  | { type: 'plan'; total; files: { file; target; tests }[] } // deprecated
   | { type: 'collected'; total; files: { file; target; tests }[]; repeatEach; tests: CollectedTestInfo[] }
   | { type: 'notice'; target; message }
   | { type: 'output'; target?; pair?; stream: 'stdout' | 'stderr'; text }
@@ -409,6 +411,7 @@ type RunEventFact =
 - `setup` 标记测试开始前工作的起止。其 `step.kind` 为 `collect`、`filter`（一个[测试筛选器](/filters)，以 `name` 标识）、`prepare`、`service` 或 `app`。`app` 步骤的 `url` 是就绪探针轮询的 URL，已填入空闲端口，且不含用户信息或查询参数。服务或应用命令连接到已在该 URL 提供服务的进程时，`outcome` 为 `reused`；筛选器抛出异常或返回无效结果时为 `failed`；筛选器运行超过 5 分钟时为 `timed-out`。
 - `notice` 在 `target` 中指出该行的主题：某个测试目标、`app`、`collect`、表示测试筛选器进度和摘要的 `filter`，或 `run`。
 - `collected` 在测试收集并选定之后、任何测试运行之前发出一次。参见[已收集的测试](#collected-tests)。
+- `plan` 已弃用：请读取紧随其后、带有相同 `total` 和 `files` 的 `collected`。最早于 2027 年 4 月 1 日移除。
 - `output` 参见[输出](#output)，`paused` 和 `resumed` 参见[暂停](#pauses)。
 - `test-finished` 携带完整结果记录，包括每次尝试的产物。
 - `explore` 仅出现在 `e2e explore` 运行中：`started`、`planning`、`step-started`、`step-finished`、`finding` 和 `finished`。完整记录位于报告的 `run.explore` 中。

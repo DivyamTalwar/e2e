@@ -14,5 +14,5 @@ export function json(): Reporter {
     onSummary(_rows, run) {
       process.stdout.write(`${JSON.stringify(run.report, null, 2)}\n`);
     },
-  });
+  }, true);
 }

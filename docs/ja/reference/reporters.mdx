@@ -242,6 +242,7 @@ interactive: true, // default: false
 
 - `output`、`run-error`、`paused`、`resumed` の各[イベント](#events)を処理してください。`NO_TESTS` などで早期に停止した実行では、レポーターが表示した内容だけが表示されます。
 - フックは `process.stdout` または `process.stderr` に直接書き込みます。ランナーはこの出力を秘匿しないため、イベントとレポートの内容だけを出力してください。これらは秘匿済みです。
+- `json` と併用すると、stdout に書き込んだ内容は stderr に出力されます。
 - インタラクティブなレポーターがなければ、ランナーが出力、実行エラー、一時停止を stderr に表示します。ランナーは stdout に書き込まないため、stdout には `json` のレポートなど、レポーターがそこに出力した内容だけが残ります。
 - その他のレポーターが [`onSummary`](#onsummary) 以外で出力した内容は、コードの出力として扱います。秘匿したうえで、他の出力と同じように表示します。
 - インタラクティブなレポーターの `onEvent` が例外を投げるか reject すると、実行の残りの間はランナーが代わりに表示します。
@@ -376,7 +377,7 @@ onSummary(rows) {
 
 すべての `onRunFinished` が終わるか打ち切られた後、最後に実行されます。2 回目の Ctrl-C の後も実行されます。
 
-出力はここで行います。どのレポーターでも、`onSummary` が書き込んだ内容は stdout を含めてターミナルに直接出力されます。`json` はここでドキュメントを出力します。ランナーはこの出力を秘匿しないため、行とレポートの内容だけを出力してください。
+出力はここで行います。`onSummary` が書き込んだ内容は秘匿され、stdout を含めて書き込み先のストリームに出力されるため、レポーターは独自のドキュメントを stdout に出力できます。`json` と併用すると stdout には JSON レポートだけが出力され、他のレポーターが stdout に書き込んだ内容は stderr に出力されます。
 
 ## イベント
 
@@ -385,6 +386,7 @@ onSummary(rows) {
 ```ts
 type RunEventFact =
   | { type: 'run-started'; runId; projectId; projectRoot; artifactsRoot; ci; targets; agents?; model?; judge?; stepping? }
+  | { type: 'plan'; total; files: { file; target; tests }[] } // deprecated
   | { type: 'collected'; total; files: { file; target; tests }[]; repeatEach; tests: CollectedTestInfo[] }
   | { type: 'notice'; target; message }
   | { type: 'output'; target?; pair?; stream: 'stdout' | 'stderr'; text }
@@ -409,6 +411,7 @@ type RunEventFact =
 - `setup` はテスト開始前の処理の開始と終了を示します。`step.kind` は `collect`、`filter`（`name` で示す 1 つの[テストフィルター](/filters)）、`prepare`、`service`、`app` のいずれかです。`app` ステップの `url` は、準備完了チェックがポーリングする URL で、空きポートを反映し、ユーザー情報とクエリを除いています。`outcome` は、サービスやアプリのコマンドが、その URL ですでに稼働するプロセスを再利用した場合に `reused`、フィルターが例外を投げるか不正な結果を返した場合に `failed`、5 分を超えた場合に `timed-out` になります。
 - `notice` は、その行が何についての通知かを `target` に示します。値はターゲット名、`app`、`collect`、テストフィルターの進捗やサマリーを示す `filter`、または `run` です。
 - `collected` は、テストの収集と選択が終わり、最初のテストが始まる前に 1 回発生します。[収集したテスト](#collected-tests)を参照してください。
+- `plan` は非推奨です。直後に同じ `total` と `files` で発生する `collected` を使用してください。削除は 2027 年 4 月 1 日以降です。
 - `output` は[出力](#output)、`paused` と `resumed` は[一時停止](#pauses)を参照してください。
 - `test-finished` は、すべての試行の成果物を含む完全な結果記録を持ちます。
 - `explore` は `e2e explore` の実行時だけ発生します。`started`、`planning`、`step-started`、`step-finished`、`finding`、`finished` があります。すべての記録はレポートの `run.explore` にあります。

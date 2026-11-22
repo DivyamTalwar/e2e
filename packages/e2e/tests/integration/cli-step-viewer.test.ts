@@ -561,6 +561,24 @@ test('checks out', async ({ app }) => {
     expect(durationMs(run.printed(before)) - held).toBeLessThanOrEqual(Math.ceil(performance.now() - stoppedAt) + 10);
   });
 
+  it('opens no viewer on the stdout a json report prints to', async (context) => {
+    const run = terminalRun(context, { 'e2e.config.ts': APP, 'tests/checkout.e2e.ts': STEPS }, ['--step', '--reporter', 'json']);
+    const prompt = () => stripVTControlCharacters(run.errors());
+    await expect.poll(prompt, POLL).toMatch(/paused \(.+\) at step 2/);
+    await sleep(KEY_GUARD_MS);
+    run.press('h');
+    await expect.poll(prompt, POLL).toContain('a to run all without holding steps');
+    run.press('s');
+    await sleep(KEY_GUARD_MS);
+    run.press('a');
+    await run.finishes(0);
+
+    expect(run.output()).not.toContain(ENTER_SCREEN);
+    expect(JSON.parse(run.output())).toMatchObject({ schemaVersion: 'report-1' });
+    // Stderr is no terminal here, so the prompt offers no viewer key either.
+    expect(prompt()).not.toContain('show the screen');
+  });
+
   it('holds terminal output until the viewer closes and sends redirected output right away', async (context) => {
     const other = `import { existsSync } from 'node:fs';
 import { setTimeout } from 'node:timers/promises';

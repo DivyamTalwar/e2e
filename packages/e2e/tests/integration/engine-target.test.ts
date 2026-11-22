@@ -305,7 +305,7 @@ describe('engine targets', () => {
       // Collection and provisioning are setup steps between the header and
       // the plan; the notice narrates under the prepare step, which names the
       // engine and lasts at least the hook's own wait.
-      expect(order.slice(0, 5)).toEqual(['run-started', 'setup', 'notice', 'collected', 'test-started']);
+      expect(order.slice(0, 6)).toEqual(['run-started', 'setup', 'notice', 'plan', 'collected', 'test-started']);
       expect(setup.map((step) => `${step.kind}:${step.state}`)).toEqual([
         'collect:started',
         'collect:finished',

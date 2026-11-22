@@ -323,6 +323,7 @@ interactive: true, // default: false
 - Its hooks write to `process.stdout` or `process.stderr` directly. The
   runner doesn't redact that output, so print only what the events and the
   report hold: those are redacted already.
+- Beside `json`, what it writes to stdout prints on stderr.
 - Without an interactive reporter, the runner prints output, run errors,
   and pauses on stderr. It never writes to stdout, so stdout holds only what
   a reporter prints there, such as the `json` report.
@@ -505,9 +506,10 @@ onSummary(rows) {
 It runs last, once every `onRunFinished` is done or given up on, and also
 after a second Ctrl-C.
 
-Print here. What `onSummary` writes goes to the terminal directly, stdout
-included, for every reporter. `json` prints its document from it. The runner
-does not redact it, so print only what the rows and the report hold.
+Print here. What `onSummary` writes is redacted and goes to the stream it
+was written to, stdout included, so a reporter can print a document of its
+own there. Beside `json`, stdout holds only the JSON report, and what any
+other reporter writes to stdout prints on stderr.
 
 ## Events
 
@@ -517,6 +519,7 @@ number, `seq`, and an ISO timestamp, `at`.
 ```ts
 type RunEventFact =
   | { type: 'run-started'; runId; projectId; projectRoot; artifactsRoot; ci; targets; agents?; model?; judge?; stepping? }
+  | { type: 'plan'; total; files: { file; target; tests }[] } // deprecated
   | { type: 'collected'; total; files: { file; target; tests }[]; repeatEach; tests: CollectedTestInfo[] }
   | { type: 'notice'; target; message }
   | { type: 'output'; target?; pair?; stream: 'stdout' | 'stderr'; text }
@@ -558,6 +561,8 @@ type RunEventFact =
   `collect`, `filter` for a test filter's progress and summary, or `run`.
 - `collected` comes once the tests are collected and selected, before any
   runs. [Collected tests](#collected-tests) describes it.
+- `plan` is deprecated: read `collected`, which follows it with the same
+  `total` and `files`. It is removed no earlier than April 1, 2027.
 - [Output](#output) describes `output`, and [Pauses](#pauses) `paused` and
   `resumed`.
 - `run-hold` is emitted at the start and end of each interval with every

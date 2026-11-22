@@ -266,6 +266,7 @@ describe('test filters on a run', () => {
       'notice:filter:areas: judging 3 tests',
       'setup:filter(areas):finished',
       'notice:filter:areas kept 1 of 3 tests, left out 2',
+      'plan',
       'collected',
     ]);
   });

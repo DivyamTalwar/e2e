@@ -167,11 +167,9 @@ export function writeTerminal(stream: OutputStream, text: string): void {
 }
 
 /**
- * Runs `hook`, a reporter printing (an interactive reporter's hooks, any
- * reporter's `onSummary`), past the routing of user output: what it writes
- * to either stream, and what the timers it starts write, reach the terminal
- * as written. Both: `list` prints a test's stderr on stderr while it prints
- * to stdout.
+ * Runs `hook`, an interactive reporter showing a run that claimed no process
+ * output, past the routing of user output another run in the process set
+ * up: what it writes reaches the terminal as written.
  */
 export function uncaptured<T>(hook: () => T): T {
   const state = routingSlot.get(process);
@@ -245,18 +243,23 @@ export class RunnerOutput {
   private readonly redactors: Readonly<Record<OutputStream, StreamRedactor>>;
   /** The same for what is written inside `passThrough`, kept apart so it never waits behind, or completes, what the view holds. */
   private readonly passRedactors: Readonly<Record<OutputStream, StreamRedactor>>;
+  /** The same for what is written inside `asPrinted`, which lands on other streams. */
+  private readonly printRedactors: Readonly<Record<OutputStream, StreamRedactor>>;
   private readonly loadHold = new ConfigLoadHold();
   private view: OutputView | undefined;
-  /** Set in the async contexts whose writes go to the terminal as written: see `passThrough`. */
-  private readonly passing = new AsyncLocalStorage<boolean>();
+  /** How the writes of an async context reach the terminal, past the config hold and the view: see `passThrough`, `asWritten`, and `asDocument`. */
+  private readonly passing = new AsyncLocalStorage<'redacted' | 'printed' | 'written' | 'document' | false>();
   /** The terminal stream user stdout lands on: stderr once a run left stdout to its reporters. */
   private stdoutTo: OutputStream = 'stdout';
+  /** The same for an interactive reporter's stdout: stderr once a run reserved stdout for its document. */
+  private viewStdoutTo: OutputStream = 'stdout';
   constructor(
     private readonly terminal: Readonly<Record<OutputStream, TerminalWrite>>,
     ledger: SecretLedger,
   ) {
     this.redactors = { stdout: new StreamRedactor(ledger), stderr: new StreamRedactor(ledger) };
     this.passRedactors = { stdout: new StreamRedactor(ledger), stderr: new StreamRedactor(ledger) };
+    this.printRedactors = { stdout: new StreamRedactor(ledger), stderr: new StreamRedactor(ledger) };
   }
 
   /**
@@ -265,7 +268,11 @@ export class RunnerOutput {
    * config loads. Answers what the terminal did.
    */
   write(stream: OutputStream, chunk: string | Uint8Array, callback?: () => void): boolean {
-    if (this.passing.getStore() === true) return this.toTerminal(stream, this.passRedactors[stream].push(chunk), callback);
+    const passing = this.passing.getStore();
+    if (passing === 'redacted') return this.toTerminal(stream, this.passRedactors[stream].push(chunk), callback);
+    if (passing === 'printed') return this.reporterPrint(stream, this.printRedactors[stream].push(chunk), callback);
+    if (passing === 'document') return this.terminal[stream](chunk, callback);
+    if (passing === 'written') return this.reporterPrint(stream, chunk, callback);
     if (this.loadHold.hold(stream, chunk)) {
       if (callback !== undefined) process.nextTick(callback);
       return true;
@@ -307,7 +314,32 @@ export class RunnerOutput {
    * the view, so it never comes back to the reporter.
    */
   passThrough<T>(hook: () => T): T {
-    return this.passing.run(true, hook);
+    return this.passing.run('redacted', hook);
+  }
+
+  /**
+   * Runs `hook`, an interactive reporter showing the run, so that what it
+   * writes, and what the timers it starts write, reaches the terminal as
+   * written: it prints what the runner already redacted. Its stdout is on
+   * stderr once the run reserved stdout.
+   */
+  asWritten<T>(hook: () => T): T {
+    return this.passing.run('written', hook);
+  }
+
+  /**
+   * Runs `hook`, a reporter printing its summary, so that what it writes
+   * reaches the terminal redacted, on the stream it wrote to: a reporter of
+   * your own can print a document to stdout. On stderr once the run
+   * reserved stdout.
+   */
+  asPrinted<T>(hook: () => T): T {
+    return this.passing.run('printed', hook);
+  }
+
+  /** Runs `hook`, the reporter that prints the run's document, so that what it writes to stdout is the only thing there. */
+  asDocument<T>(hook: () => T): T {
+    return this.passing.run('document', hook);
   }
 
   /** Runs `hook`, the runner's own write inside `passThrough`, captured and redacted like any other. */
@@ -315,9 +347,20 @@ export class RunnerOutput {
     return this.passing.run(false, hook);
   }
 
-  /** Prints what user code writes to stdout on stderr from now on: during a run stdout holds only what a reporter prints there, such as a document (`--reporter json`). */
+  /** Prints what user code writes to stdout on stderr from now on: during a run stdout holds only what a reporter prints there. */
   leaveStdout(): void {
     this.stdoutTo = 'stderr';
+  }
+
+  /** Leaves stdout to the run's document (`--reporter json`): from now on only `asDocument` writes there, and every other reporter's stdout is on stderr too. */
+  reserveStdout(): void {
+    this.stdoutTo = 'stderr';
+    this.viewStdoutTo = 'stderr';
+  }
+
+  /** Whether the run reserved stdout for its document. */
+  get stdoutReserved(): boolean {
+    return this.viewStdoutTo === 'stderr';
   }
 
   /**
@@ -361,6 +404,15 @@ export class RunnerOutput {
     this.emit('stderr', this.redactors.stderr.flush());
     this.toTerminal('stdout', this.passRedactors.stdout.flush());
     this.toTerminal('stderr', this.passRedactors.stderr.flush());
+    this.reporterPrint('stdout', this.printRedactors.stdout.flush());
+    this.reporterPrint('stderr', this.printRedactors.stderr.flush());
+  }
+
+  /** Writes what a reporter prints to the terminal, its stdout on stderr once the run reserved stdout. */
+  private reporterPrint(stream: OutputStream, chunk: string | Uint8Array, callback?: () => void): boolean {
+    if (chunk.length > 0) return this.terminal[stream === 'stdout' ? this.viewStdoutTo : stream](chunk, callback);
+    if (callback !== undefined) process.nextTick(callback);
+    return true;
   }
 
   /** Writes redacted text to the terminal; nothing to write still calls back. */

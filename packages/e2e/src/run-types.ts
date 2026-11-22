@@ -114,7 +114,7 @@ export interface Reporter {
    * an interactive reporter, or once its `onEvent` throws, it prints them on
    * stderr. Its hooks write to the terminal directly, past the redaction of
    * user output, so it prints only what the events and the report hold,
-   * which are redacted already. What any other reporter prints outside
+   * which are redacted already; beside `json` its stdout is on stderr. What any other reporter prints outside
    * `onSummary` is user output: redacted, and on stderr. An embedded run (`quiet`) runs none, and a
    * forced stop never cuts its `onRunFinished` short: its output is local.
    */
@@ -129,9 +129,10 @@ export interface Reporter {
    * Runs last, even after a forced stop, with every report file's and every
    * `onRunFinished`'s rows: the built-ins' first, then the others' in
    * `reporters` order, and the finished run. It is where a reporter
-   * prints: what it writes here goes to the terminal directly, stdout
-   * included, as `json` prints its document. The runner does not redact
-   * it, so print only what the rows and the report hold.
+   * prints: what it writes here is redacted and goes to the stream it was
+   * written to, stdout included, so it can print a document of its own.
+   * Beside `json`, only the JSON report is on stdout, and this prints on
+   * stderr.
    */
   onSummary?(rows: ReporterSummary, run: FinishedRun): void;
 }

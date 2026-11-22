@@ -8,6 +8,7 @@ import path from 'node:path';
 import { leaveWorkBehind } from '@e2e-dev/core/lib/internal/abandoned';
 import { errorMessage } from '@e2e-dev/core/lib/internal/errors';
 import { budgetText, withAbort } from '@e2e-dev/core/lib/internal/time';
+import { builtinId } from '../report/builtin-id.ts';
 import { pauseLinePrinter } from '../report/list-steps.ts';
 import { writeTextReport } from '../report/write.ts';
 import type { FinishedRun, ReportFile, Reporter, ReporterSummary } from '../run-types.ts';
@@ -43,9 +44,18 @@ interface ReporterHost {
   finish(finished: FinishedRun): Promise<void>;
 }
 
-/** Calls a hook of `reporter`, past the capture of user output when it is interactive, so what it prints is what the terminal shows. */
-function inContext<T>(reporter: Reporter, hook: () => T): T {
-  return reporter.interactive === true ? uncaptured(hook) : hook();
+/**
+ * Calls a hook of `reporter` that may print. An interactive reporter's
+ * output is what the terminal shows, as written. The `json` reporter's is
+ * the run's document, alone on stdout. Any other reporter prints as user
+ * code does, redacted; its `summary` prints on the stream it wrote to,
+ * stdout included, unless the document is there.
+ */
+function inContext<T>(reporter: Reporter, processOutput: RunnerOutput | undefined, hook: () => T, summary = false): T {
+  if (processOutput === undefined) return reporter.interactive === true ? uncaptured(hook) : hook();
+  if (summary && builtinId(reporter) === 'json') return processOutput.asDocument(hook);
+  if (reporter.interactive === true) return processOutput.asWritten(hook);
+  return summary ? processOutput.asPrinted(hook) : hook();
 }
 
 /**
@@ -73,7 +83,7 @@ export function hostReporters(reporters: readonly Reporter[], options: HostOptio
     return [
       {
         name: reporter.name,
-        onEvent: handing((event) => inContext(reporter, () => onEvent.call(reporter, event))),
+        onEvent: handing((event) => inContext(reporter, processOutput, () => onEvent.call(reporter, event))),
         // The runner shows the pause the last interactive reporter was showing.
         onQuarantine: () => {
           if (showing.delete(reporter) && !showsRun()) plain.show();
@@ -142,7 +152,7 @@ const FORCED_REPORT_FILES_MS = 5_000;
  * of time, or returns something other than files or rows is one line on
  * stderr; it can never change the run's outcome.
  */
-async function finishReporters(reporters: readonly Reporter[], finished: FinishedRun, { timeoutMs, force }: Pick<HostOptions, 'timeoutMs' | 'force'>): Promise<void> {
+async function finishReporters(reporters: readonly Reporter[], finished: FinishedRun, { timeoutMs, force, processOutput }: Pick<HostOptions, 'timeoutMs' | 'force' | 'processOutput'>): Promise<void> {
   const say = (reporter: Reporter, detail: string): void => {
     process.stderr.write(`e2e: reporter "${reporter.name}" ${detail}\n`);
   };
@@ -186,7 +196,7 @@ async function finishReporters(reporters: readonly Reporter[], finished: Finishe
     reporters.map(async (reporter): Promise<ReporterSummary> => {
       const { reportFiles } = reporter;
       if (reportFiles === undefined) return [];
-      const files = await bounded(reporter, FORCED_REPORT_FILES_MS, async (signal) => inContext(reporter, () => reportFiles.call(reporter, finished, signal)));
+      const files = await bounded(reporter, FORCED_REPORT_FILES_MS, async (signal) => inContext(reporter, processOutput, () => reportFiles.call(reporter, finished, signal)));
       if (files === undefined) return [];
       if (!Array.isArray(files) || !files.every(isReportFile)) {
         say(reporter, 'returned something other than report files; wrote none');
@@ -200,7 +210,7 @@ async function finishReporters(reporters: readonly Reporter[], finished: Finishe
     reporters.map(async (reporter): Promise<ReporterSummary> => {
       const { onRunFinished } = reporter;
       if (onRunFinished === undefined) return [];
-      const result: unknown = await bounded(reporter, reporter.interactive === true ? undefined : 0, (signal) => Promise.resolve(inContext(reporter, () => onRunFinished.call(reporter, finished, signal))));
+      const result: unknown = await bounded(reporter, reporter.interactive === true ? undefined : 0, (signal) => Promise.resolve(inContext(reporter, processOutput, () => onRunFinished.call(reporter, finished, signal))));
       if (result === undefined) return [];
       if (!Array.isArray(result)) {
         say(reporter, 'returned something other than summary rows; dropped');
@@ -219,12 +229,11 @@ async function finishReporters(reporters: readonly Reporter[], finished: Finishe
     const broke = (cause: unknown): void => say(reporter, `threw in onSummary: ${errorMessage(cause)}`);
     try {
       // An async hook is never awaited, but its rejection is caught; a
-      // thenable is adopted inside the hook's own output context. Every
-      // reporter prints here, so the call is past the capture of user output.
-      const result = uncaptured(() => {
+      // thenable is adopted inside the hook's own output context.
+      const result = inContext(reporter, processOutput, () => {
         const value: unknown = reporter.onSummary?.(rows, finished);
         return typeof (value as PromiseLike<unknown> | undefined)?.then === 'function' ? Promise.resolve(value) : undefined;
-      });
+      }, true);
       result?.catch(broke);
     } catch (cause) {
       broke(cause);

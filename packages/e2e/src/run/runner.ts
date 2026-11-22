@@ -61,7 +61,7 @@ import { loadTimings, writeTimings } from './timings.ts';
 import { childProcessSpawner } from './worker/handle.ts';
 import { setSecretRegistry } from '@e2e-dev/core/lib/secrets';
 import type { RecordingMode } from '@e2e-dev/core/lib/types';
-import type { BuiltinReporter, E2EConfig } from '../run-types.ts';
+import type { BuiltinReporter, E2EConfig, Reporter } from '../run-types.ts';
 import { modelLabel } from '@e2e-dev/core/lib/config/agent';
 import { boundedInt, describeValue, positiveInt, timerMs } from '@e2e-dev/core/lib/config/validate';
 import { validateChangedSince } from './changes.ts';
@@ -519,8 +519,14 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
   // runner's, so it holds only what a reporter prints there. A quiet run is
   // embedded in a program that owns both streams, so output keeps its own.
   if (options.quiet !== true) processOutput?.leaveStdout();
+  /** The json reporter's document is alone on stdout, in an embedded run too. */
+  const reserveStdoutFor = (reporters: readonly Reporter[]): void => {
+    if (reporters.some((reporter) => builtinId(reporter) === 'json')) processOutput?.reserveStdout();
+  };
   const loadConfig = async (): Promise<ResolvedRunConfig> => {
     const config = await loadRunConfig(options, cwd, env, cli, graph);
+    // Before what the config printed while it loaded is released.
+    reserveStdoutFor(config.reporters);
     registerStaticSecrets(config.allSecrets);
     return allocateAppPorts(config);
   };
@@ -546,6 +552,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
       .map((id) => builtinReporter(id, fallbackIds.includes('json') ? 'stderr' : 'stdout'))
       .filter((reporter, index, all) => reporter.interactive !== true || all.findIndex((other) => other.interactive === true) === index);
   const activeReporters = configured.filter((reporter) => options.quiet !== true || reporter.interactive !== true);
+  reserveStdoutFor(activeReporters);
   const host = hostReporters(activeReporters, {
     processOutput,
     quiet: options.quiet === true,
@@ -1038,10 +1045,12 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
     startedAt = timestamp();
     const tests = collectedTests(config.projectRoot, selection);
     for (const test of tests) titlePaths.set(test.testId, test.titlePath);
+    const files = plannedFiles(selection);
+    emit({ type: 'plan', total: selection.pairs.length, files });
     emit({
       type: 'collected',
       total: selection.pairs.length,
-      files: plannedFiles(selection),
+      files,
       repeatEach: options.repeatEach ?? 1,
       tests,
     });

@@ -75,7 +75,8 @@ type PressOptions = { readonly guard: boolean };
 type StepGateOptions = {
   readonly now?: () => number;
   readonly holdSteps?: boolean;
-  readonly viewer?: boolean;
+  /** Asked at each prompt: a run learns from its config whether the viewer has a terminal. */
+  readonly viewer?: () => boolean;
   /** False when commands answer the prompt and no keyboard does. */
   readonly keyboard?: boolean;
 };
@@ -128,7 +129,7 @@ export class StepGate {
 
   private readonly now: () => number;
   private readonly holdSteps: boolean;
-  private readonly viewer: boolean;
+  private readonly viewer: () => boolean;
   private readonly keyboard: boolean;
 
   /**
@@ -141,7 +142,7 @@ export class StepGate {
   ) {
     this.now = options.now ?? Date.now;
     this.holdSteps = options.holdSteps ?? true;
-    this.viewer = options.viewer ?? false;
+    this.viewer = options.viewer ?? (() => false);
     this.keyboard = options.keyboard ?? true;
   }
 
@@ -255,7 +256,7 @@ export class StepGate {
     const numbered = ({ step, number }: Waiting): NumberedStep => ({ step, number });
     const steps: [NumberedStep, ...NumberedStep[]] = [numbered(first), ...rest.filter((waiting) => samePrompt(waiting.step, first.step)).map(numbered)];
     const keys = this.keyboard
-      ? stepPromptKeys({ pause: first.step.kind === 'pause', steps: steps.length, help: this.help, holdSteps: this.holdSteps, viewer: this.viewer })
+      ? stepPromptKeys({ pause: first.step.kind === 'pause', steps: steps.length, help: this.help, holdSteps: this.holdSteps, viewer: this.viewer() })
       : [];
     return { steps, holdSteps: this.holdSteps, keys };
   }

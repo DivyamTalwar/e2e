@@ -143,6 +143,20 @@ export type RunEventFact =
     }
   | {
       /**
+       * @deprecated Read `collected`, which follows it with the same
+       * `total` and `files`. Emitted until e2e drops it, no earlier than
+       * April 1, 2027.
+       */
+      readonly type: 'plan';
+      readonly total: number;
+      readonly files: readonly {
+        readonly file: string;
+        readonly target: string;
+        readonly tests: number;
+      }[];
+    }
+  | {
+      /**
        * What the run will execute, emitted once collection, selection, and
        * every target's `prepare` are done: from here the run executes, so
        * this event's `at` is the run's start (the report's `startedAt`, the
