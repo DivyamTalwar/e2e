@@ -78,7 +78,8 @@ export function canonicalJson(value: unknown): string {
       return JSON.stringify(value);
     case 'object': {
       if (Array.isArray(value)) {
-        return `[${value.map((item) => canonicalJson(item === undefined ? null : item)).join(',')}]`;
+        // Array.map skips holes; JSON array slots without a value serialize as null.
+        return `[${Array.from(value, (item) => canonicalJson(item === undefined ? null : item)).join(',')}]`;
       }
       const entries = Object.entries(value as Record<string, unknown>)
         .filter(([, v]) => v !== undefined)

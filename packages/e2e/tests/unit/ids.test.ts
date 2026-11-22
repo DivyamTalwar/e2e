@@ -66,6 +66,14 @@ describe('canonicalJson (RFC 8785)', () => {
     expect(canonicalJson([undefined, 1])).toBe('[null,1]');
   });
 
+  it('encodes sparse array slots as null instead of colliding with an empty array', () => {
+    expect(canonicalJson(new Array(1))).toBe('[null]');
+    expect(canonicalJson(new Array(2))).toBe('[null,null]');
+    expect(canonicalJson([, 1, , undefined])).toBe('[null,1,null,null]');
+    expect(canonicalDigest(new Array(1))).not.toBe(canonicalDigest([]));
+    expect(canonicalDigest(new Array(1))).toBe(canonicalDigest([null]));
+  });
+
   it('rejects non-finite numbers', () => {
     expect(() => canonicalJson(Number.NaN)).toThrow();
     expect(() => canonicalJson(Number.POSITIVE_INFINITY)).toThrow();
