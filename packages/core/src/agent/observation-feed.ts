@@ -13,7 +13,8 @@ import { validateComputedStyleProperties, type ComputedStyleProperty } from '../
 import { relocateDescriptor } from '../cache/relocate.ts';
 import { asEngineError, TestError } from '../internal/errors.ts';
 import { rejectUnknownOptions } from '../internal/options.ts';
-import { isEditable } from '../internal/roles.ts';
+import { checkObservedLocation } from '../internal/urls.ts';
+import { takesText } from '../internal/roles.ts';
 import type { StepAgentDetails, VisionDegradation } from '../run/steps.ts';
 import { describeTarget } from './actions.ts';
 import { AgentError } from './error.ts';
@@ -460,6 +461,7 @@ export class ObservationFeed {
       guard: (cause) => this.accounting.checkpoint(cause),
       signal: this.runtime.engine.signal,
     });
+    checkObservedLocation(raw.location, this.runtime.app.base);
     if (raw.kind === 'pixels') {
       this.semanticHistory = false;
       this.newest = undefined;
@@ -532,7 +534,7 @@ export class ObservationFeed {
 
 /** A node whose name or text is what was put into it, not what the screen says. */
 function echoesInput(node: SemanticNode): boolean {
-  return isEditable(node) || node.value !== undefined;
+  return takesText(node) || node.value !== undefined;
 }
 
 /** The error for a target id the newest screen no longer lists. */
